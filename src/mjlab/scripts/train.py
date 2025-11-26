@@ -28,8 +28,8 @@ class TrainConfig:
   registry_name: str | None = None
   video: bool = False
   video_length: int = 200
-  video_interval: int = 2000
-  enable_nan_guard: bool = False
+  video_interval: int = 2000 # Record a video every N steps.
+  enable_nan_guard: bool = False # Record a video every N steps.
   torchrunx_log_dir: str | None = None
   wandb_run_path: str | None = None
   gpu_ids: list[int] | Literal["all"] | None = field(default_factory=lambda: [0])
@@ -220,7 +220,7 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
 
 
 def main():
-  # Parse first argument to choose the task.
+  # Parse first argument to choose the task.   解析第一个参数
   # Import tasks to populate the registry.
   import mjlab.tasks  # noqa: F401
 

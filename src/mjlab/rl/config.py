@@ -10,7 +10,7 @@ class RslRlPpoActorCriticCfg:
 
   init_noise_std: float = 1.0
   """The initial noise standard deviation of the policy."""
-  noise_std_type: Literal["scalar", "log"] = "scalar"
+  noise_std_type: Literal["scalar", "log"] = "log" #之前是scalar
   """The type of noise standard deviation for the policy. Default is scalar."""
   actor_obs_normalization: bool = False
   """Whether to normalize the observation for the actor network. Default is False."""
@@ -28,7 +28,7 @@ class RslRlPpoActorCriticCfg:
 
 @dataclass
 class RslRlPpoAlgorithmCfg:
-  """Config for the PPO algorithm."""
+  """Config nfor the PPO algorithm."""
 
   num_learning_epochs: int = 5
   """The number of learning epochs per update."""
