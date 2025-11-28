@@ -37,12 +37,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   # Observations
   ##
 
+  # Policy 不再包含 base_lin_vel，让其只由 critic 访问。
   policy_terms = {
-    "base_lin_vel": ObservationTermCfg(
-      func=mdp.builtin_sensor,
-      params={"sensor_name": "robot/imu_lin_vel"},
-      noise=Unoise(n_min=-0.5, n_max=0.5),
-    ),
     "base_ang_vel": ObservationTermCfg(
       func=mdp.builtin_sensor,
       params={"sensor_name": "robot/imu_ang_vel"},
@@ -69,6 +65,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
 
   critic_terms = {
     **policy_terms,
+    # 将 base_lin_vel 单独保留在 critic，用于价值估计。
+    "base_lin_vel": ObservationTermCfg(
+      func=mdp.builtin_sensor,
+      params={"sensor_name": "robot/imu_lin_vel"},
+      noise=Unoise(n_min=-0.5, n_max=0.5),
+    ),
     "foot_height": ObservationTermCfg(
       func=mdp.foot_height,
       params={"asset_cfg": SceneEntityCfg("robot", site_names=())},  # Set per-robot.
@@ -285,7 +287,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
     "fell_over": TerminationTermCfg(
       func=mdp.bad_orientation,
-      params={"limit_angle": math.radians(70.0)},
+      params={"limit_angle": math.radians(75.0)},
     ),
   }
 

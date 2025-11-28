@@ -80,6 +80,14 @@ MUJOCO_GL=egl uv run train Mjlab-Velocity-Rough-Unitree-Go1 \
   --agent.load-checkpoint "model_[0-9]+.pt" \  
   --env.scene.num-envs 4096
 ```
+- 方式4 在云服务器进行 规避下载cpython缓慢的情况
+  - uv run --python "$(command -v python3)" train Mjlab-Velocity-Rough-Unitree-Go1 --env.scene.num-envs 2048 --enable-nan-guard True
+
+
+- **导出onnx**
+uv run --python "$(command -v python3)" -m mjlab.scripts.export_onnx Mjlab-Velocity-Rough-Unitree-Go1  --checkpoint /absolute/path/to/model_XXXX.pt
+
+
 
 ### tensorboard
 checkpoint只是权重快照，不能起到部署的作用
@@ -190,9 +198,33 @@ TerrainGenerator会配置一系列关于地形的信息
 
 ### 添加 地形
 
-## UV以及环境配置问题
+
+## 安装
+### 换源
+url = "https://mirrors.nju.edu.cn/pytorch/whl/cu128/"
+url = "pypi.tuna.tsinghua.edu.cn/simple"
+scp -P 30418 mihomo-party-linux-1.8.5-amd64.tar.xz  root@183.147.142.40:~/
+
+scp -v -r -P 30418 root@183.147.142.40:/root/gpufree-data/mymjlab/src/mjlab/scripts/logs/rsl_rl/go1_velocity/2025-11-26_19-12-17 /home/mast/mymjlab/mjlab/src/mjlab/scripts/logs/rsl_rl/go1_velocity 
+从服务器回传，但是命令需要在本地输入
+uv-i686 是32位的
+
+
+### UV以及环境配置问题
 echo "nameserver 8.8.8.8" | tee /etc/resolv.conf  解决DNS问题
 
 
-## 安装
-### 换源 url = "https://mirrors.nju.edu.cn/pytorch/whl/cu128/"
+
+
+
+
+
+
+
+
+
+
+
+
+1修改了碰撞
+2修改了obs，删掉了机体速度在policy中，增加了速度在critic中

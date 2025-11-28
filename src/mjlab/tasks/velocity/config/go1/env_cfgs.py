@@ -21,18 +21,45 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   foot_names = ("FR", "FL", "RR", "RL")
   site_names = ("FR", "FL", "RR", "RL")
+  # Foot collision geoms have exact names (no numeric suffix).
   geom_names = tuple(f"{name}_foot_collision" for name in foot_names)
+  # Calf/Thigh collision geoms are split into numbered segments in XML.
+  # Consistency: use explicit enumerations for both matching and exclusion.
+  calf_geom_names = tuple(
+    f"{name}_calf_collision{i}" for name in foot_names for i in (1, 2)
+  )
+  thigh_geom_names = tuple(
+    f"{name}_thigh_collision{i}" for name in foot_names for i in (1, 2, 3)
+  )
 
   feet_ground_cfg = ContactSensorCfg(
     name="feet_ground_contact",
-    primary=ContactMatch(mode="geom", pattern=geom_names, entity="robot"),
+  primary=ContactMatch(mode="geom", pattern=geom_names, entity="robot"),
     secondary=ContactMatch(mode="body", pattern="terrain"),
     fields=("found", "force"),
     reduce="netforce",
     num_slots=1,
     track_air_time=True,
   )
-  nonfoot_ground_cfg = ContactSensorCfg(
+  # Calf contact: allowed (no termination, typically no penalty unless added later).
+  calf_ground_cfg = ContactSensorCfg(
+    name="calf_ground_contact",
+    primary=ContactMatch(mode="geom", pattern=calf_geom_names, entity="robot"),
+    secondary=ContactMatch(mode="body", pattern="terrain"),
+    fields=("found",),
+    reduce="none",
+    num_slots=1,
+  )
+  # Thigh contact: used for penalty (no termination).
+  thigh_ground_cfg = ContactSensorCfg(
+    name="thigh_ground_contact",
+    primary=ContactMatch(mode="geom", pattern=thigh_geom_names, entity="robot"),
+    secondary=ContactMatch(mode="body", pattern="terrain"),
+    fields=("found",),
+    reduce="none",
+    num_slots=1,
+  )
+  nonfootleg_ground_cfg = ContactSensorCfg(
     name="nonfoot_ground_touch",
     primary=ContactMatch(
       mode="geom",
@@ -40,14 +67,21 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       # Grab all collision geoms...
       pattern=r".*_collision\d*$",
       # Except for the foot geoms.
-      exclude=tuple(geom_names),
+      # Exclude feet + calves + thighs explicitly to leave body-only contacts.
+      exclude=tuple(geom_names) + tuple(calf_geom_names) + tuple(thigh_geom_names),
     ),
     secondary=ContactMatch(mode="body", pattern="terrain"),
     fields=("found",),
     reduce="none",
     num_slots=1,
   )
-  cfg.scene.sensors = (feet_ground_cfg, nonfoot_ground_cfg)
+  # Register sensors: feet (for gait), calf (allowed), thigh (penalty), body (illegal contact).
+  cfg.scene.sensors = (
+    feet_ground_cfg,
+    calf_ground_cfg,
+    thigh_ground_cfg,
+    nonfootleg_ground_cfg,
+  )
 
   if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
     cfg.scene.terrain.terrain_generator.curriculum = True
@@ -91,7 +125,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
     func=mdp.illegal_contact,
-    params={"sensor_name": nonfoot_ground_cfg.name},
+    params={"sensor_name": nonfootleg_ground_cfg.name},
   )
 
   # Apply play mode overrides.
