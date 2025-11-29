@@ -91,8 +91,17 @@ def self_collision_cost(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tenso
   Returns the number of self-collisions detected by the specified contact sensor.
   """
   sensor: ContactSensor = env.scene[sensor_name]
-  assert sensor.data.found is not None
-  return sensor.data.found.squeeze(-1)
+  found = sensor.data.found
+  assert found is not None
+  # Accept shapes: [B], [B,1], [B,N], [B,N,1]; always reduce to [B].
+  if found.dim() == 3:  # [B, N, 1]
+    found = found.squeeze(-1)  # -> [B, N]
+  if found.dim() == 2:  # [B, N] or [B,1]
+    if found.shape[1] == 1:
+      return found.squeeze(1)
+    return torch.sum(found, dim=1)
+  # [B] already
+  return found
 
 
 def body_angular_velocity_penalty(
