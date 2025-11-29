@@ -68,7 +68,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       pattern=r".*_collision\d*$",
       # Except for the foot geoms.
       # Exclude feet + calves + thighs explicitly to leave body-only contacts.
-      exclude=tuple(geom_names) + tuple(calf_geom_names) + tuple(thigh_geom_names),
+      exclude=tuple(geom_names) + tuple(calf_geom_names) ,
     ),
     secondary=ContactMatch(mode="body", pattern="terrain"),
     fields=("found",),
@@ -122,6 +122,9 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.rewards["body_ang_vel"].weight = 0.0
   cfg.rewards["angular_momentum"].weight = 0.0
   cfg.rewards["air_time"].weight = 0.0
+  # Override base placeholder reward: bind sensor + weight.
+  cfg.rewards["calf_collision"].params["sensor_name"] = calf_ground_cfg.name
+  cfg.rewards["calf_collision"].weight = -2.0  # tweak within [-1.0, -3.0]
 
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
     func=mdp.illegal_contact,

@@ -62,7 +62,13 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"command_name": "twist"},
     ),
   }
-
+  '''
+  如果是单独添加历史，就在这里处理：policy_terms["joint_pos"].history_length = 3
+    policy_terms["joint_pos"].flatten_history_dim = True
+    policy_terms["joint_vel"].history_length = 3
+    policy_terms["joint_vel"].flatten_history_dim = True
+    为什么不在上面直接加？因为 critic_terms = 复用了policy_terms,如果直接加critic也会有历史
+  '''
   critic_terms = {
     **policy_terms,
     # 将 base_lin_vel 单独保留在 critic，用于价值估计。
@@ -101,6 +107,13 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       enable_corruption=False,
     ),
   }
+
+  # Apply history to the entire policy observation group:
+  # stack current + past 2 frames for all policy terms, flatten history dims for MLP inputs.
+  observations["policy"].history_length = 3
+  observations["policy"].flatten_history_dim = True
+  observations["critic"].history_length = 3
+  observations["critic"].flatten_history_dim = True
 
   ##
   # Actions
@@ -239,7 +252,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_clearance": RewardTermCfg(
       func=mdp.feet_clearance,
-      weight=-2.0,
+      weight=-1.0,
       params={
         "target_height": 0.1,
         "command_name": "twist",
@@ -277,6 +290,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "command_threshold": 0.05,
       },
     ),
+    "calf_collision": RewardTermCfg(
+      func=mdp.self_collision_cost,
+      weight=0.0,  # Override per-robot
+      params={"sensor_name": ""},  # Set per-robot (e.g. calf_ground_contact)
+    ),
   }
 
   ##
@@ -306,8 +324,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "command_name": "twist",
         "velocity_stages": [
           {"step": 0, "lin_vel_x": (-1.0, 1.0), "ang_vel_z": (-0.5, 0.5)},
-          {"step": 5000 * 24, "lin_vel_x": (-1.5, 2.0), "ang_vel_z": (-0.7, 0.7)},
-          {"step": 10000 * 24, "lin_vel_x": (-2.0, 3.0)},
+          {"step": 2500 * 24, "lin_vel_x": (-1.5, 2.0), "ang_vel_z": (-0.7, 0.7)},
+          {"step": 5000 * 24, "lin_vel_x": (-2.0, 3.0)},
         ],
       },
     ),
