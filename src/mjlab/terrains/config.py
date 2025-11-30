@@ -40,18 +40,18 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     #   border_width=0.25,
     #   inverted=True,
     # ),
-    # "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
-    #   proportion=0.2,
-    #   noise_range=(0.02, 0.10),
-    #   noise_step=0.02,
-    #   border_width=0.25,
-    # ),
-    # "wave_terrain": terrain_gen.HfWaveTerrainCfg(
-    #   proportion=0.2,
-    #   amplitude_range=(0.0, 0.2),
-    #   num_waves=4,
-    #   border_width=0.25,
-    # ),
+     "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
+       proportion=0.1,
+       noise_range=(0.02, 0.10),
+       noise_step=0.02,
+       border_width=0.25,
+     ),
+     "wave_terrain": terrain_gen.HfWaveTerrainCfg(
+       proportion=0.1,
+       amplitude_range=(0.0, 0.2),
+       num_waves=4,
+       border_width=0.25,
+     ),
   },
   add_lights=False,
 )
