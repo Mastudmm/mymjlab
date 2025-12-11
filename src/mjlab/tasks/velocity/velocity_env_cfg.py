@@ -62,6 +62,21 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"command_name": "twist"},
     ),
   }
+  # 为 joint_pos 增加延迟
+  policy_terms["joint_pos"].delay_min_lag = 1
+  policy_terms["joint_pos"].delay_max_lag = 3
+  policy_terms["joint_pos"].delay_per_env = True
+  policy_terms["joint_pos"].delay_hold_prob = 0.7      # 70% 的概率保持当前延迟不变
+  policy_terms["joint_pos"].delay_update_period = 50   # 每 50 步尝试更新一次延迟
+  policy_terms["joint_pos"].delay_per_env_phase = True # 每个 env 的刷新相位不同
+
+  # 为 joint_vel 增加延迟
+  policy_terms["joint_vel"].delay_min_lag = 1
+  policy_terms["joint_vel"].delay_max_lag = 3
+  policy_terms["joint_vel"].delay_per_env = True
+  policy_terms["joint_vel"].delay_hold_prob = 0.7
+  policy_terms["joint_vel"].delay_update_period = 50
+  policy_terms["joint_vel"].delay_per_env_phase = True
   '''
   如果是单独添加历史，就在这里处理：policy_terms["joint_pos"].history_length = 3
     policy_terms["joint_pos"].flatten_history_dim = True
@@ -110,9 +125,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
 
   # Apply history to the entire policy observation group:
   # stack current + past 2 frames for all policy terms, flatten history dims for MLP inputs.
-  observations["policy"].history_length = 3
+  observations["policy"].history_length = 4
   observations["policy"].flatten_history_dim = True
-  observations["critic"].history_length = 3
+  observations["critic"].history_length = 4
   observations["critic"].flatten_history_dim = True
 
   ##
@@ -175,8 +190,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "push_robot": EventTermCfg(
       func=mdp.push_by_setting_velocity,
       mode="interval",
-      interval_range_s=(1.0, 3.0),
-      params={"velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5)}},
+      interval_range_s=(2.0, 4.0),#训练时每隔 2~4 秒随机一次
+      params={"velocity_range": {"x": (-0.75, 0.75), "y": (-0.75, 0.75)}},
     ),
     "foot_friction": EventTermCfg(
       mode="startup",
@@ -186,7 +201,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # Set per-robot.
         "operation": "abs",
         "field": "geom_friction",
-        "ranges": (0.3, 1.2),
+        "ranges": (0.2, 1.2),
       },
     ),
   }

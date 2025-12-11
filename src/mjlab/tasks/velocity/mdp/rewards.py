@@ -206,11 +206,11 @@ class feet_swing_height:
     command_threshold: float,
     asset_cfg: SceneEntityCfg,
   ) -> torch.Tensor:
-    asset: Entity = env.scene[asset_cfg.name]
+    asset: Entity = env.scene[asset_cfg.name] #取出实体，后续从asset.data拿去数据
     contact_sensor: ContactSensor = env.scene[sensor_name]
     command = env.command_manager.get_command(command_name)
     assert command is not None
-    foot_heights = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]
+    foot_heights = asset.data.site_pos_w[:, asset_cfg.site_ids, 2] #site_pos_w 的后缀 w 表示 world frame，取所有环境的site_ids，的第三个分量，也就是Z高度。
     in_air = contact_sensor.data.found == 0
     self.peak_heights = torch.where(
       in_air,

@@ -13,11 +13,11 @@ from mjlab.utils.noise import noise_cfg, noise_model
 
 
 class ObservationManager(ManagerBase):
-  def __init__(self, cfg: dict[str, ObservationGroupCfg], env):
+  def __init__(self, cfg: dict[str, ObservationGroupCfg], env): #cfg: dict[str, ObservationGroupCfg]是注解，意思是参数 cfg 预计是一个“组名 ，组级观测配置”的字典
     self.cfg = cfg
     super().__init__(env=env)
 
-    self._group_obs_dim: dict[str, tuple[int, ...] | list[tuple[int, ...]]] = dict()
+    self._group_obs_dim: dict[str, tuple[int, ...] | list[tuple[int, ...]]] = dict() #是一个字典（mapping），它的键是字符串（group 名称），值要么是一个表示形状的 tuple（比如 (3,4)），要么是一个由若干此类 tuple 组成的 list（比如 [(3,),(6,),(4,)]）。初始被赋为空字典 dict()。
 
     for group_name, group_term_dims in self._group_obs_term_dim.items():
       if self._group_obs_concatenate[group_name]:
@@ -68,14 +68,14 @@ class ObservationManager(ManagerBase):
       msg += "\n"
     return msg
 
-  def get_active_iterable_terms(
+  def get_active_iterable_terms(#该函数只会在调试和View.py展示的时候使用
     self, env_idx: int
   ) -> Sequence[tuple[str, Sequence[float]]]:
     terms = []
 
     if self._obs_buffer is None:
-      self.compute()
-    assert self._obs_buffer is not None
+      self.compute() #填充观测缓存
+    assert self._obs_buffer is not None  #断言检查 断言的核心作用是在开发阶段充当程序的内部检查点，用于捕获那些在程序逻辑正确的情况下本不应发生的错误 如果结果为 False（即条件不成立），程序会立即抛出 AssertionError异常并终止
     obs_buffer: dict[str, torch.Tensor | dict[str, torch.Tensor]] = self._obs_buffer
 
     for group_name, _ in self.group_obs_dim.items():
@@ -119,7 +119,7 @@ class ObservationManager(ManagerBase):
   def group_obs_concatenate(self) -> dict[str, bool]:
     return self._group_obs_concatenate
 
-  # Methods.
+  # Methods. 以下函数会在训练中使用
 
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> dict[str, float]:
     # Invalidate cache since reset envs will have different observations.
@@ -157,8 +157,8 @@ class ObservationManager(ManagerBase):
     self._obs_buffer = obs_buffer
     return obs_buffer
 
-  def compute_group(
-    self, group_name: str, update_history: bool = False
+  def compute_group( #group（组）比如 “proprio”（自身感知）、“terrain”（地形）、“vision”（视觉）。 term（项）例如vel joint_pos等
+    self, group_name: str, update_history: bool = False   #该函数输入的是group_name: 要计算的观测组名（如 "proprio"），函数处理的是group内的数据
   ) -> torch.Tensor | dict[str, torch.Tensor]:
     group_term_names = self._group_obs_term_names[group_name]
     group_obs: dict[str, torch.Tensor] = {}
@@ -166,8 +166,8 @@ class ObservationManager(ManagerBase):
       group_term_names, self._group_obs_term_cfgs[group_name], strict=False
     )
     for term_name, term_cfg in obs_terms:
-      obs: torch.Tensor = term_cfg.func(self._env, **term_cfg.params).clone()
-      if isinstance(term_cfg.noise, noise_cfg.NoiseCfg):
+      obs: torch.Tensor = term_cfg.func(self._env, **term_cfg.params).clone()# obs 是当前 term 的原始观测张量
+      if isinstance(term_cfg.noise, noise_cfg.NoiseCfg): # 如果 term_cfg.noise 是 noise_cfg.NoiseCfg 的实例 ->噪声注入
         obs = term_cfg.noise.apply(obs)
       elif isinstance(term_cfg.noise, noise_cfg.NoiseModelCfg):
         obs = self._group_obs_class_instances[term_name](obs)
@@ -182,12 +182,13 @@ class ObservationManager(ManagerBase):
         delay_buffer.append(obs)
         obs = delay_buffer.compute()
       if term_cfg.history_length > 0:
-        circular_buffer = self._group_obs_term_history_buffer[group_name][term_name]
+        circular_buffer = self._group_obs_term_history_buffer[group_name][term_name] #双层字典，dict[str, dict[str, CircularBuffer]]，把[group_name][term_name]输进去返回一个CircularBuffer类的实例
         if update_history or not circular_buffer.is_initialized:
-          circular_buffer.append(obs)
+          circular_buffer.append(obs) #环形缓冲器
 
         if term_cfg.flatten_history_dim:
-          group_obs[term_name] = circular_buffer.buffer.reshape(self._env.num_envs, -1)
+          group_obs[term_name] = circular_buffer.buffer.reshape(self._env.num_envs, -1) #circular_buffer.buffer是一个属性 @property,他返回的是一个tensor，因此可以对tensor使用.reshape()函数
+          #返回“按时间从老到新”的外部视图
         else:
           group_obs[term_name] = circular_buffer.buffer
       else:
