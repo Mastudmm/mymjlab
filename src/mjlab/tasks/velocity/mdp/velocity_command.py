@@ -95,6 +95,24 @@ class UniformVelocityCommand(CommandTerm):
     # 以概率 rel_standing_envs 决定是否将该 env 设为站立（命令置零）
     self.is_standing_env[env_ids] = r.uniform_(0.0, 1.0) <= self.cfg.rel_standing_envs
 
+    # 处理纯 X 或纯 Y 方向的命令
+    # 生成一个随机数用于决定是否应用纯方向约束
+    # 0 ~ rel_pure_x_envs: 纯 X (vy=0)
+    # rel_pure_x_envs ~ rel_pure_x_envs + rel_pure_y_envs: 纯 Y (vx=0)
+    # 其他: 混合
+    if self.cfg.rel_pure_x_envs > 0 or self.cfg.rel_pure_y_envs > 0:
+      pure_probs = torch.rand(len(env_ids), device=self.device)
+      
+      # 纯 X 方向：将 y 方向速度置为 0
+      pure_x_mask = pure_probs < self.cfg.rel_pure_x_envs
+      self.vel_command_b[env_ids[pure_x_mask], 1] = 0.0
+      
+      # 纯 Y 方向：将 x 方向速度置为 0
+      pure_y_mask = (pure_probs >= self.cfg.rel_pure_x_envs) & (
+        pure_probs < (self.cfg.rel_pure_x_envs + self.cfg.rel_pure_y_envs)
+      )
+      self.vel_command_b[env_ids[pure_y_mask], 0] = 0.0
+
     init_vel_mask = r.uniform_(0.0, 1.0) < self.cfg.init_velocity_prob
     init_vel_env_ids = env_ids[init_vel_mask]
     if len(init_vel_env_ids) > 0:
@@ -208,6 +226,8 @@ class UniformVelocityCommandCfg(CommandTermCfg):
   heading_control_stiffness: float = 1.0
   rel_standing_envs: float = 0.0
   rel_heading_envs: float = 1.0
+  rel_pure_x_envs: float = 0.0
+  rel_pure_y_envs: float = 0.0
   init_velocity_prob: float = 0.0
   class_type: type[CommandTerm] = UniformVelocityCommand
 

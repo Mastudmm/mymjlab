@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import mujoco
+import numpy as np
 import torch
 
 from mjlab.entity import Entity
@@ -133,7 +135,7 @@ def feet_air_time(
   env: ManagerBasedRlEnv,
   sensor_name: str,
   threshold_min: float = 0.05,
-  threshold_max: float = 0.5,
+  threshold_max: float = 0.75,
   command_name: str | None = None,
   command_threshold: float = 0.5,
 ) -> torch.Tensor:
@@ -170,10 +172,14 @@ def feet_clearance(
 ) -> torch.Tensor:
   """Penalize deviation from target clearance height, weighted by foot velocity."""
   asset: Entity = env.scene[asset_cfg.name]
-  foot_z = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]  # [B, N]
+  foot_pos = asset.data.site_pos_w[:, asset_cfg.site_ids, :]  # [B, N, 3]
+  terrain_heights = _get_terrain_heights(env, foot_pos)  # [B, N]
+  foot_height_rel = foot_pos[..., 2] - terrain_heights
   foot_vel_xy = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]  # [B, N, 2]
   vel_norm = torch.norm(foot_vel_xy, dim=-1)  # [B, N]
-  delta = torch.abs(foot_z - target_height)  # [B, N]
+  # Changed to one-sided penalty: only penalize if foot is LOWER than target.
+  # This allows the robot to lift feet higher (e.g. for stairs) without penalty from this term.
+  delta = torch.clamp(target_height - foot_height_rel, min=0.0)  # [B, N]
   cost = torch.sum(delta * vel_norm, dim=1)  # [B]
   if command_name is not None:
     command = env.command_manager.get_command(command_name)
@@ -184,6 +190,8 @@ def feet_clearance(
       active = (total_command > command_threshold).float()
       cost = cost * active
   return cost
+
+
 
 
 class feet_swing_height:
@@ -210,11 +218,13 @@ class feet_swing_height:
     contact_sensor: ContactSensor = env.scene[sensor_name]
     command = env.command_manager.get_command(command_name)
     assert command is not None
-    foot_heights = asset.data.site_pos_w[:, asset_cfg.site_ids, 2] #site_pos_w 的后缀 w 表示 world frame，取所有环境的site_ids，的第三个分量，也就是Z高度。
+    foot_pos = asset.data.site_pos_w[:, asset_cfg.site_ids, :]
+    terrain_heights = _get_terrain_heights(env, foot_pos)
+    foot_height_rel = foot_pos[..., 2] - terrain_heights
     in_air = contact_sensor.data.found == 0
     self.peak_heights = torch.where(
       in_air,
-      torch.maximum(self.peak_heights, foot_heights),
+      torch.maximum(self.peak_heights, foot_height_rel),
       self.peak_heights,
     )
     first_contact = contact_sensor.compute_first_contact(dt=self.step_dt)
@@ -222,8 +232,14 @@ class feet_swing_height:
     angular_norm = torch.abs(command[:, 2])
     total_command = linear_norm + angular_norm
     active = (total_command > command_threshold).float()
+    
     error = self.peak_heights / target_height - 1.0
-    cost = torch.sum(torch.square(error) * first_contact.float(), dim=1) * active
+    # Asymmetric penalty:
+    # If error < 0 (too low), weight 1.0 (strong penalty for tripping risk).
+    # If error > 0 (too high), weight 0.1 (weak penalty for energy saving).
+    penalty_weight = torch.where(error < 0, 1.0, 0.1)
+    
+    cost = torch.sum(torch.square(error) * penalty_weight * first_contact.float(), dim=1) * active
     num_landings = torch.sum(first_contact.float())
     peak_heights_at_landing = self.peak_heights * first_contact.float()
     mean_peak_height = torch.sum(peak_heights_at_landing) / torch.clamp(
@@ -366,3 +382,105 @@ class variable_posture:
     error_squared = torch.square(current_joint_pos - desired_joint_pos)
 
     return torch.exp(-torch.mean(error_squared / (std**2), dim=1))
+
+
+def track_base_height(
+  env: ManagerBasedRlEnv,
+  target_height: float,
+  std: float,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Reward for tracking the base height."""
+  asset: Entity = env.scene[asset_cfg.name]
+  root_z = asset.data.root_link_pos_w[:, 2]
+  # Penalize deviation from target height
+  error = torch.square(root_z - target_height)
+  return torch.exp(-error / std**2)
+
+
+def stumble_penalty(
+  env: ManagerBasedRlEnv,
+  sensor_names: str | list[str],
+) -> torch.Tensor:
+  """Penalize stumbling (hitting obstacles horizontally) across multiple sensors."""
+  if isinstance(sensor_names, str):
+    sensor_names = [sensor_names]
+
+  total_penalty = torch.zeros(env.num_envs, device=env.device)
+
+  for name in sensor_names:
+    contact_sensor: ContactSensor = env.scene[name]
+    forces = contact_sensor.data.force  # [B, N, 3]
+    
+    if forces is None:
+      continue
+
+    # Horizontal force magnitude (xy plane)
+    horizontal_forces = torch.norm(forces[:, :, :2], dim=-1)
+    # Vertical force magnitude (z axis)
+    vertical_forces = torch.abs(forces[:, :, 2])
+    
+    # Stumble condition:
+    # 1. Geometric check: Horizontal force > Vertical force (implies hitting vertical surface).
+    # 2. Magnitude check: Horizontal force must be > 10.0N to ignore light scuffing/drag.
+    stumble = ((horizontal_forces > 1.30*vertical_forces) & (horizontal_forces > 10.0)).float()
+    
+    # Penalize by horizontal impact, but CLIP it to prevent reward explosion.
+    penalty = torch.sum(stumble * torch.clamp(horizontal_forces, max=30.0), dim=1)
+    total_penalty += penalty
+
+  return total_penalty
+
+
+def _get_terrain_heights(env: ManagerBasedRlEnv, positions: torch.Tensor) -> torch.Tensor:
+  """Get terrain heights at specified (x, y) positions using raycasting.
+  
+  Args:
+    env: The environment instance.
+    positions: Tensor of shape (B, N, 3) or (B, N, 2) containing positions.
+    
+  Returns:
+    Tensor of shape (B, N) containing terrain heights.
+  """
+  # If terrain is a plane, height is 0.
+  if env.scene.terrain is None or env.scene.terrain.cfg.terrain_type == "plane":
+    return torch.zeros(positions.shape[:2], device=env.device)
+
+  # For rough terrain, we use raycasting.
+  # Note: This is a CPU-based implementation and might be slow for large batches.
+  # We cast rays from (x, y, high_z) downwards.
+  
+  B, N = positions.shape[:2]
+  positions_flat = positions.reshape(-1, positions.shape[-1]).cpu().numpy()
+  heights = np.zeros(B * N, dtype=np.float32)
+  
+  # Ray parameters
+  ray_pnt = np.zeros(3, dtype=np.float64)
+  ray_vec = np.array([0, 0, -1], dtype=np.float64)
+  
+  # Access simulation data
+  # We need the raw mujoco model/data for mj_ray.
+  # env.sim is the Simulation instance.
+  # It has _mj_model and _mj_data which are the raw MuJoCo objects.
+  model = env.sim._mj_model
+  data = env.sim._mj_data
+  
+  # Iterate and cast rays
+  geom_id_arr = np.zeros(1, dtype=np.int32) # Output buffer for geomid
+  
+  for i in range(B * N):
+    ray_pnt[0] = positions_flat[i, 0]
+    ray_pnt[1] = positions_flat[i, 1]
+    ray_pnt[2] = 10.0 # Start from high enough
+    
+    # geomgroup=None means all groups. 
+    # flg_static=1 means only static geoms (terrain is usually static).
+    # bodyexclude=-1 means no exclusion.
+    dist = mujoco.mj_ray(model, data, ray_pnt, ray_vec, None, 1, -1, geom_id_arr)
+    
+    if dist > -1:
+      heights[i] = 10.0 - dist
+    else:
+      heights[i] = 0.0
+
+  return torch.from_numpy(heights).to(device=env.device).reshape(B, N)

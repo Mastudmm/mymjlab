@@ -12,7 +12,7 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
   sub_terrains={
     "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.4),
     "pyramid_stairs": terrain_gen.BoxPyramidStairsTerrainCfg(
-      proportion=0.3,
+      proportion=0.4,
       step_height_range=(0.0, 0.2),
       step_width=0.3,
       platform_width=3.0,

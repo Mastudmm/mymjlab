@@ -34,7 +34,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   feet_ground_cfg = ContactSensorCfg(
     name="feet_ground_contact",
-  primary=ContactMatch(mode="geom", pattern=geom_names, entity="robot"),
+    primary=ContactMatch(mode="geom", pattern=geom_names, entity="robot"),
     secondary=ContactMatch(mode="body", pattern="terrain"),
     fields=("found", "force"),
     reduce="netforce",
@@ -46,7 +46,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     name="calf_ground_contact",
     primary=ContactMatch(mode="geom", pattern=calf_geom_names, entity="robot"),
     secondary=ContactMatch(mode="body", pattern="terrain"),
-    fields=("found",),
+    fields=("found","force"),
     reduce="none",
     num_slots=1,
   )
@@ -55,7 +55,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     name="thigh_ground_contact",
     primary=ContactMatch(mode="geom", pattern=thigh_geom_names, entity="robot"),
     secondary=ContactMatch(mode="body", pattern="terrain"),
-    fields=("found",),
+    fields=("found", "force"),
     reduce="none",
     num_slots=1,
   )
@@ -68,7 +68,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       pattern=r".*_collision\d*$",
       # Except for the foot geoms.
       # Exclude feet + calves + thighs explicitly to leave body-only contacts.
-      exclude=tuple(geom_names) + tuple(calf_geom_names) ,
+      exclude=tuple(geom_names) + tuple(calf_geom_names) + tuple(thigh_geom_names) ,
     ),
     secondary=ContactMatch(mode="body", pattern="terrain"),
     fields=("found",),
@@ -121,10 +121,23 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   cfg.rewards["body_ang_vel"].weight = 0.0
   cfg.rewards["angular_momentum"].weight = 0.0
-  cfg.rewards["air_time"].weight = 0.0
+  cfg.rewards["air_time"].weight = 0.15
   # Override base placeholder reward: bind sensor + weight.
   cfg.rewards["calf_collision"].params["sensor_name"] = calf_ground_cfg.name
-  cfg.rewards["calf_collision"].weight = -2.0  # tweak within [-1.0, -3.0]
+  cfg.rewards["calf_collision"].weight = -0.015  # tweak within [-1.0, -3.0]
+  cfg.rewards["thigh_collision"].params["sensor_name"] = thigh_ground_cfg.name
+  cfg.rewards["thigh_collision"].weight = -0.015  # tweak within [-1.0, -3.0]
+  cfg.rewards["stumble"].params["sensor_names"] = [
+    feet_ground_cfg.name,
+    calf_ground_cfg.name,
+    thigh_ground_cfg.name,
+  ]
+  cfg.rewards["stumble"].weight = -1.0 # Increased penalty to force leg lifting
+  cfg.rewards["foot_clearance"].weight = -0.1 # Increased penalty for dragging feet
+  cfg.rewards["foot_clearance"].weight = -0.05 # Penalty for deviation from target height (MUST BE NEGATIVE)
+  cfg.rewards["stumble"].params={
+        "sensor_names": ["feet_ground_contact","calf_ground_contact"],
+      }
 
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
     func=mdp.illegal_contact,

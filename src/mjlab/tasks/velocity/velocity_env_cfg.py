@@ -152,13 +152,15 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       asset_name="robot",
       resampling_time_range=(3.0, 8.0),
       rel_standing_envs=0.1,
-      rel_heading_envs=0.3,
+      rel_heading_envs=0.1, #给一个期望的朝向角（heading），不要求前进/横移速度；通过朝向控制把机体转到目标朝向
+      rel_pure_x_envs=0.25, # 10% 的概率只产生 X 方向速度 (vy=0)
+      rel_pure_y_envs=0.25, # 10% 的概率只产生 Y 方向速度 (vx=0)
       heading_command=True,
       heading_control_stiffness=0.5,
       debug_vis=True,
       ranges=UniformVelocityCommandCfg.Ranges(
         lin_vel_x=(-1.0, 1.0),
-        lin_vel_y=(-1.0, 1.0),
+        lin_vel_y=(-0.5, 0.5),
         ang_vel_z=(-0.5, 0.5),
         heading=(-math.pi, math.pi),
       ),
@@ -213,7 +215,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   rewards = {
     "track_linear_velocity": RewardTermCfg(
       func=mdp.track_linear_velocity,
-      weight=2.5,
+      weight=5.95,
       params={"command_name": "twist", "std": math.sqrt(0.25)},
     ),
     "track_angular_velocity": RewardTermCfg(
@@ -229,7 +231,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
       },
     ),
-    "pose": RewardTermCfg(
+    "pose": RewardTermCfg( #保持关节角度，threshold代表在行走或者是跑动的时候限制将被放宽
       func=mdp.variable_posture,
       weight=1.0,
       params={
@@ -256,7 +258,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.1),
     "air_time": RewardTermCfg(
       func=mdp.feet_air_time,
-      weight=0.0,  # Override per-robot.
+      weight=0.0,  # Increased to encourage lifting legs
       params={
         "sensor_name": "feet_ground_contact",
         "threshold_min": 0.05,
@@ -265,11 +267,27 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "command_threshold": 0.5,
       },
     ),
+    "base_height": RewardTermCfg(
+      func=mdp.track_base_height,
+      weight=0.0,
+      params={
+        "target_height": 0.28, # Nominal height for Go1
+        "std": math.sqrt(0.01), # Tight tolerance
+        "asset_cfg": SceneEntityCfg("robot"),
+      },
+    ),
+    "stumble": RewardTermCfg(
+      func=mdp.stumble_penalty,
+      weight=-0.10,
+      params={
+        "sensor_names": "calf_ground_contact",
+      },
+    ),
     "foot_clearance": RewardTermCfg(
       func=mdp.feet_clearance,
-      weight=-1.0,
+      weight=-0.001,
       params={
-        "target_height": 0.1,
+        "target_height": 0.125,
         "command_name": "twist",
         "command_threshold": 0.05,
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
@@ -277,10 +295,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_swing_height": RewardTermCfg(
       func=mdp.feet_swing_height,
-      weight=-0.25,
+      weight=0.0,
       params={
         "sensor_name": "feet_ground_contact",
-        "target_height": 0.1,
+        "target_height": 0.125,
         "command_name": "twist",
         "command_threshold": 0.05,
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
@@ -288,7 +306,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_slip": RewardTermCfg(
       func=mdp.feet_slip,
-      weight=-0.1,
+      weight=0.0,
       params={
         "sensor_name": "feet_ground_contact",
         "command_name": "twist",
@@ -309,6 +327,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.self_collision_cost,
       weight=0.0,  # Override per-robot
       params={"sensor_name": ""},  # Set per-robot (e.g. calf_ground_contact)
+    ),
+    "thigh_collision": RewardTermCfg(
+      func=mdp.self_collision_cost,
+      weight=0.0,  # Override per-robot
+      params={"sensor_name": ""},  # Set per-robot (e.g. thigh_ground_contact)
     ),
   }
 
