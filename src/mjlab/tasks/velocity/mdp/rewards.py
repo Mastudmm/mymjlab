@@ -423,10 +423,10 @@ def stumble_penalty(
     # Stumble condition:
     # 1. Geometric check: Horizontal force > Vertical force (implies hitting vertical surface).
     # 2. Magnitude check: Horizontal force must be > 10.0N to ignore light scuffing/drag.
-    stumble = ((horizontal_forces > 1.30*vertical_forces) & (horizontal_forces > 10.0)).float()
+    stumble = ((horizontal_forces > 1.30*vertical_forces) & (horizontal_forces > 7.0)).float()
     
     # Penalize by horizontal impact, but CLIP it to prevent reward explosion.
-    penalty = torch.sum(stumble * torch.clamp(horizontal_forces, max=30.0), dim=1)
+    penalty = torch.sum(stumble * torch.clamp(horizontal_forces, max=15.0), dim=1)
     total_penalty += penalty
 
   return total_penalty
@@ -464,6 +464,20 @@ def _get_terrain_heights(env: ManagerBasedRlEnv, positions: torch.Tensor) -> tor
   # It has _mj_model and _mj_data which are the raw MuJoCo objects.
   model = env.sim._mj_model
   data = env.sim._mj_data
+
+  # Optimization: Cache terrain heights to reduce CPU overhead.
+  # We update only every 5 steps. This assumes terrain doesn't change abruptly
+  # under the feet within ~0.1s.
+  update_period = 10
+  cache_name = "_terrain_heights_cache"
+  
+  if (
+    hasattr(env, cache_name) 
+    and env.common_step_counter % update_period != 0
+  ):
+    cached = getattr(env, cache_name)
+    if cached.shape == (B, N):
+      return cached
   
   # Iterate and cast rays
   geom_id_arr = np.zeros(1, dtype=np.int32) # Output buffer for geomid
@@ -483,4 +497,6 @@ def _get_terrain_heights(env: ManagerBasedRlEnv, positions: torch.Tensor) -> tor
     else:
       heights[i] = 0.0
 
-  return torch.from_numpy(heights).to(device=env.device).reshape(B, N)
+  result = torch.from_numpy(heights).to(device=env.device).reshape(B, N)
+  setattr(env, cache_name, result)
+  return result

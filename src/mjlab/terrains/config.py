@@ -10,16 +10,16 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
   num_rows=10,
   num_cols=20,
   sub_terrains={
-    "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.4),
+    "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.0),
     "pyramid_stairs": terrain_gen.BoxPyramidStairsTerrainCfg(
-      proportion=0.4,
+      proportion=0.1,
       step_height_range=(0.0, 0.2),
       step_width=0.3,
       platform_width=3.0,
       border_width=1.0,
     ),
     "pyramid_stairs_inv": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
-      proportion=0.2,
+      proportion=0.7,
       step_height_range=(0.0, 0.2),
       step_width=0.3,
       platform_width=3.0,
@@ -41,13 +41,13 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     #   inverted=True,
     # ),
      "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
-       proportion=0.15,
+       proportion=0.10,
        noise_range=(0.02, 0.10),
        noise_step=0.02,
        border_width=0.25,
      ),
      "wave_terrain": terrain_gen.HfWaveTerrainCfg(
-       proportion=0.15,
+       proportion=0.10,
        amplitude_range=(0.0, 0.2),
        num_waves=4,
        border_width=0.25,

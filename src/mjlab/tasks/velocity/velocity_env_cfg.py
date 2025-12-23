@@ -220,12 +220,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "track_angular_velocity": RewardTermCfg(
       func=mdp.track_angular_velocity,
-      weight=2.0,
+      weight=2.5,
       params={"command_name": "twist", "std": math.sqrt(0.5)},
     ),
     "upright": RewardTermCfg(
       func=mdp.flat_orientation,
-      weight=1.0,
+      weight=0.95,
       params={
         "std": math.sqrt(0.2),
         "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
@@ -295,7 +295,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_swing_height": RewardTermCfg(
       func=mdp.feet_swing_height,
-      weight=0.0,
+      weight=-0.1,
       params={
         "sensor_name": "feet_ground_contact",
         "target_height": 0.125,
