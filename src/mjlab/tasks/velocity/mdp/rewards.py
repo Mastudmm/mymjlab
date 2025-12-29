@@ -195,12 +195,21 @@ def feet_clearance(
 
 
 class feet_swing_height:
-  """Penalize deviation from target swing height, evaluated at landing."""
+  """Penalize deviation from target swing height, evaluated at landing.
+  
+  Calculates swing height relative to the foot's position at liftoff.
+  This prevents 'crouch-walking' and adapts to uneven terrain.
+  """
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
     self.sensor_name = cfg.params["sensor_name"]
     self.site_names = cfg.params["asset_cfg"].site_names
+    # Track max height relative to liftoff (starts at 0)
     self.peak_heights = torch.zeros(
+      (env.num_envs, len(self.site_names)), device=env.device, dtype=torch.float32
+    )
+    # Track the foot height at the moment of liftoff
+    self.liftoff_heights = torch.zeros(
       (env.num_envs, len(self.site_names)), device=env.device, dtype=torch.float32
     )
     self.step_dt = env.step_dt
@@ -214,43 +223,79 @@ class feet_swing_height:
     command_threshold: float,
     asset_cfg: SceneEntityCfg,
   ) -> torch.Tensor:
-    asset: Entity = env.scene[asset_cfg.name] #取出实体，后续从asset.data拿去数据
+    asset: Entity = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene[sensor_name]
     command = env.command_manager.get_command(command_name)
     assert command is not None
+    
+    # 1. Get Data
     foot_pos = asset.data.site_pos_w[:, asset_cfg.site_ids, :]
-    terrain_heights = _get_terrain_heights(env, foot_pos)
-    foot_height_rel = foot_pos[..., 2] - terrain_heights
-    in_air = contact_sensor.data.found == 0
+    foot_z = foot_pos[..., 2]
+    
+    # Handle contact sensor dimensions
+    found = contact_sensor.data.found
+    assert found is not None
+    if found.dim() == 3:
+      found = found.squeeze(-1)
+    in_contact = found > 0.5
+    in_air = ~in_contact
+
+    # 2. Update Liftoff Reference
+    # While on ground, the "liftoff height" tracks the current foot height.
+    # When it leaves the ground, this value freezes.
+    self.liftoff_heights = torch.where(
+      in_contact,
+      foot_z,
+      self.liftoff_heights
+    )
+
+    # 3. Calculate Swing Height & Track Peak
+    # Height relative to where we started this step
+    swing_height = foot_z - self.liftoff_heights
+    
+    # Only update peak if we are in the air
     self.peak_heights = torch.where(
       in_air,
-      torch.maximum(self.peak_heights, foot_height_rel),
-      self.peak_heights,
+      torch.maximum(self.peak_heights, swing_height),
+      self.peak_heights
     )
+
+    # 4. Evaluate at Landing (First Contact)
     first_contact = contact_sensor.compute_first_contact(dt=self.step_dt)
-    linear_norm = torch.norm(command[:, :2], dim=1)
-    angular_norm = torch.abs(command[:, 2])
-    total_command = linear_norm + angular_norm
-    active = (total_command > command_threshold).float()
     
+    # Error calculation:
+    # If peak < target (Undershoot): error < 0
+    # If peak > target (Overshoot): error > 0
     error = self.peak_heights / target_height - 1.0
-    # Asymmetric penalty:
-    # If error < 0 (too low), weight 1.0 (strong penalty for tripping risk).
-    # If error > 0 (too high), weight 0.1 (weak penalty for energy saving).
+    
+    # Asymmetric Penalty:
+    # We penalize Undershoot (too low) heavily -> 1.0
+    # We penalize Overshoot (too high) lightly -> 0.1 (allow stepping over things)
     penalty_weight = torch.where(error < 0, 1.0, 0.1)
     
-    cost = torch.sum(torch.square(error) * penalty_weight * first_contact.float(), dim=1) * active
+    # Mask by command (only penalize when moving)
+    linear_norm = torch.norm(command[:, :2], dim=1)
+    angular_norm = torch.abs(command[:, 2])
+    is_moving = (linear_norm + angular_norm) > command_threshold
+    
+    cost = torch.sum(torch.square(error) * penalty_weight * first_contact.float(), dim=1)
+    cost *= is_moving.float()
+
+    # Logging
     num_landings = torch.sum(first_contact.float())
-    peak_heights_at_landing = self.peak_heights * first_contact.float()
-    mean_peak_height = torch.sum(peak_heights_at_landing) / torch.clamp(
-      num_landings, min=1
-    )
-    env.extras["log"]["Metrics/peak_height_mean"] = mean_peak_height
+    if num_landings > 0:
+      peak_heights_at_landing = self.peak_heights * first_contact.float()
+      mean_peak_height = torch.sum(peak_heights_at_landing) / num_landings
+      env.extras["log"]["Metrics/peak_height_mean"] = mean_peak_height
+
+    # 5. Reset
+    # Reset peak to 0 for the next step
     self.peak_heights = torch.where(
       first_contact,
       torch.zeros_like(self.peak_heights),
-      self.peak_heights,
+      self.peak_heights
     )
+    
     return cost
 
 
@@ -423,13 +468,78 @@ def stumble_penalty(
     # Stumble condition:
     # 1. Geometric check: Horizontal force > Vertical force (implies hitting vertical surface).
     # 2. Magnitude check: Horizontal force must be > 10.0N to ignore light scuffing/drag.
-    stumble = ((horizontal_forces > 1.30*vertical_forces) & (horizontal_forces > 7.0)).float()
+    stumble = ((horizontal_forces > 4.0*vertical_forces) & (horizontal_forces > 5.0)).float()
     
     # Penalize by horizontal impact, but CLIP it to prevent reward explosion.
-    penalty = torch.sum(stumble * torch.clamp(horizontal_forces, max=15.0), dim=1)
+    penalty = torch.sum(stumble * torch.clamp(horizontal_forces, max=20.0), dim=1)
     total_penalty += penalty
 
   return total_penalty
+
+
+def feet_clearance_body(
+  env: ManagerBasedRlEnv,
+  target_height: float,
+  tanh_mult: float = 2.0,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize deviation from target foot height in body frame when moving.
+  
+  This is a computationally efficient alternative to feet_clearance that avoids raycasting.
+  It encourages a 'high-stepping' gait relative to the robot's body.
+  
+  Args:
+    target_height: Target height of the foot in the body frame (usually negative, e.g. -0.2).
+    tanh_mult: Scaling factor for the velocity mask.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  
+  # Get foot positions and velocities in world frame
+  # Shape: [B, N, 3]
+  foot_pos_w = asset.data.site_pos_w[:, asset_cfg.site_ids, :]
+  foot_vel_w = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :]
+  
+  # Get root position and orientation
+  # Shape: [B, 3] and [B, 4]
+  root_pos_w = asset.data.root_link_pos_w
+  root_quat_w = asset.data.root_link_quat_w
+  
+  # Calculate relative position/velocity in world frame
+  # Broadcast root: [B, 1, 3]
+  rel_pos_w = foot_pos_w - root_pos_w.unsqueeze(1)
+  rel_vel_w = foot_vel_w - asset.data.root_link_lin_vel_w.unsqueeze(1)
+  
+  # Transform to body frame
+  # We need to apply inverse rotation to each foot.
+  # quat_apply_inverse handles [B, 4] and [B, 3], so we flatten the feet dimension first.
+  B, N, _ = foot_pos_w.shape
+  
+  # Flatten: [B*N, 3]
+  rel_pos_w_flat = rel_pos_w.reshape(-1, 3)
+  rel_vel_w_flat = rel_vel_w.reshape(-1, 3)
+  
+  # Repeat quat: [B*N, 4]
+  root_quat_w_expanded = root_quat_w.repeat_interleave(N, dim=0)
+  
+  # Rotate
+  foot_pos_b_flat = quat_apply_inverse(root_quat_w_expanded, rel_pos_w_flat)
+  foot_vel_b_flat = quat_apply_inverse(root_quat_w_expanded, rel_vel_w_flat)
+  
+  # Reshape back: [B, N, 3]
+  foot_pos_b = foot_pos_b_flat.reshape(B, N, 3)
+  foot_vel_b = foot_vel_b_flat.reshape(B, N, 3)
+  
+  # Calculate cost
+  # 1. Height error: deviation from target Z in body frame
+  foot_z_error = torch.square(foot_pos_b[..., 2] - target_height)
+  
+  # 2. Velocity mask: only penalize when foot is moving horizontally (swing phase)
+  foot_vel_xy_norm = torch.norm(foot_vel_b[..., :2], dim=-1)
+  velocity_mask = torch.tanh(tanh_mult * foot_vel_xy_norm)
+  
+  cost = torch.sum(foot_z_error * velocity_mask, dim=1)
+  
+  return cost
 
 
 def _get_terrain_heights(env: ManagerBasedRlEnv, positions: torch.Tensor) -> torch.Tensor:

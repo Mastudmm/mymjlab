@@ -215,12 +215,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   rewards = {
     "track_linear_velocity": RewardTermCfg(
       func=mdp.track_linear_velocity,
-      weight=5.95,
+      weight=2.95,
       params={"command_name": "twist", "std": math.sqrt(0.25)},
     ),
     "track_angular_velocity": RewardTermCfg(
       func=mdp.track_angular_velocity,
-      weight=2.5,
+      weight=1.25,
       params={"command_name": "twist", "std": math.sqrt(0.5)},
     ),
     "upright": RewardTermCfg(
@@ -278,14 +278,14 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "stumble": RewardTermCfg(
       func=mdp.stumble_penalty,
-      weight=-0.10,
+      weight=-0.02,
       params={
         "sensor_names": "calf_ground_contact",
       },
     ),
     "foot_clearance": RewardTermCfg(
       func=mdp.feet_clearance,
-      weight=-0.001,
+      weight=-0.0001,
       params={
         "target_height": 0.125,
         "command_name": "twist",
@@ -295,10 +295,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_swing_height": RewardTermCfg(
       func=mdp.feet_swing_height,
-      weight=-0.1,
+      weight=-0.02,
       params={
         "sensor_name": "feet_ground_contact",
-        "target_height": 0.125,
+        "target_height": 0.13,
         "command_name": "twist",
         "command_threshold": 0.05,
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
@@ -306,7 +306,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_slip": RewardTermCfg(
       func=mdp.feet_slip,
-      weight=0.0,
+      weight=-0.1,
       params={
         "sensor_name": "feet_ground_contact",
         "command_name": "twist",
