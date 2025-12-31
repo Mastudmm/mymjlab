@@ -416,7 +416,7 @@ class variable_posture:
     ).float()
     running_mask = (total_speed >= running_threshold).float()
 
-    std = (
+    std = ( #std 越小（数值小）：曲线越尖锐。意味着约束非常严格。关节角度只要稍微偏离默认姿态一点点，奖励就会迅速下降归零。
       self.std_standing * standing_mask.unsqueeze(1)
       + self.std_walking * walking_mask.unsqueeze(1)
       + self.std_running * running_mask.unsqueeze(1)
