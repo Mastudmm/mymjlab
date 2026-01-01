@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 import mujoco
 import numpy as np
 import torch
+import os
+import hashlib
 
 from mjlab.entity import Entity
 from mjlab.managers.manager_term_config import RewardTermCfg
@@ -342,7 +344,7 @@ def soft_landing(
   forces = sensor_data.force  # [B, N, 3]
   force_magnitude = torch.norm(forces, dim=-1)  # [B, N]
   first_contact = contact_sensor.compute_first_contact(dt=env.step_dt)  # [B, N]
-  landing_impact = force_magnitude * first_contact.float()  # [B, N]
+  landing_impact = force_magnitude * first_contact.float() # [B, N]
   cost = torch.sum(landing_impact, dim=1)  # [B]
   num_landings = torch.sum(first_contact.float())
   mean_landing_force = torch.sum(landing_impact) / torch.clamp(num_landings, min=1)
@@ -571,6 +573,10 @@ def _get_terrain_heights(env: ManagerBasedRlEnv, positions: torch.Tensor) -> tor
   Returns:
     Tensor of shape (B, N) containing terrain heights.
   """
+  # Allow skipping via env attribute (useful for play/inference)
+  if getattr(env, "skip_terrain_height_map", False):
+    return torch.zeros(positions.shape[:2], device=env.device)
+
   # If terrain is a plane, height is 0.
   # Use getattr to safely access terrain in case it's not defined in the interface
   terrain = getattr(env.scene, "terrain", None)
@@ -586,9 +592,7 @@ def _get_terrain_heights(env: ManagerBasedRlEnv, positions: torch.Tensor) -> tor
 
 
 def _init_terrain_height_map(env: ManagerBasedRlEnv, resolution: float = 0.02):
-  """Pre-compute terrain height map for fast lookup."""
-  print(f"Generating global terrain height map (res={resolution}m)...")
-  
+  """Pre-compute terrain height map for fast lookup with caching."""
   terrain = getattr(env.scene, "terrain", None)
   if terrain is None:
     raise ValueError("Terrain is None, cannot generate height map.")
@@ -598,6 +602,27 @@ def _init_terrain_height_map(env: ManagerBasedRlEnv, resolution: float = 0.02):
   
   if gen_cfg is None:
     raise ValueError("Terrain generator config is None.")
+
+  # Try to load from cache
+  cache_path = None
+  try:
+    # Create a hash based on the string representation of the config and resolution
+    config_str = str(gen_cfg) + f"_res_{resolution}"
+    config_hash = hashlib.md5(config_str.encode('utf-8')).hexdigest()
+    
+    cache_dir = os.path.join(os.getcwd(), "logs", "cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, f"terrain_map_{config_hash}.pt")
+    
+    if os.path.exists(cache_path):
+      print(f"Loading terrain height map from cache: {cache_path}")
+      map_data = torch.load(cache_path, map_location=env.device)
+      setattr(env, "_terrain_height_map", map_data)
+      return
+  except Exception as e:
+    print(f"Cache lookup failed: {e}. Proceeding to generate map.")
+
+  print(f"Generating global terrain height map (res={resolution}m)...")
   
   # Calculate bounds
   # Assuming grid is centered at 0,0
@@ -655,6 +680,15 @@ def _init_terrain_height_map(env: ManagerBasedRlEnv, resolution: float = 0.02):
     "min_y": min_y,
     "max_y": max_y
   }
+
+  # Save to cache if path was determined
+  if cache_path:
+    try:
+      print(f"Saving terrain height map to cache: {cache_path}")
+      torch.save(map_data, cache_path)
+    except Exception as e:
+      print(f"Failed to save cache: {e}")
+
   # Use setattr to avoid linter errors about unknown attributes
   setattr(env, "_terrain_height_map", map_data)
   print("Terrain map generated.")
