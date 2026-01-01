@@ -435,11 +435,19 @@ def track_base_height(
   std: float,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Reward for tracking the base height."""
+  """Reward for tracking the base height relative to the terrain."""
   asset: Entity = env.scene[asset_cfg.name]
-  root_z = asset.data.root_link_pos_w[:, 2]
+  root_pos = asset.data.root_link_pos_w
+  
+  # Get terrain height at the robot's (x, y) position
+  # Reshape root_pos to (B, 1, 3) for the helper function, then squeeze back
+  terrain_heights = _get_terrain_heights(env, root_pos.unsqueeze(1)).squeeze(1)
+  
+  # Calculate height relative to the ground
+  current_height = root_pos[:, 2] - terrain_heights
+  
   # Penalize deviation from target height
-  error = torch.square(root_z - target_height)
+  error = torch.square(current_height - target_height)
   return torch.exp(-error / std**2)
 
 
@@ -543,7 +551,7 @@ def feet_clearance_body(
 
 
 def _get_terrain_heights(env: ManagerBasedRlEnv, positions: torch.Tensor) -> torch.Tensor:
-  """Get terrain heights at specified (x, y) positions using raycasting.
+  """Get terrain heights at specified (x, y) positions using a pre-computed height map.
   
   Args:
     env: The environment instance.
@@ -553,60 +561,116 @@ def _get_terrain_heights(env: ManagerBasedRlEnv, positions: torch.Tensor) -> tor
     Tensor of shape (B, N) containing terrain heights.
   """
   # If terrain is a plane, height is 0.
-  if env.scene.terrain is None or env.scene.terrain.cfg.terrain_type == "plane":
+  # Use getattr to safely access terrain in case it's not defined in the interface
+  terrain = getattr(env.scene, "terrain", None)
+  if terrain is None or terrain.cfg.terrain_type == "plane":
     return torch.zeros(positions.shape[:2], device=env.device)
 
-  # For rough terrain, we use raycasting.
-  # Note: This is a CPU-based implementation and might be slow for large batches.
-  # We cast rays from (x, y, high_z) downwards.
+  # Initialize map if needed
+  if not hasattr(env, "_terrain_height_map"):
+    _init_terrain_height_map(env)
+    
+  # Lookup
+  return _lookup_terrain_height_map(env, positions)
+
+
+def _init_terrain_height_map(env: ManagerBasedRlEnv, resolution: float = 0.1):
+  """Pre-compute terrain height map for fast lookup."""
+  print(f"Generating global terrain height map (res={resolution}m)...")
   
-  B, N = positions.shape[:2]
-  positions_flat = positions.reshape(-1, positions.shape[-1]).cpu().numpy()
-  heights = np.zeros(B * N, dtype=np.float32)
+  terrain = getattr(env.scene, "terrain", None)
+  if terrain is None:
+    raise ValueError("Terrain is None, cannot generate height map.")
+    
+  cfg = terrain.cfg
+  gen_cfg = cfg.terrain_generator
   
-  # Ray parameters
-  ray_pnt = np.zeros(3, dtype=np.float64)
-  ray_vec = np.array([0, 0, -1], dtype=np.float64)
+  if gen_cfg is None:
+    raise ValueError("Terrain generator config is None.")
   
-  # Access simulation data
-  # We need the raw mujoco model/data for mj_ray.
-  # env.sim is the Simulation instance.
-  # It has _mj_model and _mj_data which are the raw MuJoCo objects.
+  # Calculate bounds
+  # Assuming grid is centered at 0,0
+  total_width = gen_cfg.num_rows * gen_cfg.size[0]
+  total_height = gen_cfg.num_cols * gen_cfg.size[1]
+  
+  # Add border width
+  border = gen_cfg.border_width
+  
+  min_x = -total_width / 2 - border
+  max_x = total_width / 2 + border
+  min_y = -total_height / 2 - border
+  max_y = total_height / 2 + border
+  
+  x_points = int((max_x - min_x) / resolution)
+  y_points = int((max_y - min_y) / resolution)
+  
+  # Create grid of points
+  x = np.linspace(min_x, max_x, x_points)
+  y = np.linspace(min_y, max_y, y_points)
+  xx, yy = np.meshgrid(x, y)
+  
+  # Flatten for raycasting
+  points = np.stack([xx.flatten(), yy.flatten()], axis=1)
+  num_points = points.shape[0]
+  
+  # Raycast
   model = env.sim._mj_model
   data = env.sim._mj_data
-
-  # Optimization: Cache terrain heights to reduce CPU overhead.
-  # We update only every 5 steps. This assumes terrain doesn't change abruptly
-  # under the feet within ~0.1s.
-  update_period = 10
-  cache_name = "_terrain_heights_cache"
+  ray_pnt = np.zeros(3, dtype=np.float64)
+  ray_vec = np.array([0, 0, -1], dtype=np.float64)
+  geom_id_arr = np.zeros(1, dtype=np.int32)
   
-  if (
-    hasattr(env, cache_name) 
-    and env.common_step_counter % update_period != 0
-  ):
-    cached = getattr(env, cache_name)
-    if cached.shape == (B, N):
-      return cached
+  heights = np.zeros(num_points, dtype=np.float32)
   
-  # Iterate and cast rays
-  geom_id_arr = np.zeros(1, dtype=np.int32) # Output buffer for geomid
-  
-  for i in range(B * N):
-    ray_pnt[0] = positions_flat[i, 0]
-    ray_pnt[1] = positions_flat[i, 1]
-    ray_pnt[2] = 10.0 # Start from high enough
+  # Loop for raycasting
+  for i in range(num_points):
+    ray_pnt[0] = points[i, 0]
+    ray_pnt[1] = points[i, 1]
+    ray_pnt[2] = 100.0 # High enough
     
-    # geomgroup=None means all groups. 
-    # flg_static=1 means only static geoms (terrain is usually static).
-    # bodyexclude=-1 means no exclusion.
     dist = mujoco.mj_ray(model, data, ray_pnt, ray_vec, None, 1, -1, geom_id_arr)
-    
     if dist > -1:
-      heights[i] = 10.0 - dist
+      heights[i] = 100.0 - dist
     else:
-      heights[i] = 0.0
+      heights[i] = -10.0 # Default to low if missed
+      
+  # Reshape to (H, W) -> (y, x)
+  height_map = torch.from_numpy(heights.reshape(y_points, x_points)).float().to(env.device)
+  
+  map_data = {
+    "map": height_map.unsqueeze(0).unsqueeze(0), # (1, 1, H, W)
+    "min_x": min_x,
+    "max_x": max_x,
+    "min_y": min_y,
+    "max_y": max_y
+  }
+  # Use setattr to avoid linter errors about unknown attributes
+  setattr(env, "_terrain_height_map", map_data)
+  print("Terrain map generated.")
 
-  result = torch.from_numpy(heights).to(device=env.device).reshape(B, N)
-  setattr(env, cache_name, result)
-  return result
+
+def _lookup_terrain_height_map(env: ManagerBasedRlEnv, positions: torch.Tensor) -> torch.Tensor:
+  """Lookup heights using bilinear interpolation."""
+  tm = getattr(env, "_terrain_height_map")
+  
+  x = positions[..., 0]
+  y = positions[..., 1]
+  
+  # Normalize to [-1, 1]
+  norm_x = 2 * (x - tm["min_x"]) / (tm["max_x"] - tm["min_x"]) - 1
+  norm_y = 2 * (y - tm["min_y"]) / (tm["max_y"] - tm["min_y"]) - 1
+  
+  B, N = x.shape
+  # Stack for grid_sample: (1, 1, B*N, 2)
+  grid = torch.stack([norm_x, norm_y], dim=-1).reshape(1, 1, B * N, 2)
+  
+  # Sample
+  sampled = torch.nn.functional.grid_sample(
+    tm["map"], 
+    grid, 
+    mode='bilinear', 
+    padding_mode='border', 
+    align_corners=True
+  )
+  
+  return sampled.reshape(B, N)

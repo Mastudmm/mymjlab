@@ -269,7 +269,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "base_height": RewardTermCfg(
       func=mdp.track_base_height,
-      weight=0.0,
+      weight=0.125,
       params={
         "target_height": 0.28, # Nominal height for Go1
         "std": math.sqrt(0.01), # Tight tolerance
