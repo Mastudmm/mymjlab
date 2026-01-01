@@ -432,23 +432,34 @@ class variable_posture:
 def track_base_height(
   env: ManagerBasedRlEnv,
   target_height: float,
-  std: float,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  sensor_cfg: SceneEntityCfg | None = None,
 ) -> torch.Tensor:
-  """Reward for tracking the base height relative to the terrain."""
+  """Reward for tracking the base height relative to the terrain using L2 penalty.
+  
+  Note:
+    This returns a cost (positive value). The weight in the config should be negative.
+  """
   asset: Entity = env.scene[asset_cfg.name]
   root_pos = asset.data.root_link_pos_w
   
-  # Get terrain height at the robot's (x, y) position
-  # Reshape root_pos to (B, 1, 3) for the helper function, then squeeze back
+  # Get terrain height
+  # If we had a sensor, we would use it. Since we don't, we compute it.
   terrain_heights = _get_terrain_heights(env, root_pos.unsqueeze(1)).squeeze(1)
   
-  # Calculate height relative to the ground
-  current_height = root_pos[:, 2] - terrain_heights
+  # Adjusted target height (target + terrain)
+  adjusted_target_height = target_height + terrain_heights
   
-  # Penalize deviation from target height
-  error = torch.square(current_height - target_height)
-  return torch.exp(-error / std**2)
+  # Compute L2 penalty
+  error = torch.square(root_pos[:, 2] - adjusted_target_height)
+  
+  # Apply gravity scaling (only penalize when upright)
+  # Penalize only if the robot is roughly upright (projected gravity z < 0)
+  # clamp(-proj_grav_z, 0, 0.7) / 0.7 -> 1.0 when upright (-1), 0.0 when tilted > 45 deg
+  proj_grav_z = asset.data.projected_gravity_b[:, 2]
+  scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
+  
+  return error * scale
 
 
 def stumble_penalty(
@@ -574,7 +585,7 @@ def _get_terrain_heights(env: ManagerBasedRlEnv, positions: torch.Tensor) -> tor
   return _lookup_terrain_height_map(env, positions)
 
 
-def _init_terrain_height_map(env: ManagerBasedRlEnv, resolution: float = 0.1):
+def _init_terrain_height_map(env: ManagerBasedRlEnv, resolution: float = 0.02):
   """Pre-compute terrain height map for fast lookup."""
   print(f"Generating global terrain height map (res={resolution}m)...")
   

@@ -240,7 +240,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "std_standing": {},  # Set per-robot.
         "std_walking": {},  # Set per-robot.
         "std_running": {},  # Set per-robot.
-        "walking_threshold": 0.05,
+        "walking_threshold": 0.075,
         "running_threshold": 1.5,
       },
     ),
@@ -269,10 +269,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "base_height": RewardTermCfg(
       func=mdp.track_base_height,
-      weight=0.125,
+      weight=-0.015,
       params={
         "target_height": 0.28, # Nominal height for Go1
-        "std": math.sqrt(0.01), # Tight tolerance
         "asset_cfg": SceneEntityCfg("robot"),
       },
     ),
