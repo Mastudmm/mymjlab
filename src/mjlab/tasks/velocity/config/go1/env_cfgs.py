@@ -105,12 +105,12 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.1,
   }
   cfg.rewards["pose"].params["std_walking"] = {
-    r".*(FR|FL|RR|RL)_(hip|thigh)_joint.*": 0.45,
-    r".*(FR|FL|RR|RL)_calf_joint.*": 0.85,
+    r".*(FR|FL|RR|RL)_(hip|thigh)_joint.*": 0.4,
+    r".*(FR|FL|RR|RL)_calf_joint.*": 0.7,
   }
   cfg.rewards["pose"].params["std_running"] = {
-    r".*(FR|FL|RR|RL)_(hip|thigh)_joint.*": 0.3,
-    r".*(FR|FL|RR|RL)_calf_joint.*": 0.9,
+    r".*(FR|FL|RR|RL)_(hip|thigh)_joint.*": 0.425,
+    r".*(FR|FL|RR|RL)_calf_joint.*": 0.75,
   }
 
   cfg.rewards["upright"].params["asset_cfg"].body_names = ("trunk",)
@@ -124,9 +124,9 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.rewards["air_time"].weight = 0.15
   # Override base placeholder reward: bind sensor + weight.
   cfg.rewards["calf_collision"].params["sensor_name"] = calf_ground_cfg.name
-  cfg.rewards["calf_collision"].weight = -0.015  # tweak within [-1.0, -3.0]
+  cfg.rewards["calf_collision"].weight = -0.315  # tweak within [-1.0, -3.0]
   cfg.rewards["thigh_collision"].params["sensor_name"] = thigh_ground_cfg.name
-  cfg.rewards["thigh_collision"].weight = -0.015  # tweak within [-1.0, -3.0]
+  cfg.rewards["thigh_collision"].weight = -0.315  # tweak within [-1.0, -3.0]
   cfg.rewards["stumble"].params["sensor_names"] = [
     calf_ground_cfg.name,   
     thigh_ground_cfg.name,
