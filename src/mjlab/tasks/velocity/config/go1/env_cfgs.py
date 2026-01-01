@@ -105,12 +105,12 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.1,
   }
   cfg.rewards["pose"].params["std_walking"] = {
-    r".*(FR|FL|RR|RL)_(hip|thigh)_joint.*": 0.3,
-    r".*(FR|FL|RR|RL)_calf_joint.*": 0.6,
+    r".*(FR|FL|RR|RL)_(hip|thigh)_joint.*": 0.45,
+    r".*(FR|FL|RR|RL)_calf_joint.*": 0.85,
   }
   cfg.rewards["pose"].params["std_running"] = {
     r".*(FR|FL|RR|RL)_(hip|thigh)_joint.*": 0.3,
-    r".*(FR|FL|RR|RL)_calf_joint.*": 0.6,
+    r".*(FR|FL|RR|RL)_calf_joint.*": 0.9,
   }
 
   cfg.rewards["upright"].params["asset_cfg"].body_names = ("trunk",)
@@ -131,7 +131,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     calf_ground_cfg.name,   
     thigh_ground_cfg.name,
   ]
-  cfg.rewards["stumble"].weight = -0.5 # Increased penalty to force leg lifting
+  cfg.rewards["stumble"].weight = -0.005 # Increased penalty to force leg lifting
   cfg.rewards["foot_clearance"].weight = 0.0 # Increased penalty for dragging feet
   cfg.rewards["foot_swing_height"].weight = -0.72 # Penalty for deviation from target height (MUST BE NEGATIVE)
   cfg.rewards["stumble"].params={
