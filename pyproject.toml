@@ -94,7 +94,7 @@ required-environments = [
 ]
 
 [[tool.uv.index]]
-url = "https://pypi.org/simple"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 [[tool.uv.index]]
 name = "nvidia"
@@ -103,7 +103,7 @@ explicit = true
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+url = "https://mirrors.nju.edu.cn/pytorch/whl/cu128/"
 explicit = true
 
 [[tool.uv.index]]

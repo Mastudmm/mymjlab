@@ -143,7 +143,7 @@ def run_play(task_id: str, cfg: PlayConfig):
   env = ManagerBasedRlEnv(cfg=env_cfg, device=device, render_mode=render_mode)
   # Skip terrain height map generation during play to speed up startup.
   # This is safe because policy observations typically don't depend on privileged height info.
-  setattr(env, "skip_terrain_height_map", True)#这样做方便快捷，但是缺乏维护性。这个开关是隐形的，只有在这里才看见。
+  # setattr(env, "skip_terrain_height_map", True)#这样做方便快捷，但是缺乏维护性。这个开关是隐形的，只有在这里才看见。
 
   if TRAINED_MODE and cfg.video:
     print("[INFO] Recording videos during play")

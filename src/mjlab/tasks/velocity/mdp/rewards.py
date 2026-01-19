@@ -171,11 +171,21 @@ def feet_clearance(
   command_name: str | None = None,
   command_threshold: float = 0.01,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  sensor_name: str | None = None,
 ) -> torch.Tensor:
-  """Penalize deviation from target clearance height, weighted by foot velocity."""
+  """Penalize deviation from target clearance height, weighted by foot velocity.
+  
+  If `sensor_name` is provided, calculates height relative to the terrain using properties
+  from that sensor (expected to be a RayCastSensor).
+  """
   asset: Entity = env.scene[asset_cfg.name]
   foot_pos = asset.data.site_pos_w[:, asset_cfg.site_ids, :]  # [B, N, 3]
-  terrain_heights = _get_terrain_heights(env, foot_pos)  # [B, N]
+  
+  if sensor_name is not None:
+    terrain_heights = _get_heights_from_sensor(env, sensor_name, foot_pos)
+  else:
+    terrain_heights = torch.zeros(foot_pos.shape[:2], device=env.device)
+
   foot_height_rel = foot_pos[..., 2] - terrain_heights
   foot_vel_xy = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]  # [B, N, 2]
   vel_norm = torch.norm(foot_vel_xy, dim=-1)  # [B, N]
@@ -224,6 +234,7 @@ class feet_swing_height:
     command_name: str,
     command_threshold: float,
     asset_cfg: SceneEntityCfg,
+    height_sensor_name: str | None = None,
   ) -> torch.Tensor:
     asset: Entity = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene[sensor_name]
@@ -232,7 +243,13 @@ class feet_swing_height:
     
     # 1. Get Data
     foot_pos = asset.data.site_pos_w[:, asset_cfg.site_ids, :]
-    foot_z = foot_pos[..., 2]
+    
+    # Calculate foot height. If valid height sensor is provided, use relative to terrain.
+    if height_sensor_name is not None:
+      h_terrain = _get_heights_from_sensor(env, height_sensor_name, foot_pos)
+      foot_z = foot_pos[..., 2] - h_terrain
+    else:
+      foot_z = foot_pos[..., 2]
     
     # Handle contact sensor dimensions
     found = contact_sensor.data.found
@@ -449,6 +466,7 @@ def track_base_height(
   target_height: float,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
   sensor_cfg: SceneEntityCfg | None = None,
+  sensor_name: str | None = None,
 ) -> torch.Tensor:
   """Reward for tracking the base height relative to the terrain using L2 penalty.
   
@@ -459,9 +477,11 @@ def track_base_height(
   root_pos = asset.data.root_link_pos_w
   
   # Get terrain height
-  # If we had a sensor, we would use it. Since we don't, we compute it.
-  terrain_heights = _get_terrain_heights(env, root_pos.unsqueeze(1)).squeeze(1)
-  
+  if sensor_name is not None:
+     terrain_heights = _get_heights_from_sensor(env, sensor_name, root_pos.unsqueeze(1)).squeeze(1)
+  else:
+     terrain_heights = torch.zeros_like(root_pos[:, 2])
+
   # Adjusted target height (target + terrain)
   adjusted_target_height = target_height + terrain_heights
   
@@ -576,159 +596,85 @@ def feet_clearance_body(
   return cost
 
 
-def _get_terrain_heights(env: ManagerBasedRlEnv, positions: torch.Tensor) -> torch.Tensor:
-  """Get terrain heights at specified (x, y) positions using a pre-computed height map.
-  
-  Args:
-    env: The environment instance.
-    positions: Tensor of shape (B, N, 3) or (B, N, 2) containing positions.
-    
-  Returns:
-    Tensor of shape (B, N) containing terrain heights.
-  """
-  # Allow skipping via env attribute (useful for play/inference)
-  if getattr(env, "skip_terrain_height_map", False):
-    return torch.zeros(positions.shape[:2], device=env.device)
-
-  # If terrain is a plane, height is 0.
-  # Use getattr to safely access terrain in case it's not defined in the interface
-  terrain = getattr(env.scene, "terrain", None)
-  if terrain is None or terrain.cfg.terrain_type == "plane":
-    return torch.zeros(positions.shape[:2], device=env.device)
-
-  # Initialize map if needed
-  if not hasattr(env, "_terrain_height_map"):
-    _init_terrain_height_map(env)
-    
-  # Lookup
-  return _lookup_terrain_height_map(env, positions)
-
-
-def _init_terrain_height_map(env: ManagerBasedRlEnv, resolution: float = 0.02):
-  """Pre-compute terrain height map for fast lookup with caching."""
-  terrain = getattr(env.scene, "terrain", None)
-  if terrain is None:
-    raise ValueError("Terrain is None, cannot generate height map.")
-    
-  cfg = terrain.cfg
-  gen_cfg = cfg.terrain_generator
-  
-  if gen_cfg is None:
-    raise ValueError("Terrain generator config is None.")
-
-  # Try to load from cache
-  cache_path = None
+def _get_heights_from_sensor(
+  env: ManagerBasedRlEnv, sensor_name: str, positions: torch.Tensor
+) -> torch.Tensor:
+  """Get terrain heights at specified positions using a RayCastSensor with GridPattern."""
   try:
-    # Create a hash based on the string representation of the config and resolution
-    config_str = str(gen_cfg) + f"_res_{resolution}"
-    config_hash = hashlib.md5(config_str.encode('utf-8')).hexdigest()
+    sensor = env.scene[sensor_name]
+  except KeyError:
+    return torch.zeros(positions.shape[:2], device=env.device)
     
-    cache_dir = os.path.join(os.getcwd(), "logs", "cache")
-    os.makedirs(cache_dir, exist_ok=True)
-    cache_path = os.path.join(cache_dir, f"terrain_map_{config_hash}.pt")
-    
-    if os.path.exists(cache_path):
-      print(f"Loading terrain height map from cache: {cache_path}")
-      map_data = torch.load(cache_path, map_location=env.device)
-      setattr(env, "_terrain_height_map", map_data)
-      return
-  except Exception as e:
-    print(f"Cache lookup failed: {e}. Proceeding to generate map.")
+  # Basic check for sensor type and availability
+  if not hasattr(sensor, "data") or not hasattr(sensor, "cfg") or not hasattr(sensor.cfg, "pattern"):
+    return torch.zeros(positions.shape[:2], device=env.device)
 
-  print(f"Generating global terrain height map (res={resolution}m)...")
-  
-  # Calculate bounds
-  # Assuming grid is centered at 0,0
-  total_width = gen_cfg.num_rows * gen_cfg.size[0]
-  total_height = gen_cfg.num_cols * gen_cfg.size[1]
-  
-  # Add border width
-  border = gen_cfg.border_width
-  
-  min_x = -total_width / 2 - border
-  max_x = total_width / 2 + border
-  min_y = -total_height / 2 - border
-  max_y = total_height / 2 + border
-  
-  x_points = int((max_x - min_x) / resolution)
-  y_points = int((max_y - min_y) / resolution)
-  
-  # Create grid of points
-  x = np.linspace(min_x, max_x, x_points)
-  y = np.linspace(min_y, max_y, y_points)
-  xx, yy = np.meshgrid(x, y)
-  
-  # Flatten for raycasting
-  points = np.stack([xx.flatten(), yy.flatten()], axis=1)
-  num_points = points.shape[0]
-  
-  # Raycast
-  model = env.sim._mj_model
-  data = env.sim._mj_data
-  ray_pnt = np.zeros(3, dtype=np.float64)
-  ray_vec = np.array([0, 0, -1], dtype=np.float64)
-  geom_id_arr = np.zeros(1, dtype=np.int32)
-  
-  heights = np.zeros(num_points, dtype=np.float32)
-  
-  # Loop for raycasting
-  for i in range(num_points):
-    ray_pnt[0] = points[i, 0]
-    ray_pnt[1] = points[i, 1]
-    ray_pnt[2] = 100.0 # High enough
-    
-    dist = mujoco.mj_ray(model, data, ray_pnt, ray_vec, None, 1, -1, geom_id_arr)
-    if dist > -1:
-      heights[i] = 100.0 - dist
-    else:
-      heights[i] = -10.0 # Default to low if missed
-      
-  # Reshape to (H, W) -> (y, x)
-  height_map = torch.from_numpy(heights.reshape(y_points, x_points)).float().to(env.device)
-  
-  map_data = {
-    "map": height_map.unsqueeze(0).unsqueeze(0), # (1, 1, H, W)
-    "min_x": min_x,
-    "max_x": max_x,
-    "min_y": min_y,
-    "max_y": max_y
-  }
+  # Check if pattern has necessary attributes for grid
+  pattern = sensor.cfg.pattern
+  if not hasattr(pattern, "size") or not hasattr(pattern, "resolution"):
+     return torch.zeros(positions.shape[:2], device=env.device)
 
-  # Save to cache if path was determined
-  if cache_path:
-    try:
-      print(f"Saving terrain height map to cache: {cache_path}")
-      torch.save(map_data, cache_path)
-    except Exception as e:
-      print(f"Failed to save cache: {e}")
+  # Reconstruct grid dimensions
+  res = pattern.resolution
+  size_x, size_y = pattern.size
+  
+  # Calculate dimensions (assuming GridPattern generation logic)
+  W = int(torch.arange(-size_x / 2, size_x / 2 + res * 0.5, res).shape[0])
+  H = int(torch.arange(-size_y / 2, size_y / 2 + res * 0.5, res).shape[0])
 
-  # Use setattr to avoid linter errors about unknown attributes
-  setattr(env, "_terrain_height_map", map_data)
-  print("Terrain map generated.")
+  if H * W != sensor.num_rays:
+    # Fallback if dimensions don't match (e.g. pattern changed)
+    return torch.zeros(positions.shape[:2], device=env.device)
 
+  # Get Z heights from sensor world hit positions
+  # hit_pos_w is [B, N, 3]
+  # We extract Z: [B, N]
+  # Handle misses: if distance < 0, the ray missed (sky/hole).
+  # RayCastSensor usually sets hit_pos to origin on miss, which is high (robot body).
+  # We want misses to be treated as "far below" (deep pit) so clearance is valid (safe).
+  hit_pos_z = sensor.data.hit_pos_w[..., 2].clone()
+  distances = sensor.data.distances
+  # Set misses to -10.0m (effectively infinite depth for locomotion)
+  hit_pos_z[distances < 0] = -10.0
 
-def _lookup_terrain_height_map(env: ManagerBasedRlEnv, positions: torch.Tensor) -> torch.Tensor:
-  """Lookup heights using bilinear interpolation."""
-  tm = getattr(env, "_terrain_height_map")
+  height_map = hit_pos_z.reshape(env.num_envs, 1, H, W)
+
+  # Transform query positions to sensor local frame
+  sensor_pos = sensor.data.pos_w
+  sensor_quat = sensor.data.quat_w
   
-  x = positions[..., 0]
-  y = positions[..., 1]
+  B, N_query, _ = positions.shape
+  rel_pos = positions - sensor_pos.unsqueeze(1) # [B, Nq, 3]
   
-  # Normalize to [-1, 1]
-  norm_x = 2 * (x - tm["min_x"]) / (tm["max_x"] - tm["min_x"]) - 1
-  norm_y = 2 * (y - tm["min_y"]) / (tm["max_y"] - tm["min_y"]) - 1
+  # Apply inverse rotation
+  q_expanded = sensor_quat.repeat_interleave(N_query, dim=0)
+  p_flat = rel_pos.reshape(-1, 3)
+  local_pos_flat = quat_apply_inverse(q_expanded, p_flat)
+  local_pos = local_pos_flat.reshape(B, N_query, 3)
   
-  B, N = x.shape
-  # Stack for grid_sample: (1, 1, B*N, 2)
-  grid = torch.stack([norm_x, norm_y], dim=-1).reshape(1, 1, B * N, 2)
+  local_x = local_pos[..., 0]
+  local_y = local_pos[..., 1]
+
+  # Normalize coordinates to [-1, 1] for grid_sample
+  min_x = -size_x / 2
+  max_x = min_x + (W - 1) * res
+  min_y = -size_y / 2
+  max_y = min_y + (H - 1) * res
+
+  norm_x = 2 * (local_x - min_x) / (max_x - min_x) - 1
+  norm_y = 2 * (local_y - min_y) / (max_y - min_y) - 1
+
+  # Create sampling grid: [B, H_out, W_out, 2]
+  grid = torch.stack([norm_x, norm_y], dim=-1).reshape(B, 1, N_query, 2)
   
-  # Sample
   sampled = torch.nn.functional.grid_sample(
-    tm["map"], 
-    grid, 
-    mode='bilinear', 
-    padding_mode='border', 
+    height_map,
+    grid,
+    mode='bilinear',
+    padding_mode='border',
     align_corners=True
   )
-  
-  return sampled.reshape(B, N)
+  # sampled is [B, 1, 1, Nq]
+  return sampled.reshape(B, N_query)
+
+

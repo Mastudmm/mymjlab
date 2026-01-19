@@ -7,7 +7,7 @@ from mjlab.asset_zoo.robots import (
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
-from mjlab.sensor import ContactMatch, ContactSensorCfg
+from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg, ObjRef, GridPatternCfg
 from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 
@@ -77,12 +77,23 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     reduce="none",
     num_slots=1,
   )
+  
+  # RayCast Sensor for height scanner
+  height_scanner = RayCastSensorCfg(
+    name="height_scanner",
+    frame=ObjRef(type="body", name="trunk", entity="robot"),
+    pattern=GridPatternCfg(size=(2.0, 2.0), resolution=0.1),
+    exclude_parent_body=True,
+    ray_alignment="yaw", # Yaw aligned, so it stays gravity-aligned but rotates with robot yaw
+  )
+
   # Register sensors: feet (for gait), calf (allowed), thigh (penalty), body (illegal contact).
   cfg.scene.sensors = (
     feet_ground_cfg,
     calf_ground_cfg,
     thigh_ground_cfg,
     nonfootleg_ground_cfg,
+    height_scanner,
   )
 
   if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
@@ -118,6 +129,17 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   cfg.rewards["upright"].params["asset_cfg"].body_names = ("trunk",)
   cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = ("trunk",)
+  
+  # Configure rewards to use height scanner
+  cfg.rewards["foot_clearance"].params["sensor_name"] = "height_scanner"
+  
+  # Update base height tracking if it exists
+  if "base_height" in cfg.rewards:
+     cfg.rewards["base_height"].params["sensor_name"] = "height_scanner"
+     
+  # Update foot swing height if it exists
+  if "foot_swing_height" in cfg.rewards:
+      cfg.rewards["foot_swing_height"].params["height_sensor_name"] = "height_scanner"
 
   for reward_name in ["foot_clearance", "foot_swing_height", "foot_slip"]:
     cfg.rewards[reward_name].params["asset_cfg"].site_names = site_names
