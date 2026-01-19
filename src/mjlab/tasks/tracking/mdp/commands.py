@@ -49,23 +49,11 @@ class MotionLoader:
       data["body_ang_vel_w"], dtype=torch.float32, device=device
     )
     self._body_indexes = body_indexes
+    self.body_pos_w = self._body_pos_w[:, self._body_indexes]
+    self.body_quat_w = self._body_quat_w[:, self._body_indexes]
+    self.body_lin_vel_w = self._body_lin_vel_w[:, self._body_indexes]
+    self.body_ang_vel_w = self._body_ang_vel_w[:, self._body_indexes]
     self.time_step_total = self.joint_pos.shape[0]
-
-  @property
-  def body_pos_w(self) -> torch.Tensor:
-    return self._body_pos_w[:, self._body_indexes]
-
-  @property
-  def body_quat_w(self) -> torch.Tensor:
-    return self._body_quat_w[:, self._body_indexes]
-
-  @property
-  def body_lin_vel_w(self) -> torch.Tensor:
-    return self._body_lin_vel_w[:, self._body_indexes]
-
-  @property
-  def body_ang_vel_w(self) -> torch.Tensor:
-    return self._body_ang_vel_w[:, self._body_indexes]
 
 
 class MotionCommand(CommandTerm):
@@ -75,7 +63,7 @@ class MotionCommand(CommandTerm):
   def __init__(self, cfg: MotionCommandCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
 
-    self.robot: Entity = env.scene[cfg.asset_name]
+    self.robot: Entity = env.scene[cfg.entity_name]
     self.robot_anchor_body_index = self.robot.body_names.index(
       self.cfg.anchor_body_name
     )
@@ -418,7 +406,7 @@ class MotionCommand(CommandTerm):
         self._ghost_model = copy.deepcopy(self._env.sim.mj_model)
         self._ghost_model.geom_rgba[:] = self._ghost_color
 
-      entity: Entity = self._env.scene[self.cfg.asset_name]
+      entity: Entity = self._env.scene[self.cfg.entity_name]
       indexing = entity.indexing
       free_joint_q_adr = indexing.free_joint_q_adr.cpu().numpy()
       joint_q_adr = indexing.joint_q_adr.cpu().numpy()
@@ -483,8 +471,7 @@ class MotionCommandCfg(CommandTermCfg):
   motion_file: str
   anchor_body_name: str
   body_names: tuple[str, ...]
-  asset_name: str
-  class_type: type[CommandTerm] = MotionCommand
+  entity_name: str
   pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   joint_position_range: tuple[float, float] = (-0.52, 0.52)
@@ -500,3 +487,6 @@ class MotionCommandCfg(CommandTermCfg):
     ghost_color: tuple[float, float, float, float] = (0.5, 0.7, 0.5, 0.5)
 
   viz: VizCfg = field(default_factory=VizCfg)
+
+  def build(self, env: ManagerBasedRlEnv) -> MotionCommand:
+    return MotionCommand(self, env)

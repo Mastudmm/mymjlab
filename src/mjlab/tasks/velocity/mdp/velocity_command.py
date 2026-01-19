@@ -7,8 +7,7 @@ import numpy as np
 import torch
 
 from mjlab.entity import Entity
-from mjlab.managers.command_manager import CommandTerm
-from mjlab.managers.manager_term_config import CommandTermCfg
+from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
 from mjlab.utils.lab_api.math import (
   matrix_from_quat,
   quat_apply,
@@ -31,7 +30,7 @@ class UniformVelocityCommand(CommandTerm):
     if self.cfg.ranges.heading and not self.cfg.heading_command:
       raise ValueError("ranges.heading is set but heading_command=False.")
 
-    self.robot: Entity = env.scene[cfg.asset_name]
+    self.robot: Entity = env.scene[cfg.entity_name]
 
     # 命令缓冲区（每个 env 的命令，机器人基座坐标系）：[线速度_x, 线速度_y, 角速度_z]
     # 说明：第三个分量（角速度_z）有两种可能来源：
@@ -221,7 +220,7 @@ class UniformVelocityCommand(CommandTerm):
 
 @dataclass(kw_only=True)
 class UniformVelocityCommandCfg(CommandTermCfg):
-  asset_name: str
+  entity_name: str
   heading_command: bool = False
   heading_control_stiffness: float = 1.0
   rel_standing_envs: float = 0.0
@@ -229,7 +228,6 @@ class UniformVelocityCommandCfg(CommandTermCfg):
   rel_pure_x_envs: float = 0.0
   rel_pure_y_envs: float = 0.0
   init_velocity_prob: float = 0.0
-  class_type: type[CommandTerm] = UniformVelocityCommand
 
   @dataclass
   class Ranges:
@@ -246,6 +244,9 @@ class UniformVelocityCommandCfg(CommandTermCfg):
     scale: float = 0.5
 
   viz: VizCfg = field(default_factory=VizCfg)
+
+  def build(self, env: ManagerBasedRlEnv) -> UniformVelocityCommand:
+    return UniformVelocityCommand(self, env)
 
   def __post_init__(self):
     if self.heading_command and self.ranges.heading is None:

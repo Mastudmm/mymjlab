@@ -9,15 +9,15 @@ from pathlib import Path
 from typing import Literal, cast
 
 import tyro
-from rsl_rl.runners import OnPolicyRunner
 
 from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
-from mjlab.rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
+from mjlab.rl import MjlabOnPolicyRunner, RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.utils.gpu import select_gpus
 from mjlab.utils.os import dump_yaml, get_checkpoint_path, get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
+from mjlab.utils.wandb import add_wandb_tags
 from mjlab.utils.wrappers import VideoRecorder
 
 
@@ -67,10 +67,8 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   registry_name: str | None = None
 
   # Check if this is a tracking task by checking for motion command.
-  is_tracking_task = (
-    cfg.env.commands is not None
-    and "motion" in cfg.env.commands
-    and isinstance(cfg.env.commands["motion"], MotionCommandCfg)
+  is_tracking_task = "motion" in cfg.env.commands and isinstance(
+    cfg.env.commands["motion"], MotionCommandCfg
   )
 
   if is_tracking_task:
@@ -86,7 +84,6 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
     api = wandb.Api()
     artifact = api.artifact(registry_name)
 
-    assert cfg.env.commands is not None
     motion_cmd = cfg.env.commands["motion"]
     assert isinstance(motion_cmd, MotionCommandCfg)
     motion_cmd.motion_file = str(Path(artifact.download()) / "motion.npz")
@@ -144,7 +141,7 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
 
   runner_cls = load_runner_cls(task_id)
   if runner_cls is None:
-    runner_cls = OnPolicyRunner
+    runner_cls = MjlabOnPolicyRunner
 
   runner_kwargs = {}
   if is_tracking_task:
@@ -152,6 +149,7 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
 
   runner = runner_cls(env, agent_cfg, str(log_dir), device, **runner_kwargs)
 
+  add_wandb_tags(cfg.agent.wandb_tags)
   runner.add_git_repo_to_log(__file__)
   if resume_path is not None:
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
