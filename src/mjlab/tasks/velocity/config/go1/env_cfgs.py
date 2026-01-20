@@ -88,7 +88,12 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
           # Single ray pointing down
           pattern=GridPatternCfg(size=(0.0, 0.0), resolution=1.0, direction=(0.0, 0.0, -1.0)),
           ray_alignment="world", # Always point down in world frame, ignore foot rotation
-          max_distance=1.5, # Reduce for performance (was 10.0)
+          max_distance=1.5,
+          debug_vis=False, # Ensure debug visualization is off
+          # OPTIMIZATION: Only hit terrain (usually group 0), ignore robot parts (usually 1, 2...)
+          # If this causes rays to pass through floor, remove this line.
+          include_geom_groups=(0,), 
+          exclude_parent_body=True, 
       )
       foot_ray_sensors.append(sensor)
   
@@ -98,7 +103,10 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       frame=ObjRef(type="body", name="trunk", entity="robot"),
       pattern=GridPatternCfg(size=(0.0, 0.0), resolution=1.0, direction=(0.0, 0.0, -1.0)),
       ray_alignment="world", 
-      max_distance=1.5, # Reduce for performance (was 10.0)
+      max_distance=1.5,
+      debug_vis=False,
+      include_geom_groups=(0,),
+      exclude_parent_body=True,
   )
 
   # Register sensors
@@ -107,9 +115,10 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     calf_ground_cfg,
     thigh_ground_cfg,
     nonfootleg_ground_cfg,
-    # *foot_ray_sensors, # TEMPORARY: Disabled for performance debug
-    # base_ray_sensor,   # TEMPORARY: Disabled for performance debug
+    *foot_ray_sensors, 
+    base_ray_sensor,
   )
+
 
   if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
     cfg.scene.terrain.terrain_generator.curriculum = True
@@ -147,17 +156,16 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   
   # Configure rewards to use single-ray sensors
   # We pass a list of sensor names that match the order of the sites (FR, FL, RR, RL)
-  # TEMPORARY: Commented out to disable ray dependency
-  # foot_ray_names = [f"ray_{name}" for name in site_names]
-  # cfg.rewards["foot_clearance"].params["sensor_name"] = foot_ray_names
+  foot_ray_names = [f"ray_{name}" for name in site_names]
+  cfg.rewards["foot_clearance"].params["sensor_name"] = foot_ray_names
   
   # Update base height tracking if it exists
-  # if "base_height" in cfg.rewards:
-  #    cfg.rewards["base_height"].params["sensor_name"] = "ray_base"
+  if "base_height" in cfg.rewards:
+     cfg.rewards["base_height"].params["sensor_name"] = "ray_base"
      
   # Update foot swing height if it exists
-  # if "foot_swing_height" in cfg.rewards:
-  #     cfg.rewards["foot_swing_height"].params["height_sensor_name"] = foot_ray_names
+  if "foot_swing_height" in cfg.rewards:
+      cfg.rewards["foot_swing_height"].params["height_sensor_name"] = foot_ray_names
 
   for reward_name in ["foot_clearance", "foot_swing_height", "foot_slip"]:
     cfg.rewards[reward_name].params["asset_cfg"].site_names = site_names
