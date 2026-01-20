@@ -16,8 +16,8 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Create Unitree Go1 rough terrain velocity configuration."""
   cfg = make_velocity_env_cfg()
 
-  cfg.sim.mujoco.ccd_iterations = 500
-  cfg.sim.contact_sensor_maxmatch = 500
+  cfg.sim.mujoco.ccd_iterations = 50 # Disable or keep low for performance
+  cfg.sim.contact_sensor_maxmatch = 64 # Sufficient for most terrains
 
   cfg.scene.entities = {"robot": get_go1_robot_cfg()}
 
@@ -173,9 +173,9 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     calf_ground_cfg.name,   
     thigh_ground_cfg.name,
   ]
-  cfg.rewards["stumble"].weight = -0.85 # Increased penalty to force leg lifting
-  cfg.rewards["foot_clearance"].weight = 0.0 
-  cfg.rewards["foot_swing_height"].weight = 0.0 # Penalty for deviation from target height (MUST BE NEGATIVE)
+  cfg.rewards["stumble"].weight = -0.55 # Increased penalty to force leg lifting
+  cfg.rewards["foot_clearance"].weight = -0.01 
+  cfg.rewards["foot_swing_height"].weight = -0.2 # Penalty for deviation from target height (MUST BE NEGATIVE)
   cfg.rewards["stumble"].params={
         "sensor_names": ["feet_ground_contact","calf_ground_contact"],
       }

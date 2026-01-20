@@ -709,14 +709,15 @@ def _get_heights_from_single_ray_sensors(
       # Read hit Z
       # sensor.data.hit_pos_w is [B, ray_num, 3]. For single ray, ray_num=1.
       # [B, 1, 3] -> [B]
-      hit_z = sensor.data.hit_pos_w[..., 0, 2].clone()
+      hit_z = sensor.data.hit_pos_w[..., 0, 2] # View, no clone
       dist = sensor.data.distances[..., 0]
       
       # Handle misses: if dist < 0, it means we scanned "sky" or hole.
-      # hit_pos defaults to origin. We set to very low value so clearance is safe.
-      hit_z[dist < 0] = -10.0
+      # Use torch.where to avoid in-place modification and cloning
+      # If dist < 0, use -10.0, else use hit_z
+      safe_z = torch.where(dist < 0, torch.tensor(-10.0, device=env.device), hit_z)
       
-      heights_list.append(hit_z)
+      heights_list.append(safe_z)
       
   # Stack: [B, N]
   result = torch.stack(heights_list, dim=1)
