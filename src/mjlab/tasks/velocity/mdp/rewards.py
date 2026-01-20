@@ -171,18 +171,19 @@ def feet_clearance(
   command_name: str | None = None,
   command_threshold: float = 0.01,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-  sensor_name: str | None = None,
+  sensor_name: str | list[str] | None = None,
 ) -> torch.Tensor:
   """Penalize deviation from target clearance height, weighted by foot velocity.
   
-  If `sensor_name` is provided, calculates height relative to the terrain using properties
-  from that sensor (expected to be a RayCastSensor).
+  If `sensor_name` is provided (string or list of strings), calculates height relative to 
+  the terrain using those specific sensors (single-ray per foot).
   """
   asset: Entity = env.scene[asset_cfg.name]
   foot_pos = asset.data.site_pos_w[:, asset_cfg.site_ids, :]  # [B, N, 3]
   
   if sensor_name is not None:
-    terrain_heights = _get_heights_from_sensor(env, sensor_name, foot_pos)
+    # Use the new single-ray lookup logic
+    terrain_heights = _get_heights_from_single_ray_sensors(env, sensor_name)
   else:
     terrain_heights = torch.zeros(foot_pos.shape[:2], device=env.device)
 
@@ -234,7 +235,7 @@ class feet_swing_height:
     command_name: str,
     command_threshold: float,
     asset_cfg: SceneEntityCfg,
-    height_sensor_name: str | None = None,
+    height_sensor_name: str | list[str] | None = None,
   ) -> torch.Tensor:
     asset: Entity = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene[sensor_name]
@@ -246,7 +247,7 @@ class feet_swing_height:
     
     # Calculate foot height. If valid height sensor is provided, use relative to terrain.
     if height_sensor_name is not None:
-      h_terrain = _get_heights_from_sensor(env, height_sensor_name, foot_pos)
+      h_terrain = _get_heights_from_single_ray_sensors(env, height_sensor_name)
       foot_z = foot_pos[..., 2] - h_terrain
     else:
       foot_z = foot_pos[..., 2]
@@ -478,7 +479,7 @@ def track_base_height(
   
   # Get terrain height
   if sensor_name is not None:
-     terrain_heights = _get_heights_from_sensor(env, sensor_name, root_pos.unsqueeze(1)).squeeze(1)
+     terrain_heights = _get_heights_from_single_ray_sensors(env, sensor_name)
   else:
      terrain_heights = torch.zeros_like(root_pos[:, 2])
 
@@ -676,5 +677,52 @@ def _get_heights_from_sensor(
   )
   # sampled is [B, 1, 1, Nq]
   return sampled.reshape(B, N_query)
+
+
+def _get_heights_from_single_ray_sensors(
+  env: ManagerBasedRlEnv, sensor_names: str | list[str]
+) -> torch.Tensor:
+  """Get terrain heights by reading Z-hit positions from one or more single-ray sensors.
+  
+  Args:
+      env: Environment instance.
+      sensor_names: Single sensor name or list of sensor names (e.g. one per foot).
+      
+  Returns:
+      Tensor of shape [B, N] (if list) or [B] (if single string), where N is len(list).
+  """
+  if isinstance(sensor_names, str):
+      sensor_names = [sensor_names]
+      is_single = True
+  else:
+      is_single = False
+      
+  heights_list = []
+  for name in sensor_names:
+      try:
+          sensor = env.scene[name]
+      except KeyError:
+          # Fallback: return 0.0 if sensor not found
+          heights_list.append(torch.zeros(env.num_envs, device=env.device))
+          continue
+          
+      # Read hit Z
+      # sensor.data.hit_pos_w is [B, ray_num, 3]. For single ray, ray_num=1.
+      # [B, 1, 3] -> [B]
+      hit_z = sensor.data.hit_pos_w[..., 0, 2].clone()
+      dist = sensor.data.distances[..., 0]
+      
+      # Handle misses: if dist < 0, it means we scanned "sky" or hole.
+      # hit_pos defaults to origin. We set to very low value so clearance is safe.
+      hit_z[dist < 0] = -10.0
+      
+      heights_list.append(hit_z)
+      
+  # Stack: [B, N]
+  result = torch.stack(heights_list, dim=1)
+  
+  if is_single:
+      return result.squeeze(1) # [B]
+  return result
 
 

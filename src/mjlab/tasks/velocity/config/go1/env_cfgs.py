@@ -78,22 +78,37 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     num_slots=1,
   )
   
-  # RayCast Sensor for height scanner
-  height_scanner = RayCastSensorCfg(
-    name="height_scanner",
-    frame=ObjRef(type="body", name="trunk", entity="robot"),
-    pattern=GridPatternCfg(size=(2.0, 2.0), resolution=0.1),
-    exclude_parent_body=True,
-    ray_alignment="yaw", # Yaw aligned, so it stays gravity-aligned but rotates with robot yaw
+  # Minimalistic Per-Foot Ray Sensors (1 ray per foot)
+  # This dramatically reduces VRAM usage and computation vs a full grid.
+  foot_ray_sensors = []
+  for site_name in site_names: # FR, FL, RR, RL
+      sensor = RayCastSensorCfg(
+          name=f"ray_{site_name}",
+          frame=ObjRef(type="site", name=site_name, entity="robot"),
+          # Single ray pointing down
+          pattern=GridPatternCfg(size=(0.0, 0.0), resolution=1.0, direction=(0.0, 0.0, -1.0)),
+          ray_alignment="world", # Always point down in world frame, ignore foot rotation
+          max_distance=10.0,
+      )
+      foot_ray_sensors.append(sensor)
+  
+  # Base height sensor (1 ray at trunk center)
+  base_ray_sensor = RayCastSensorCfg(
+      name="ray_base",
+      frame=ObjRef(type="body", name="trunk", entity="robot"),
+      pattern=GridPatternCfg(size=(0.0, 0.0), resolution=1.0, direction=(0.0, 0.0, -1.0)),
+      ray_alignment="world", 
+      max_distance=10.0,
   )
 
-  # Register sensors: feet (for gait), calf (allowed), thigh (penalty), body (illegal contact).
+  # Register sensors
   cfg.scene.sensors = (
     feet_ground_cfg,
     calf_ground_cfg,
     thigh_ground_cfg,
     nonfootleg_ground_cfg,
-    height_scanner,
+    *foot_ray_sensors,
+    base_ray_sensor,
   )
 
   if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
@@ -130,16 +145,18 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.rewards["upright"].params["asset_cfg"].body_names = ("trunk",)
   cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = ("trunk",)
   
-  # Configure rewards to use height scanner
-  cfg.rewards["foot_clearance"].params["sensor_name"] = "height_scanner"
+  # Configure rewards to use single-ray sensors
+  # We pass a list of sensor names that match the order of the sites (FR, FL, RR, RL)
+  foot_ray_names = [f"ray_{name}" for name in site_names]
+  cfg.rewards["foot_clearance"].params["sensor_name"] = foot_ray_names
   
   # Update base height tracking if it exists
   if "base_height" in cfg.rewards:
-     cfg.rewards["base_height"].params["sensor_name"] = "height_scanner"
+     cfg.rewards["base_height"].params["sensor_name"] = "ray_base"
      
   # Update foot swing height if it exists
   if "foot_swing_height" in cfg.rewards:
-      cfg.rewards["foot_swing_height"].params["height_sensor_name"] = "height_scanner"
+      cfg.rewards["foot_swing_height"].params["height_sensor_name"] = foot_ray_names
 
   for reward_name in ["foot_clearance", "foot_swing_height", "foot_slip"]:
     cfg.rewards[reward_name].params["asset_cfg"].site_names = site_names
