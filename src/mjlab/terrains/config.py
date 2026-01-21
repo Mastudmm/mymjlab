@@ -5,22 +5,22 @@ from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
 from mjlab.terrains.terrain_importer import TerrainImporter, TerrainImporterCfg
 
 ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
-  size=(8.0, 8.0),
+  size=(8.0, 8.0),#每个小地形的大小
   border_width=20.0,
   num_rows=10,
   num_cols=20,
   sub_terrains={
-    "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.2),
+    "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.05),
     "pyramid_stairs": terrain_gen.BoxPyramidStairsTerrainCfg(
-      proportion=0.2,
-      step_height_range=(0.0, 0.1),
+      proportion=0.1,
+      step_height_range=(0.0, 0.25),
       step_width=0.3,
       platform_width=3.0,
       border_width=1.0,
     ),
     "pyramid_stairs_inv": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
-      proportion=0.2,
-      step_height_range=(0.0, 0.1),
+      proportion=0.4,
+      step_height_range=(0.0, 0.2),
       step_width=0.3,
       platform_width=3.0,
       border_width=1.0,
@@ -32,7 +32,7 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
       border_width=0.25,
     ),
     "hf_pyramid_slope_inv": terrain_gen.HfPyramidSlopedTerrainCfg(
-      proportion=0.1,
+      proportion=0.15,
       slope_range=(0.0, 1.0),
       platform_width=2.0,
       border_width=0.25,
@@ -40,7 +40,7 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     ),
     "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
       proportion=0.1,
-      noise_range=(0.02, 0.10),
+      noise_range=(0.02, 0.15),
       noise_step=0.02,
       border_width=0.25,
     ),

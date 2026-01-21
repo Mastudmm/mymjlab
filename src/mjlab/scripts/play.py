@@ -35,6 +35,7 @@ class PlayConfig:
   video_width: int | None = None
   camera: int | str | None = None
   viewer: Literal["auto", "native", "viser"] = "auto"
+  seed: int | None = None
 
   # Internal flag used by demo script.
   _demo_mode: tyro.conf.Suppress[bool] = False
@@ -46,6 +47,8 @@ def run_play(task_id: str, cfg: PlayConfig):
   device = cfg.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
 
   env_cfg = load_env_cfg(task_id, play=True)
+  if cfg.seed is not None:
+    env_cfg.seed = cfg.seed
   agent_cfg = load_rl_cfg(task_id)
 
   DUMMY_MODE = cfg.agent in {"zero", "random"}

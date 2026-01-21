@@ -175,16 +175,16 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.rewards["air_time"].weight = 0.15
   # Override base placeholder reward: bind sensor + weight.
   cfg.rewards["calf_collision"].params["sensor_name"] = calf_ground_cfg.name
-  cfg.rewards["calf_collision"].weight = -0.35  # tweak within [-1.0, -3.0]
+  cfg.rewards["calf_collision"].weight = -0.45  # tweak within [-1.0, -3.0]
   cfg.rewards["thigh_collision"].params["sensor_name"] = thigh_ground_cfg.name
-  cfg.rewards["thigh_collision"].weight = -0.325  # tweak within [-1.0, -3.0]
+  cfg.rewards["thigh_collision"].weight = -0.425  # tweak within [-1.0, -3.0]
   cfg.rewards["stumble"].params["sensor_names"] = [
     calf_ground_cfg.name,   
     thigh_ground_cfg.name,
   ]
-  cfg.rewards["stumble"].weight = -0.55 # Increased penalty to force leg lifting
-  cfg.rewards["foot_clearance"].weight = -0.01 
-  cfg.rewards["foot_swing_height"].weight = -0.2 # Penalty for deviation from target height (MUST BE NEGATIVE)
+  cfg.rewards["stumble"].weight = -0.45 # Increased penalty to force leg lifting
+  cfg.rewards["foot_clearance"].weight = -0.015 
+  cfg.rewards["foot_swing_height"].weight = -0.35 # Penalty for deviation from target height (MUST BE NEGATIVE)
   cfg.rewards["stumble"].params={
         "sensor_names": ["feet_ground_contact","calf_ground_contact"],
       }
@@ -205,8 +205,8 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     if cfg.scene.terrain is not None:
       if cfg.scene.terrain.terrain_generator is not None:
         cfg.scene.terrain.terrain_generator.curriculum = False
-        cfg.scene.terrain.terrain_generator.num_cols = 5
-        cfg.scene.terrain.terrain_generator.num_rows = 5
+        cfg.scene.terrain.terrain_generator.num_cols = 6
+        cfg.scene.terrain.terrain_generator.num_rows = 6
         cfg.scene.terrain.terrain_generator.border_width = 10.0
 
   return cfg

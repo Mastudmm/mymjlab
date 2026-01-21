@@ -329,7 +329,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_swing_height": RewardTermCfg(
       func=mdp.feet_swing_height,
-      weight=-0.035,
+      weight=0.0,
       params={
         "sensor_name": "feet_ground_contact",
         "target_height": 0.13,
@@ -340,7 +340,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_slip": RewardTermCfg(
       func=mdp.feet_slip,
-      weight=-0.45,
+      weight=-0.35,
       params={
         "sensor_name": "feet_ground_contact",
         "command_name": "twist",
