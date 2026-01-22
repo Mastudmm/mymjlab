@@ -143,8 +143,8 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.1,
   }
   cfg.rewards["pose"].params["std_walking"] = {
-    r".*(FR|FL|RR|RL)_(hip|thigh)_joint.*": 0.35,
-    r".*(FR|FL|RR|RL)_calf_joint.*": 0.7,
+    r".*(FR|FL|RR|RL)_(hip|thigh)_joint.*": 0.365,
+    r".*(FR|FL|RR|RL)_calf_joint.*": 0.725,
   }
   cfg.rewards["pose"].params["std_running"] = {
     r".*(FR|FL|RR|RL)_(hip|thigh)_joint.*": 0.375,
