@@ -6,6 +6,8 @@ from mjlab.asset_zoo.robots import (
 )
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
+from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg, ObjRef, GridPatternCfg
 from mjlab.tasks.velocity import mdp
@@ -138,6 +140,38 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = geom_names
   cfg.events["base_com"].params["asset_cfg"].body_names = ("trunk",)
 
+  # Added Domain Randomization: Mass, Damping, Friction Loss
+  cfg.events["body_mass"] = EventTermCfg(
+      func=mdp.randomize_field,
+      mode="startup",
+      params={
+          "asset_cfg": SceneEntityCfg("robot", body_names="trunk"),
+          "field": "body_mass",
+          "operation": "scale",
+          "ranges": (0.8, 1.2), # Mass +/- 20%
+      },
+  )
+  cfg.events["dof_friction"] = EventTermCfg(
+      func=mdp.randomize_field,
+      mode="startup",
+      params={
+          "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+          "field": "dof_frictionloss",
+          "operation": "add",
+          "ranges": (0.0, 0.2), # Add random friction loss
+      },
+  )
+  cfg.events["dof_damping"] = EventTermCfg(
+      func=mdp.randomize_field,
+      mode="startup",
+      params={
+          "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+          "field": "dof_damping",
+          "operation": "scale",
+          "ranges": (0.8, 1.2), # Damping +/- 20%
+      },
+  )
+
   cfg.rewards["pose"].params["std_standing"] = {
     r".*(FR|FL|RR|RL)_(hip|thigh)_joint.*": 0.05,
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.1,
@@ -175,19 +209,20 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.rewards["air_time"].weight = 0.15
   # Override base placeholder reward: bind sensor + weight.
   cfg.rewards["calf_collision"].params["sensor_name"] = calf_ground_cfg.name
-  cfg.rewards["calf_collision"].weight = -0.45  # tweak within [-1.0, -3.0]
+  cfg.rewards["calf_collision"].weight = -0.55  # tweak within [-1.0, -3.0]
   cfg.rewards["thigh_collision"].params["sensor_name"] = thigh_ground_cfg.name
   cfg.rewards["thigh_collision"].weight = -0.425  # tweak within [-1.0, -3.0]
   cfg.rewards["stumble"].params["sensor_names"] = [
     calf_ground_cfg.name,   
     thigh_ground_cfg.name,
   ]
-  cfg.rewards["stumble"].weight = -0.45 # Increased penalty to force leg lifting
-  cfg.rewards["foot_clearance"].weight = -0.015 
-  cfg.rewards["foot_swing_height"].weight = -0.35 # Penalty for deviation from target height (MUST BE NEGATIVE)
+  cfg.rewards["stumble"].weight = -0.55 # Increased penalty to force leg lifting
+  cfg.rewards["foot_clearance"].weight = 0.0
+  cfg.rewards["foot_swing_height"].weight = -0.375 # Penalty for deviation from target height (MUST BE NEGATIVE)
   cfg.rewards["stumble"].params={
         "sensor_names": ["feet_ground_contact","calf_ground_contact"],
       }
+  cfg.rewards["foot_slip"].weight = -0.65
 
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
     func=mdp.illegal_contact,

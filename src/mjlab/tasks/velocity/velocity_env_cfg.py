@@ -332,7 +332,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=0.0,
       params={
         "sensor_name": "feet_ground_contact",
-        "target_height": 0.13,
+        "target_height": 0.125,
         "command_name": "twist",
         "command_threshold": 0.05,
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
