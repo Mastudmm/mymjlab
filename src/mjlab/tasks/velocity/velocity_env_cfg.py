@@ -336,6 +336,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "command_name": "twist",
         "command_threshold": 0.05,
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+        "height_sensor_name": None, # Explicitly allow override
       },
     ),
     "foot_slip": RewardTermCfg(
