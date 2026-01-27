@@ -469,10 +469,12 @@ def track_base_height(
   sensor_cfg: SceneEntityCfg | None = None,
   sensor_name: str | None = None,
 ) -> torch.Tensor:
-  """Reward for tracking the base height relative to the terrain using L2 penalty.
+  """Reward for tracking the base height relative to the terrain.
+
+  Modified to heavily penalize operating below the target height to prevent
+  'crouching' behavior often induced by foot clearance rewards.
   
-  Note:
-    This returns a cost (positive value). The weight in the config should be negative.
+  Returns a cost (positive value). Weight in config should be negative.
   """
   asset: Entity = env.scene[asset_cfg.name]
   root_pos = asset.data.root_link_pos_w
@@ -483,19 +485,31 @@ def track_base_height(
   else:
      terrain_heights = torch.zeros_like(root_pos[:, 2])
 
-  # Adjusted target height (target + terrain)
-  adjusted_target_height = target_height + terrain_heights
+  # Target height in world frame
+  target_h_w = target_height + terrain_heights
+  current_h_w = root_pos[:, 2]
   
-  # Compute L2 penalty
-  error = torch.square(root_pos[:, 2] - adjusted_target_height)
+  # Error: current - target
+  # negative -> too low (crouching)
+  # positive -> too high
+  deviation = current_h_w - target_h_w
+  
+  # Penalty calculation
+  # We square the error, but we weight 'too low' much more heavily than 'too high'.
+  # If deviation < 0 (too low), multiply error^2 by 2.0 (or more)
+  # If deviation > 0 (too high), multiply error^2 by 1.0 (or less)
+  # This creates a "gradient" pushing the robot up.
+  penalty_scale = torch.where(deviation < 0.0, 2.0, 0.5)
+  
+  error_sq = torch.square(deviation)
   
   # Apply gravity scaling (only penalize when upright)
   # Penalize only if the robot is roughly upright (projected gravity z < 0)
-  # clamp(-proj_grav_z, 0, 0.7) / 0.7 -> 1.0 when upright (-1), 0.0 when tilted > 45 deg
   proj_grav_z = asset.data.projected_gravity_b[:, 2]
-  scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
+  # Scale goes to 0 if robot falls over (grav_z > -0.1 approx)
+  upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
   
-  return error * scale
+  return error_sq * penalty_scale * upright_scale
 
 
 def stumble_penalty(
