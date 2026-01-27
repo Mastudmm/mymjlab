@@ -250,12 +250,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   rewards = {
     "track_linear_velocity": RewardTermCfg(
       func=mdp.track_linear_velocity,
-      weight=3.75,
+      weight=2.5,
       params={"command_name": "twist", "std": math.sqrt(0.25)},
     ),
     "track_angular_velocity": RewardTermCfg(
       func=mdp.track_angular_velocity,
-      weight=2.5,
+      weight=2.0,
       params={"command_name": "twist", "std": math.sqrt(0.5)},
     ),
     "upright": RewardTermCfg(
@@ -302,14 +302,15 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "command_threshold": 0.5,
       },
     ),
-    # "base_height": RewardTermCfg(
-    #   func=mdp.track_base_height,
-    #   weight=0.0,
-    #   params={
-    #     "target_height": 0.28, # Nominal height for Go1
-    #     "asset_cfg": SceneEntityCfg("robot"),
-    #   },
-    # ),
+    "base_height": RewardTermCfg(
+      func=mdp.track_base_height,
+      weight=-1.0, # Highly negative to punish crouching. Adjusted for asymmetric penalty function.
+      params={
+         "target_height": 0.28, # Nominal height for Go1
+         "asset_cfg": SceneEntityCfg("robot"),
+         "sensor_name": "ray_base", # Ensure sensor is used
+       },
+     ),
     "stumble": RewardTermCfg(
       func=mdp.stumble_penalty,
       weight=-0.075,
@@ -341,7 +342,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_slip": RewardTermCfg(
       func=mdp.feet_slip,
-      weight=-0.475,
+      weight=-0.45,
       params={
         "sensor_name": "feet_ground_contact",
         "command_name": "twist",
