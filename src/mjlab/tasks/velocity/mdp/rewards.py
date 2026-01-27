@@ -727,3 +727,13 @@ def _get_heights_from_single_ray_sensors(
   return result
 
 
+def energy_saving ( #只需要关节传感器
+    env: ManagerBasedRlEnv,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG  #类型注解
+) -> torch.Tensor:
+  """let the joint do less effort"""
+
+  asset: Entity = env.scene[asset_cfg.name]
+  torques = asset.data.actuator_force[:,asset_cfg.joint_ids]
+  joint_vel = asset.data.joint_vel[:,asset_cfg.joint_ids]
+  return torch.sum(torch.abs(torques*joint_vel),dim=1)

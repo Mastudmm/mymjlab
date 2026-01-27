@@ -368,7 +368,13 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=0.0,  # Override per-robot
       params={"sensor_name": ""},  # Set per-robot (e.g. thigh_ground_contact)
     ),
+    "energy_save":RewardTermCfg(
+      func=mdp.energy_saving,
+      weight= -0.0001,
+      params={"asset_cfg":SceneEntityCfg("robot")}
+    )
   }
+
 
   ##
   # Terminations

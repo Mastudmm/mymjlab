@@ -220,7 +220,7 @@ echo "nameserver 8.8.8.8" | tee /etc/resolv.conf  解决DNS问题
 
 
 
-
+ctrl space 补全建议
 
 
 
