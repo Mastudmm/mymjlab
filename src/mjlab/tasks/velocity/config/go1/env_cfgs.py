@@ -211,7 +211,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.rewards["air_time"].weight = 0.15
   # Override base placeholder reward: bind sensor + weight.
   cfg.rewards["calf_collision"].params["sensor_name"] = calf_ground_cfg.name
-  cfg.rewards["calf_collision"].weight = -0.25  # tweak within [-1.0, -3.0]
+  cfg.rewards["calf_collision"].weight = -0.35  # tweak within [-1.0, -3.0]
   cfg.rewards["thigh_collision"].params["sensor_name"] = thigh_ground_cfg.name
   cfg.rewards["thigh_collision"].weight = -0.25  # tweak within [-1.0, -3.0]
   cfg.rewards["stumble"].params["sensor_names"] = [
