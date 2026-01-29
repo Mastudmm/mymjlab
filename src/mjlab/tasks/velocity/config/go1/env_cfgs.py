@@ -218,11 +218,11 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     calf_ground_cfg.name,   
     thigh_ground_cfg.name,
   ]
-  cfg.rewards["stumble"].weight = -0.05 # Increased penalty to force leg lifting
+  cfg.rewards["stumble"].weight = -0.5 # Increased penalty to force leg lifting
   cfg.rewards["foot_clearance"].weight = -0.001
   cfg.rewards["foot_swing_height"].weight = -0.005 # Penalty for deviation from target height (MUST BE NEGATIVE)
   cfg.rewards["stumble"].params={
-        "sensor_names": ["feet_ground_contact","calf_ground_contact"],
+        "sensor_names": ["calf_ground_contact"],
       }
   cfg.rewards["foot_slip"].weight = -0.25
 
