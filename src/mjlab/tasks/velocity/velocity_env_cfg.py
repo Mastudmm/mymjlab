@@ -246,7 +246,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   ##
   # Rewards
   ##
-
+ 
   rewards = {
     "track_linear_velocity": RewardTermCfg(
       func=mdp.track_linear_velocity,
@@ -268,7 +268,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "pose": RewardTermCfg( #保持关节角度，threshold代表在行走或者是跑动的时候限制将被放宽
       func=mdp.variable_posture,
-      weight=0.65,
+      weight=1.0,
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
         "command_name": "twist",
@@ -304,7 +304,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "base_height": RewardTermCfg(
       func=mdp.track_base_height,
-      weight=-1.0, # Highly negative to punish crouching. Adjusted for asymmetric penalty function.
+      weight=0.0, # Highly negative to punish crouching. Adjusted for asymmetric penalty function.
       params={
          "target_height": 0.28, # Nominal height for Go1
          "asset_cfg": SceneEntityCfg("robot"),
