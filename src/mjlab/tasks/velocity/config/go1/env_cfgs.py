@@ -177,9 +177,9 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.1,
   }
   cfg.rewards["pose"].params["std_walking"] = {
-    r".*(FR|FL|RR|RL)_hip_joint.*": 0.35,
-    r".*(FR|FL|RR|RL)_thigh_joint.*": 0.4,
-    r".*(FR|FL|RR|RL)_calf_joint.*": 0.7,
+    r".*(FR|FL|RR|RL)_hip_joint.*": 0.325,
+    r".*(FR|FL|RR|RL)_thigh_joint.*": 0.34,
+    r".*(FR|FL|RR|RL)_calf_joint.*": 0.55,
   }
   cfg.rewards["pose"].params["std_running"] = {
     r".*(FR|FL|RR|RL)_hip_joint.*": 0.375,
@@ -208,23 +208,23 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   cfg.rewards["body_ang_vel"].weight = 0.0
   cfg.rewards["angular_momentum"].weight = 0.0
-  cfg.rewards["air_time"].weight = 0.25
+  cfg.rewards["air_time"].weight = 0.35
   # Override base placeholder reward: bind sensor + weight.
   cfg.rewards["calf_collision"].params["sensor_name"] = calf_ground_cfg.name
-  cfg.rewards["calf_collision"].weight = -0.35  # tweak within [-1.0, -3.0]
+  cfg.rewards["calf_collision"].weight = -0.05  # tweak within [-1.0, -3.0]
   cfg.rewards["thigh_collision"].params["sensor_name"] = thigh_ground_cfg.name
-  cfg.rewards["thigh_collision"].weight = -0.25  # tweak within [-1.0, -3.0]
+  cfg.rewards["thigh_collision"].weight = -0.05  # tweak within [-1.0, -3.0]
   cfg.rewards["stumble"].params["sensor_names"] = [
     calf_ground_cfg.name,   
     thigh_ground_cfg.name,
   ]
-  cfg.rewards["stumble"].weight = -0.5 # Increased penalty to force leg lifting
+  cfg.rewards["stumble"].weight = -0.05 # Increased penalty to force leg lifting
   cfg.rewards["foot_clearance"].weight = -0.001
-  cfg.rewards["foot_swing_height"].weight = -0.175 # Penalty for deviation from target height (MUST BE NEGATIVE)
+  cfg.rewards["foot_swing_height"].weight = -0.005 # Penalty for deviation from target height (MUST BE NEGATIVE)
   cfg.rewards["stumble"].params={
         "sensor_names": ["feet_ground_contact","calf_ground_contact"],
       }
-  cfg.rewards["foot_slip"].weight = -0.875
+  cfg.rewards["foot_slip"].weight = -0.25
 
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
     func=mdp.illegal_contact,

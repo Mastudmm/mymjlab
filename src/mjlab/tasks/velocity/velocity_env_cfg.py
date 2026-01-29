@@ -260,7 +260,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "upright": RewardTermCfg(
       func=mdp.flat_orientation,
-      weight=0.95,
+      weight=0.8,
       params={
         "std": math.sqrt(0.2),
         "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
@@ -268,7 +268,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "pose": RewardTermCfg( #保持关节角度，threshold代表在行走或者是跑动的时候限制将被放宽
       func=mdp.variable_posture,
-      weight=1.0,
+      weight=1.35,
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
         "command_name": "twist",
