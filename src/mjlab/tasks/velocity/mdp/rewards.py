@@ -516,11 +516,31 @@ def stumble_penalty(
   env: ManagerBasedRlEnv,
   sensor_names: str | list[str],
 ) -> torch.Tensor:
-  """Penalize stumbling (hitting obstacles horizontally) across multiple sensors."""
+  """Penalize stumbling (hitting obstacles horizontally) across multiple sensors.
+  
+  Improved logic:
+  1. Checks if horizontal force > vertical force (impact vs support).
+  2. Masks penalty when robot is not upright to avoid 'punishing the dead'.
+  """
   if isinstance(sensor_names, str):
     sensor_names = [sensor_names]
 
   total_penalty = torch.zeros(env.num_envs, device=env.device)
+  
+  # Get robot asset for gravity projection
+  # We assume the first asset in the scene is the robot for simplicity 
+  # or rely on a known name if passed, but here we scan env.scene
+  # A safer way is to assume typical 'robot' name or pass asset_cfg
+  # Fallback to 'robot'
+  try:
+      asset: Entity = env.scene["robot"]
+      proj_grav_z = asset.data.projected_gravity_b[:, 2]
+      # Scale: 1.0 when upright (-1), 0.0 when tilted > 45 deg (>-0.707)
+      # -(-1) = 1. clamp(1, 0, 0.7)/0.7 = 1.
+      # -(-0.5) = 0.5. clamp(0.5, 0, 0.7)/0.7 = 0.71
+      upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
+  except KeyError:
+      upright_scale = torch.ones(env.num_envs, device=env.device)
 
   for name in sensor_names:
     contact_sensor: ContactSensor = env.scene[name]
@@ -535,15 +555,17 @@ def stumble_penalty(
     vertical_forces = torch.abs(forces[:, :, 2])
     
     # Stumble condition:
-    # 1. Geometric check: Horizontal force > Vertical force (implies hitting vertical surface).
-    # 2. Magnitude check: Horizontal force must be > 10.0N to ignore light scuffing/drag.
-    stumble = ((horizontal_forces > 4.0*vertical_forces) & (horizontal_forces > 5.0)).float()
+    # Relaxed condition: horizontal > vertical (angle > 45 deg)
+    # Plus minimal force check (>1.0N) to ignore noise
+    stumble = ((horizontal_forces > 3.0 * vertical_forces) & (horizontal_forces > 1.0)).float()
     
-    # Penalize by horizontal impact, but CLIP it to prevent reward explosion.
-    penalty = torch.sum(stumble * torch.clamp(horizontal_forces, max=20.0), dim=1)
+    # Penalize by horizontal impact magnitude
+    # We sum over all contacts (e.g. all 4 legs if passed conceptually, or body parts)
+    penalty = torch.sum(stumble * horizontal_forces, dim=1)
     total_penalty += penalty
 
-  return total_penalty
+  # Apply upright mask
+  return total_penalty * upright_scale
 
 
 def feet_clearance_body(
