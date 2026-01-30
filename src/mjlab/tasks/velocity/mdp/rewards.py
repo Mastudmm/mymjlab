@@ -89,23 +89,46 @@ def flat_orientation(
   return torch.exp(-xy_squared / std**2)
 
 
-def self_collision_cost(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
-  """Penalize self-collisions.
+def self_collision_cost(
+  env: ManagerBasedRlEnv, sensor_name: str, threshold: float = 1.0
+) -> torch.Tensor:
+  """Penalize self-collisions / undesired contacts exceeding a force threshold.
 
-  Returns the number of self-collisions detected by the specified contact sensor.
+  Returns the number of contacts where the net force magnitude exceeds the threshold.
+  Useful for allowing 'grazing' (light touches) without penalty.
   """
   sensor: ContactSensor = env.scene[sensor_name]
-  found = sensor.data.found
-  assert found is not None
-  # Accept shapes: [B], [B,1], [B,N], [B,N,1]; always reduce to [B].
-  if found.dim() == 3:  # [B, N, 1]
-    found = found.squeeze(-1)  # -> [B, N]
-  if found.dim() == 2:  # [B, N] or [B,1]
-    if found.shape[1] == 1:
-      return found.squeeze(1)
-    return torch.sum(found, dim=1)
-  # [B] already
-  return found
+  
+  # Try to use force data if available for thresholding to allow grazing (light touch)
+  if hasattr(sensor.data, "force") and sensor.data.force is not None:
+    forces = sensor.data.force  # [B, N, 3]
+    force_mag = torch.norm(forces[..., :3], dim=-1) # [B, N]
+    violation = (force_mag > threshold).float()
+  else:
+    # Fallback to binary 'found' logic if no force data
+    found = sensor.data.found
+    assert found is not None
+    if found.dim() == 3:  # [B, N, 1]
+      found = found.squeeze(-1)
+    violation = (found > 0.5).float()
+
+  # Sum violations across sensor contact points (e.g. all calf segments)
+  if violation.dim() > 1:
+    collision_count = torch.sum(violation, dim=1)
+  else:
+    collision_count = violation # [B]
+
+  # Apply upright mask to avoid 'punishing the dead' (robot already fell over)
+  # Only punish collisions when the robot is trying to walk (upright)
+  try:
+    asset: Entity = env.scene["robot"]
+    proj_grav_z = asset.data.projected_gravity_b[:, 2]
+    # Scale: 1.0 when upright (-1), goes to 0 when tilted > ~45 deg
+    upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
+  except KeyError:
+    upright_scale = torch.ones_like(collision_count)
+
+  return collision_count * upright_scale
 
 
 def body_angular_velocity_penalty(

@@ -362,12 +362,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "calf_collision": RewardTermCfg(
       func=mdp.self_collision_cost,
       weight=0.0,  # Override per-robot
-      params={"sensor_name": ""},  # Set per-robot (e.g. calf_ground_contact)
+      params={"sensor_name": "", "threshold": 1.0},  # Set per-robot (e.g. calf_ground_contact)
     ),
     "thigh_collision": RewardTermCfg(
       func=mdp.self_collision_cost,
       weight=0.0,  # Override per-robot
-      params={"sensor_name": ""},  # Set per-robot (e.g. thigh_ground_contact)
+      params={"sensor_name": "", "threshold": 1.0},  # Set per-robot (e.g. thigh_ground_contact)
     ),
     "energy_save":RewardTermCfg(
       func=mdp.energy_saving,
