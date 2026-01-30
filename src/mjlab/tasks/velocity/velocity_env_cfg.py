@@ -122,9 +122,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
 
   # Apply history to the entire policy observation group:
   # stack current + past 2 frames for all policy terms, flatten history dims for MLP inputs.
-  observations["policy"].history_length = 4
+  observations["policy"].history_length = 10
   observations["policy"].flatten_history_dim = True
-  observations["critic"].history_length = 4
+  observations["critic"].history_length = 10
   observations["critic"].flatten_history_dim = True
 
   ##

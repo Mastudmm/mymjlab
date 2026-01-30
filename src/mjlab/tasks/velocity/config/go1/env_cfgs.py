@@ -211,20 +211,20 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.rewards["air_time"].weight = 0.35
   # Override base placeholder reward: bind sensor + weight.
   cfg.rewards["calf_collision"].params["sensor_name"] = calf_ground_cfg.name
-  cfg.rewards["calf_collision"].weight = -0.05  # tweak within [-1.0, -3.0]
+  cfg.rewards["calf_collision"].weight = -0.75  # tweak within [-1.0, -3.0]
   cfg.rewards["thigh_collision"].params["sensor_name"] = thigh_ground_cfg.name
-  cfg.rewards["thigh_collision"].weight = -0.05  # tweak within [-1.0, -3.0]
+  cfg.rewards["thigh_collision"].weight = -0.25  # tweak within [-1.0, -3.0]
   cfg.rewards["stumble"].params["sensor_names"] = [
     calf_ground_cfg.name,   
     thigh_ground_cfg.name,
   ]
   cfg.rewards["stumble"].weight = -0.5 # Increased penalty to force leg lifting
-  cfg.rewards["foot_clearance"].weight = -0.001
-  cfg.rewards["foot_swing_height"].weight = -0.005 # Penalty for deviation from target height (MUST BE NEGATIVE)
+  cfg.rewards["foot_clearance"].weight = -0.01
+  cfg.rewards["foot_swing_height"].weight = -0.25 # Penalty for deviation from target height (MUST BE NEGATIVE)
   cfg.rewards["stumble"].params={
         "sensor_names": ["calf_ground_contact"],
       }
-  cfg.rewards["foot_slip"].weight = -0.25
+  cfg.rewards["foot_slip"].weight = -0.5
 
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
     func=mdp.illegal_contact,
