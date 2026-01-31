@@ -276,6 +276,8 @@ class feet_swing_height:
       h_terrain = _get_heights_from_single_ray_sensors(env, height_sensor_name)
       foot_z = foot_pos[..., 2] - h_terrain
       env.extras["log"]["Debug/Swing_Terrain_Mean"] = torch.mean(h_terrain)
+      env.extras["log"]["Debug/Swing_Foot_Abs_Z"] = torch.mean(foot_pos[..., 2])
+      env.extras["log"]["Debug/Swing_Rel_Height_Val"] = torch.mean(foot_z)
     else:
       foot_z = foot_pos[..., 2]
       # Mark as not using sensors
