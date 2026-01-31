@@ -207,8 +207,11 @@ def feet_clearance(
   if sensor_name is not None:
     # Use the new single-ray lookup logic
     terrain_heights = _get_heights_from_single_ray_sensors(env, sensor_name)
+    env.extras["log"]["Debug/Clearance_Terrain_Mean"] = torch.mean(terrain_heights)
   else:
     terrain_heights = torch.zeros(foot_pos.shape[:2], device=env.device)
+    # Mark as not using sensors
+    env.extras["log"]["Debug/Clearance_Terrain_Mean"] = torch.tensor(-99.0, device=env.device)
 
   foot_height_rel = foot_pos[..., 2] - terrain_heights
   foot_vel_xy = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]  # [B, N, 2]
@@ -272,8 +275,11 @@ class feet_swing_height:
     if height_sensor_name is not None:
       h_terrain = _get_heights_from_single_ray_sensors(env, height_sensor_name)
       foot_z = foot_pos[..., 2] - h_terrain
+      env.extras["log"]["Debug/Swing_Terrain_Mean"] = torch.mean(h_terrain)
     else:
       foot_z = foot_pos[..., 2]
+      # Mark as not using sensors
+      env.extras["log"]["Debug/Swing_Terrain_Mean"] = torch.tensor(-99.0, device=env.device)
     
     # Handle contact sensor dimensions
     found = contact_sensor.data.found
