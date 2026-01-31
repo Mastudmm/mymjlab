@@ -196,6 +196,9 @@ class GridPatternCfg:
 
   direction: tuple[float, float, float] = (0.0, 0.0, -1.0)
   """Ray direction in frame-local coordinates."""
+  
+  offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+  """Offset of the pattern origin from the frame origin (in meters)."""
 
   def generate_rays(
     self, mj_model: mujoco.MjModel | None, device: str
@@ -225,6 +228,10 @@ class GridPatternCfg:
     local_offsets = torch.zeros((num_rays, 3), device=device, dtype=torch.float32)
     local_offsets[:, 0] = grid_x.flatten()
     local_offsets[:, 1] = grid_y.flatten()
+    
+    # Apply pattern offset
+    offset = torch.tensor(self.offset, device=device, dtype=torch.float32)
+    local_offsets += offset.unsqueeze(0)
 
     # All rays share the same direction for grid pattern.
     direction = torch.tensor(self.direction, device=device, dtype=torch.float32)

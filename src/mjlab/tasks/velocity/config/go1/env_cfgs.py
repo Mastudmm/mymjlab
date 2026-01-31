@@ -86,9 +86,10 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   for site_name in site_names: # FR, FL, RR, RL
       sensor = RayCastSensorCfg(
           name=f"ray_{site_name}",
+          # Offset the ray origin slightly upwards (Z+0.05m) to prevent it from starting "inside" the ground
           frame=ObjRef(type="site", name=site_name, entity="robot"),
           # Single ray pointing down
-          pattern=GridPatternCfg(size=(0.0, 0.0), resolution=1.0, direction=(0.0, 0.0, -1.0)),
+          pattern=GridPatternCfg(size=(0.0, 0.0), resolution=1.0, direction=(0.0, 0.0, -1.0), offset=(0.0, 0.0, 0.05)),
           ray_alignment="world", # Always point down in world frame, ignore foot rotation
           max_distance=1.5,
           debug_vis=False, # Ensure debug visualization is off

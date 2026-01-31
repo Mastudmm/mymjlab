@@ -251,6 +251,10 @@ class feet_swing_height:
     self.liftoff_heights = torch.zeros(
       (env.num_envs, len(self.site_names)), device=env.device, dtype=torch.float32
     )
+    # Track root height at liftoff to penalize heaving (jumping) instead of retraction
+    self.liftoff_root_z = torch.zeros(
+      (env.num_envs, len(self.site_names)), device=env.device, dtype=torch.float32
+    )
     self.step_dt = env.step_dt
 
   def __call__(
@@ -275,13 +279,15 @@ class feet_swing_height:
     if height_sensor_name is not None:
       h_terrain = _get_heights_from_single_ray_sensors(env, height_sensor_name)
       foot_z = foot_pos[..., 2] - h_terrain
-      env.extras["log"]["Debug/Swing_Terrain_Mean"] = torch.mean(h_terrain)
-      env.extras["log"]["Debug/Swing_Foot_Abs_Z"] = torch.mean(foot_pos[..., 2])
-      env.extras["log"]["Debug/Swing_Rel_Height_Val"] = torch.mean(foot_z)
+      # Use Min/Max to catch outliers/abnormalities instead of concealing them with Mean
+      env.extras["log"]["Debug/Swing_Terrain_Min"] = torch.min(h_terrain)
+      env.extras["log"]["Debug/Swing_Terrain_Max"] = torch.max(h_terrain)
+      env.extras["log"]["Debug/Swing_Rel_Height_Min"] = torch.min(foot_z)
+      env.extras["log"]["Debug/Swing_Rel_Height_Max"] = torch.max(foot_z)
     else:
       foot_z = foot_pos[..., 2]
       # Mark as not using sensors
-      env.extras["log"]["Debug/Swing_Terrain_Mean"] = torch.tensor(-99.0, device=env.device)
+      env.extras["log"]["Debug/Swing_Terrain_Min"] = torch.tensor(-99.0, device=env.device)
     
     # Handle contact sensor dimensions
     found = contact_sensor.data.found
@@ -292,17 +298,28 @@ class feet_swing_height:
     in_air = ~in_contact
 
     # 2. Update Liftoff Reference
-    # While on ground, the "liftoff height" tracks the current foot height.
+    # Get current root height [B, 1] - we track this to decouple body lift from foot lift
+    root_z = asset.data.root_link_pos_w[:, 2].unsqueeze(1)
+
+    # While on ground, the "liftoff height" tracks the current foot height (clearance or abs).
     # When it leaves the ground, this value freezes.
     self.liftoff_heights = torch.where(
       in_contact,
       foot_z,
       self.liftoff_heights
     )
+    self.liftoff_root_z = torch.where(
+      in_contact,
+      root_z,
+      self.liftoff_root_z
+    )
 
     # 3. Calculate Swing Height & Track Peak
-    # Height relative to where we started this step
-    swing_height = foot_z - self.liftoff_heights
+    # Logic: Total Swing = (Current Clearance - Liftoff Clearance) - (Current Root Z - Liftoff Root Z)
+    # This rewards increasing clearance via leg retraction, filtering out simple body jumping.
+    # It still uses RayCast (in foot_z) to handle stairs correctly (terrain awareness).
+    delta_root = root_z - self.liftoff_root_z
+    swing_height = (foot_z - self.liftoff_heights) - delta_root
     
     # Only update peak if we are in the air
     self.peak_heights = torch.where(
