@@ -198,22 +198,33 @@ def feet_clearance(
 ) -> torch.Tensor:
   """Penalize deviation from target clearance height, weighted by foot velocity.
   
-  If `sensor_name` is provided (string or list of strings), calculates height relative to 
-  the terrain using those specific sensors (single-ray per foot).
+  Uses body-frame kinematics to determine foot height, avoiding noisy RayCasts.
+  Target height should be specified in the body frame (e.g. -0.2).
   """
   asset: Entity = env.scene[asset_cfg.name]
-  foot_pos = asset.data.site_pos_w[:, asset_cfg.site_ids, :]  # [B, N, 3]
   
-  if sensor_name is not None:
-    # Use the new single-ray lookup logic
-    terrain_heights = _get_heights_from_single_ray_sensors(env, sensor_name)
-    env.extras["log"]["Debug/Clearance_Terrain_Mean"] = torch.mean(terrain_heights)
-  else:
-    terrain_heights = torch.zeros(foot_pos.shape[:2], device=env.device)
-    # Mark as not using sensors
-    env.extras["log"]["Debug/Clearance_Terrain_Mean"] = torch.tensor(-99.0, device=env.device)
+  # -- Kinematic Logic (Body Frame) --
+  foot_pos_w = asset.data.site_pos_w[:, asset_cfg.site_ids, :]
+  root_pos_w = asset.data.root_link_pos_w
+  root_quat_w = asset.data.root_link_quat_w
 
-  foot_height_rel = foot_pos[..., 2] - terrain_heights
+  # Calculate relative position (Foot - Root) in World Frame
+  # [B, N, 3] - [B, 1, 3] broadcast
+  rel_pos_w = foot_pos_w - root_pos_w.unsqueeze(1)
+
+  # Transform to Body Frame
+  B, N, _ = foot_pos_w.shape
+  rel_pos_w_flat = rel_pos_w.reshape(-1, 3)
+  root_quat_w_expanded = root_quat_w.repeat_interleave(N, dim=0)
+  
+  rel_pos_b_flat = quat_apply_inverse(root_quat_w_expanded, rel_pos_w_flat)
+  foot_pos_b = rel_pos_b_flat.reshape(B, N, 3)
+  
+  # Use Z-coordinate in body frame as height
+  foot_height_rel = foot_pos_b[..., 2]
+
+  env.extras["log"]["Debug/Clearance_Body_Mean"] = torch.mean(foot_height_rel)
+
   foot_vel_xy = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]  # [B, N, 2]
   vel_norm = torch.norm(foot_vel_xy, dim=-1)  # [B, N]
   # Changed to one-sided penalty: only penalize if foot is LOWER than target.
@@ -236,8 +247,8 @@ def feet_clearance(
 class feet_swing_height:
   """Penalize deviation from target swing height, evaluated at landing.
   
-  Calculates swing height relative to the foot's position at liftoff.
-  This prevents 'crouch-walking' and adapts to uneven terrain.
+  Calculates swing height relative to the foot's position at liftoff in the body frame.
+  This prevents 'crouch-walking' and adapts to uneven terrain without needing raycasts.
   """
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
@@ -247,12 +258,8 @@ class feet_swing_height:
     self.peak_heights = torch.zeros(
       (env.num_envs, len(self.site_names)), device=env.device, dtype=torch.float32
     )
-    # Track the foot height at the moment of liftoff
+    # Track the foot height at the moment of liftoff (in body frame)
     self.liftoff_heights = torch.zeros(
-      (env.num_envs, len(self.site_names)), device=env.device, dtype=torch.float32
-    )
-    # Track root height at liftoff to penalize heaving (jumping) instead of retraction
-    self.liftoff_root_z = torch.zeros(
       (env.num_envs, len(self.site_names)), device=env.device, dtype=torch.float32
     )
     self.step_dt = env.step_dt
@@ -265,31 +272,39 @@ class feet_swing_height:
     command_name: str,
     command_threshold: float,
     asset_cfg: SceneEntityCfg,
-    height_sensor_name: str | list[str] | None = None,
+    height_sensor_name: str | list[str] | None = None, # Deprecated but kept for signature compatibility
   ) -> torch.Tensor:
     asset: Entity = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene[sensor_name]
     command = env.command_manager.get_command(command_name)
     assert command is not None
     
-    # 1. Get Data
-    foot_pos = asset.data.site_pos_w[:, asset_cfg.site_ids, :]
+    # -- 1. Calculate Foot Position in Body Frame --
+    foot_pos_w = asset.data.site_pos_w[:, asset_cfg.site_ids, :] # [B, N, 3]
+    root_pos_w = asset.data.root_link_pos_w
+    root_quat_w = asset.data.root_link_quat_w
     
-    # Calculate foot height. If valid height sensor is provided, use relative to terrain.
-    if height_sensor_name is not None:
-      h_terrain = _get_heights_from_single_ray_sensors(env, height_sensor_name)
-      foot_z = foot_pos[..., 2] - h_terrain
-      # Use Min/Max to catch outliers/abnormalities instead of concealing them with Mean
-      env.extras["log"]["Debug/Swing_Terrain_Min"] = torch.min(h_terrain)
-      env.extras["log"]["Debug/Swing_Terrain_Max"] = torch.max(h_terrain)
-      env.extras["log"]["Debug/Swing_Rel_Height_Min"] = torch.min(foot_z)
-      env.extras["log"]["Debug/Swing_Rel_Height_Max"] = torch.max(foot_z)
-    else:
-      foot_z = foot_pos[..., 2]
-      # Mark as not using sensors
-      env.extras["log"]["Debug/Swing_Terrain_Min"] = torch.tensor(-99.0, device=env.device)
+    B, N, _ = foot_pos_w.shape
     
-    # Handle contact sensor dimensions
+    # Broadcast root
+    rel_pos_w = foot_pos_w - root_pos_w.unsqueeze(1)
+    
+    # Flatten for quat operation
+    rel_pos_w_flat = rel_pos_w.reshape(-1, 3)
+    root_quat_w_expanded = root_quat_w.repeat_interleave(N, dim=0)
+    
+    # Transform to body frame
+    foot_pos_b_flat = quat_apply_inverse(root_quat_w_expanded, rel_pos_w_flat)
+    foot_pos_b = foot_pos_b_flat.reshape(B, N, 3)
+    
+    # We only care about Z in body frame
+    foot_z_body = foot_pos_b[..., 2]
+    
+    # Logging for debug
+    env.extras["log"]["Debug/Swing_Body_Height_Min"] = torch.min(foot_z_body)
+    env.extras["log"]["Debug/Swing_Body_Height_Max"] = torch.max(foot_z_body)
+
+    # -- 2. Contact State --
     found = contact_sensor.data.found
     assert found is not None
     if found.dim() == 3:
@@ -297,29 +312,18 @@ class feet_swing_height:
     in_contact = found > 0.5
     in_air = ~in_contact
 
-    # 2. Update Liftoff Reference
-    # Get current root height [B, 1] - we track this to decouple body lift from foot lift
-    root_z = asset.data.root_link_pos_w[:, 2].unsqueeze(1)
-
-    # While on ground, the "liftoff height" tracks the current foot height (clearance or abs).
+    # -- 3. Update Liftoff Reference --
+    # While on ground, the "liftoff height" tracks current body-frame Z.
     # When it leaves the ground, this value freezes.
     self.liftoff_heights = torch.where(
       in_contact,
-      foot_z,
+      foot_z_body,
       self.liftoff_heights
     )
-    self.liftoff_root_z = torch.where(
-      in_contact,
-      root_z,
-      self.liftoff_root_z
-    )
 
-    # 3. Calculate Swing Height & Track Peak
-    # Logic: Total Swing = (Current Clearance - Liftoff Clearance) - (Current Root Z - Liftoff Root Z)
-    # This rewards increasing clearance via leg retraction, filtering out simple body jumping.
-    # It still uses RayCast (in foot_z) to handle stairs correctly (terrain awareness).
-    delta_root = root_z - self.liftoff_root_z
-    swing_height = (foot_z - self.liftoff_heights) - delta_root
+    # -- 4. Calculate Swing Height & Track Peak --
+    # Height gained since liftoff
+    swing_height = foot_z_body - self.liftoff_heights
     
     # Only update peak if we are in the air
     self.peak_heights = torch.where(
@@ -328,26 +332,30 @@ class feet_swing_height:
       self.peak_heights
     )
 
-    # 4. Evaluate at Landing (First Contact)
+    # -- 5. Evaluate at Landing --
     first_contact = contact_sensor.compute_first_contact(dt=self.step_dt)
     
-    # Error calculation:
-    # If peak < target (Undershoot): error < 0
-    # If peak > target (Overshoot): error > 0
+    # Error: difference from target
+    # If target is 0.1m, and we reached 0.08m, error < 0.
     error = self.peak_heights / target_height - 1.0
     
-    # Asymmetric Penalty:
-    # We penalize Undershoot (too low) heavily -> 1.0
-    # We penalize Overshoot (too high) lightly -> 0.1 (allow stepping over things)
+    # Asymmetric Penalty: 
+    # Penalize Undershoot (too low) heavily -> 1.0
+    # Penalize Overshoot (too high) lightly -> 0.025
     penalty_weight = torch.where(error < 0, 1.0, 0.025)
     
-    # Mask by command (only penalize when moving)
+    # Command Mask: Only penalize when moving
     linear_norm = torch.norm(command[:, :2], dim=1)
     angular_norm = torch.abs(command[:, 2])
     is_moving = (linear_norm + angular_norm) > command_threshold
     
     cost = torch.sum(torch.square(error) * penalty_weight * first_contact.float(), dim=1)
     cost *= is_moving.float()
+
+    # Upright Mask: Don't punish if fallen
+    proj_grav_z = asset.data.projected_gravity_b[:, 2]
+    upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
+    cost *= upright_scale
 
     # Logging
     num_landings = torch.sum(first_contact.float())
@@ -356,8 +364,7 @@ class feet_swing_height:
       mean_peak_height = torch.sum(peak_heights_at_landing) / num_landings
       env.extras["log"]["Metrics/peak_height_mean"] = mean_peak_height
 
-    # 5. Reset
-    # Reset peak to 0 for the next step
+    # -- 6. Reset --
     self.peak_heights = torch.where(
       first_contact,
       torch.zeros_like(self.peak_heights),
@@ -619,6 +626,8 @@ def stumble_penalty(
 def feet_clearance_body(
   env: ManagerBasedRlEnv,
   target_height: float,
+  command_name: str | None = None,
+  command_threshold: float = 0.1,
   tanh_mult: float = 2.0,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
@@ -630,6 +639,8 @@ def feet_clearance_body(
   Args:
     target_height: Target height of the foot in the body frame (usually negative, e.g. -0.2).
     tanh_mult: Scaling factor for the velocity mask.
+    command_name: Name of the command to check for movement (optional).
+    command_threshold: Threshold for the command magnitude to activate the penalty.
   """
   asset: Entity = env.scene[asset_cfg.name]
   
@@ -677,6 +688,20 @@ def feet_clearance_body(
   velocity_mask = torch.tanh(tanh_mult * foot_vel_xy_norm)
   
   cost = torch.sum(foot_z_error * velocity_mask, dim=1)
+
+  # 3. Command mask: only penalize when the robot is commanded to move
+  if command_name is not None:
+    command = env.command_manager.get_command(command_name)
+    if command is not None:
+      linear_norm = torch.norm(command[:, :2], dim=1)
+      angular_norm = torch.abs(command[:, 2])
+      is_moving = (linear_norm + angular_norm) > command_threshold
+      cost *= is_moving.float()
+
+  # 4. Upright mask: do not penalize if the robot has fallen
+  proj_grav_z = asset.data.projected_gravity_b[:, 2]
+  upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
+  cost *= upright_scale
   
   return cost
 

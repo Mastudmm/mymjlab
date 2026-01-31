@@ -322,7 +322,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.feet_clearance,
       weight=0.0,
       params={
-        "target_height": 0.125,
+        "target_height": -0.2,
         "command_name": "twist",
         "command_threshold": 0.05,
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.

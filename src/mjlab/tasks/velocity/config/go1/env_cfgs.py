@@ -194,7 +194,10 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # Configure rewards to use single-ray sensors
   # We pass a list of sensor names that match the order of the sites (FR, FL, RR, RL)
   foot_ray_names = [f"ray_{name}" for name in site_names]
-  cfg.rewards["foot_clearance"].params["sensor_name"] = foot_ray_names
+  
+  # Switch foot_clearance to use body-frame logic (no raycasts)
+  # Target height in body frame (e.g. -0.2m means 20cm below body center)
+  # Go1 body is ~0.28m high, so -0.18m implies ~10cm ground clearance.
   
   # Update base height tracking if it exists
   if "base_height" in cfg.rewards:
@@ -202,7 +205,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
      
   # Update foot swing height if it exists
   if "foot_swing_height" in cfg.rewards:
-      cfg.rewards["foot_swing_height"].params["height_sensor_name"] = foot_ray_names
+      cfg.rewards["foot_swing_height"].params["height_sensor_name"] = None
 
   for reward_name in ["foot_clearance", "foot_swing_height", "foot_slip"]:
     cfg.rewards[reward_name].params["asset_cfg"].site_names = site_names
@@ -223,6 +226,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   ]
   cfg.rewards["stumble"].weight = -0.5 # Increased penalty to force leg lifting
   cfg.rewards["foot_clearance"].weight = -0.5
+  cfg.rewards["foot_clearance"].params["target_height"]=-0.2
   cfg.rewards["foot_swing_height"].weight = -1.25 # Penalty for deviation from target height (MUST BE NEGATIVE)
   cfg.rewards["stumble"].params={
         "sensor_names": ["feet_ground_contact"],
