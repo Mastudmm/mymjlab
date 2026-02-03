@@ -371,7 +371,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "energy_save":RewardTermCfg(
       func=mdp.energy_saving,
-      weight= -0.00012,
+      weight= -0.000001,
       params={"asset_cfg":SceneEntityCfg("robot")}
     )
   }

@@ -287,11 +287,11 @@ class feet_swing_height:
     B, N, _ = foot_pos_w.shape
     
     # Broadcast root
-    rel_pos_w = foot_pos_w - root_pos_w.unsqueeze(1)
+    rel_pos_w = foot_pos_w - root_pos_w.unsqueeze(1) #root_pos_w.unsqueeze(1) 把 [B, 3] 变成了 [B, 1, 3]。
     
     # Flatten for quat operation
-    rel_pos_w_flat = rel_pos_w.reshape(-1, 3)
-    root_quat_w_expanded = root_quat_w.repeat_interleave(N, dim=0)
+    rel_pos_w_flat = rel_pos_w.reshape(-1, 3)#：变成了 [B * N, 3]。 #reshape(-1, 3)把数据重新排列成只有 3 列的矩阵，行数自动计算
+    root_quat_w_expanded = root_quat_w.repeat_interleave(N, dim=0)#把每一行复制 N 次。
     
     # Transform to body frame
     foot_pos_b_flat = quat_apply_inverse(root_quat_w_expanded, rel_pos_w_flat)
