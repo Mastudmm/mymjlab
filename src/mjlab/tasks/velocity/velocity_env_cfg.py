@@ -150,13 +150,13 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       resampling_time_range=(3.0, 8.0),
       rel_standing_envs=0.1,
       rel_heading_envs=0.1, #给一个期望的朝向角（heading），不要求前进/横移速度；通过朝向控制把机体转到目标朝向
-      rel_pure_x_envs=0.25, # 10% 的概率只产生 X 方向速度 (vy=0)
-      rel_pure_y_envs=0.25, # 10% 的概率只产生 Y 方向速度 (vx=0)
+      rel_pure_x_envs=0.4, # 10% 的概率只产生 X 方向速度 (vy=0)
+      rel_pure_y_envs=0.2, # 10% 的概率只产生 Y 方向速度 (vx=0)
       heading_command=True,
       heading_control_stiffness=0.5,
       debug_vis=True,
       ranges=UniformVelocityCommandCfg.Ranges(
-        lin_vel_x=(-1.0, 1.0),
+        lin_vel_x=(-0.5, 1.5),
         lin_vel_y=(-0.5, 0.5),
         ang_vel_z=(-0.5, 0.5),
         heading=(-math.pi, math.pi),
@@ -250,12 +250,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   rewards = {
     "track_linear_velocity": RewardTermCfg(
       func=mdp.track_linear_velocity,
-      weight=5.5,
-      params={"command_name": "twist", "std": math.sqrt(0.25)},
+      weight=6.0,
+      params={"command_name": "twist", "std": math.sqrt(0.16)},
     ),
     "track_angular_velocity": RewardTermCfg(
       func=mdp.track_angular_velocity,
-      weight=2.0,
+      weight=1.5,
       params={"command_name": "twist", "std": math.sqrt(0.5)},
     ),
     "upright": RewardTermCfg(
@@ -403,9 +403,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       params={
         "command_name": "twist",
         "velocity_stages": [
-          {"step": 0, "lin_vel_x": (-0.75, 1.25), "ang_vel_z": (-0.5, 0.5)},
-          {"step": 1500 * 24, "lin_vel_x": (-1.5, 2.0), "ang_vel_z": (-0.7, 0.7)},
-          {"step": 3000 * 24, "lin_vel_x": (-2.0, 3.0)},
+          {"step": 0, "lin_vel_x": (-0.5, 1.5), "ang_vel_z": (-0.5, 0.5)},
+          {"step": 1500 * 24, "lin_vel_x": (-1.0, 2.0), "ang_vel_z": (-0.7, 0.7)},
+          {"step": 3000 * 24, "lin_vel_x": (-1.5, 3.0)},  
         ],
       },
     ),

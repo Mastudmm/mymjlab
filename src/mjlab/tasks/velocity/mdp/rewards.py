@@ -342,7 +342,7 @@ class feet_swing_height:
     # Asymmetric Penalty: 
     # Penalize Undershoot (too low) heavily -> 1.0
     # Penalize Overshoot (too high) lightly -> 0.025
-    penalty_weight = torch.where(error < 0, 1.0, 0.025)
+    penalty_weight = torch.where(error < 0, 1.0, 0.35)
     
     # Command Mask: Only penalize when moving
     linear_norm = torch.norm(command[:, :2], dim=1)
