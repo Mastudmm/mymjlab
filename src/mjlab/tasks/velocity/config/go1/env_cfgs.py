@@ -178,9 +178,9 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.1,
   }
   cfg.rewards["pose"].params["std_walking"] = {
-    r".*(FR|FL|RR|RL)_hip_joint.*": 0.35,
-    r".*(FR|FL|RR|RL)_thigh_joint.*": 0.6,  
-    r".*(FR|FL|RR|RL)_calf_joint.*": 0.7,
+    r".*(FR|FL|RR|RL)_hip_joint.*": 0.335,
+    r".*(FR|FL|RR|RL)_thigh_joint.*": 0.55,  
+    r".*(FR|FL|RR|RL)_calf_joint.*": 0.65,
   }
   cfg.rewards["pose"].params["std_running"] = {
     r".*(FR|FL|RR|RL)_hip_joint.*": 0.375,
@@ -216,15 +216,15 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # Override base placeholder reward: bind sensor + weight.
   cfg.rewards["calf_collision"].params["sensor_name"] = calf_ground_cfg.name
   cfg.rewards["calf_collision"].params["threshold"] = 3.0  # Allow grazing contacts < 15N
-  cfg.rewards["calf_collision"].weight = -0.65  # tweak within [-1.0, -3.0]
+  cfg.rewards["calf_collision"].weight = -0.95  # tweak within [-1.0, -3.0]
   cfg.rewards["thigh_collision"].params["sensor_name"] = thigh_ground_cfg.name
   cfg.rewards["thigh_collision"].params["threshold"] = 3.0
-  cfg.rewards["thigh_collision"].weight = -0.25  # tweak within [-1.0, -3.0]
+  cfg.rewards["thigh_collision"].weight = -0.45  # tweak within [-1.0, -3.0]
   cfg.rewards["stumble"].params["sensor_names"] = [
     calf_ground_cfg.name,   
     thigh_ground_cfg.name,
   ]
-  cfg.rewards["stumble"].weight = -0.35 # Increased penalty to force leg lifting
+  cfg.rewards["stumble"].weight = -0.55 # Increased penalty to force leg lifting
   cfg.rewards["foot_clearance"].weight = -0.15
   cfg.rewards["foot_clearance"].params["target_height"]=-0.02
   cfg.rewards["foot_swing_height"].weight = -1.0 # Penalty for deviation from target height (MUST BE NEGATIVE)
