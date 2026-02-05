@@ -178,13 +178,13 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.1,
   }
   cfg.rewards["pose"].params["std_walking"] = {
-    r".*(FR|FL|RR|RL)_hip_joint.*": 0.325,
-    r".*(FR|FL|RR|RL)_thigh_joint.*": 0.385,  
-    r".*(FR|FL|RR|RL)_calf_joint.*": 0.65,
+    r".*(FR|FL|RR|RL)_hip_joint.*": 0.35,
+    r".*(FR|FL|RR|RL)_thigh_joint.*": 0.6,  
+    r".*(FR|FL|RR|RL)_calf_joint.*": 0.7,
   }
   cfg.rewards["pose"].params["std_running"] = {
     r".*(FR|FL|RR|RL)_hip_joint.*": 0.375,
-    r".*(FR|FL|RR|RL)_thigh_joint.*": 0.425,
+    r".*(FR|FL|RR|RL)_thigh_joint.*": 0.6,
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.75,
   }
 
@@ -231,7 +231,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.rewards["stumble"].params={
         "sensor_names": ["feet_ground_contact"],
       }
-  cfg.rewards["foot_slip"].weight = -0.55
+  cfg.rewards["foot_slip"].weight = -0.75
 
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
     func=mdp.illegal_contact,
