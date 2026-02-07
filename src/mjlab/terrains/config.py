@@ -20,7 +20,7 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     ),
     "pyramid_stairs_inv": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
       proportion=0.45,
-      step_height_range=(0.0, 0.35), #台阶高度可以在play的时候自由修改 train的时候尽量高
+      step_height_range=(0.15,0.15), #台阶高度可以在play的时候自由修改 train的时候尽量高
       step_width=0.3,
       platform_width=3.0,
       border_width=1.0,
