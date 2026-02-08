@@ -262,7 +262,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.flat_orientation,
       weight=0.8,
       params={
-        "std": math.sqrt(0.2),
+        "std": math.sqrt(0.25),
         "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
       },
     ),
@@ -352,11 +352,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "soft_landing": RewardTermCfg(
       func=mdp.soft_landing,
-      weight=-1e-5,
+      weight=-1e-4,
       params={
         "sensor_name": "feet_ground_contact",
         "command_name": "twist",
-        "command_threshold": 0.05,
+        "command_threshold": 0.025,
       },
     ),
     "calf_collision": RewardTermCfg(
@@ -373,6 +373,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.energy_saving,
       weight= -0.000001,
       params={"asset_cfg":SceneEntityCfg("robot")}
+    ),
+    "trunk_collision": RewardTermCfg(
+      func=mdp.self_collision_cost,
+      weight=0.0,  # Override per-robot
+      params={"sensor_name": "", "threshold": 1.0},  # Set per-robot (e.g. thigh_ground_contact)
     )
   }
 

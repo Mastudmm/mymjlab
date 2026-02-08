@@ -231,12 +231,15 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.rewards["stumble"].params={
         "sensor_names": ["feet_ground_contact"],
       }
-  cfg.rewards["foot_slip"].weight = -0.4
+  cfg.rewards["foot_slip"].weight = -0.5
 
-  cfg.terminations["illegal_contact"] = TerminationTermCfg(
-    func=mdp.illegal_contact,
-    params={"sensor_name": nonfootleg_ground_cfg.name},
-  )
+  #cfg.terminations["illegal_contact"] = TerminationTermCfg(
+  #  func=mdp.illegal_contact,
+  #  params={"sensor_name": nonfootleg_ground_cfg.name},
+  #)
+  cfg.rewards["trunk_collision"].weight = -2.0
+  cfg.rewards["trunk_collision"].params["sensor_name"] = nonfootleg_ground_cfg.name
+  cfg.rewards["trunk_collision"].params["threshold"] = 2.0
 
   # Apply play mode overrides.
   if play:
