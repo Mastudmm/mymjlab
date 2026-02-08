@@ -224,7 +224,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     calf_ground_cfg.name,   
     thigh_ground_cfg.name,
   ]
-  cfg.rewards["stumble"].weight = -0.01 # Increased penalty to force leg lifting
+  cfg.rewards["stumble"].weight = -0.1 # Increased penalty to force leg lifting
   cfg.rewards["foot_clearance"].weight = -0.01
   cfg.rewards["foot_clearance"].params["target_height"]=-0.05
   cfg.rewards["foot_swing_height"].weight = -0.001 # Penalty for deviation from target height (MUST BE NEGATIVE)
@@ -233,13 +233,11 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       }
   cfg.rewards["foot_slip"].weight = -0.5
 
-  #cfg.terminations["illegal_contact"] = TerminationTermCfg(
-  #  func=mdp.illegal_contact,
-  #  params={"sensor_name": nonfootleg_ground_cfg.name},
-  #)
-  cfg.rewards["trunk_collision"].weight = -2.0
-  cfg.rewards["trunk_collision"].params["sensor_name"] = nonfootleg_ground_cfg.name
-  cfg.rewards["trunk_collision"].params["threshold"] = 2.0
+  cfg.terminations["illegal_contact"] = TerminationTermCfg(
+    func=mdp.illegal_contact,
+    params={"sensor_name": nonfootleg_ground_cfg.name},
+  )
+
 
   # Apply play mode overrides.
   if play:

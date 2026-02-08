@@ -256,7 +256,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "track_angular_velocity": RewardTermCfg(
       func=mdp.track_angular_velocity,
       weight=2.5,
-      params={"command_name": "twist", "std": math.sqrt(0.16)},
+      params={"command_name": "twist", "std": math.sqrt(0.12)},
     ),
     "upright": RewardTermCfg(
       func=mdp.flat_orientation,
@@ -373,11 +373,6 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.energy_saving,
       weight= -0.000001,
       params={"asset_cfg":SceneEntityCfg("robot")}
-    ),
-    "trunk_collision": RewardTermCfg(
-      func=mdp.self_collision_cost,
-      weight=0.0,  # Override per-robot
-      params={"sensor_name": "", "threshold": 1.0},  # Set per-robot (e.g. thigh_ground_contact)
     )
   }
 
