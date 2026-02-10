@@ -212,7 +212,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   cfg.rewards["body_ang_vel"].weight = 0.0
   cfg.rewards["angular_momentum"].weight = 0.0
-  cfg.rewards["air_time"].weight = 0.35
+  cfg.rewards["air_time"].weight = 0.5
   # Override base placeholder reward: bind sensor + weight.
   cfg.rewards["calf_collision"].params["sensor_name"] = calf_ground_cfg.name
   cfg.rewards["calf_collision"].params["threshold"] = 3.0  # Allow grazing contacts < 15N

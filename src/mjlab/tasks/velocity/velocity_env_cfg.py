@@ -251,16 +251,16 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "track_linear_velocity": RewardTermCfg(
       func=mdp.track_linear_velocity,
       weight=4.0,
-      params={"command_name": "twist", "std": math.sqrt(0.12)},
+      params={"command_name": "twist", "std": math.sqrt(0.09)},
     ),
     "track_angular_velocity": RewardTermCfg(
       func=mdp.track_angular_velocity,
-      weight=2.5,
+      weight=2.0,
       params={"command_name": "twist", "std": math.sqrt(0.12)},
     ),
     "upright": RewardTermCfg(
       func=mdp.flat_orientation,
-      weight=0.8,
+      weight=0.25,
       params={
         "std": math.sqrt(0.25),
         "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
