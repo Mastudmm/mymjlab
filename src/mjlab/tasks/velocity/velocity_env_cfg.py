@@ -147,11 +147,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   commands: dict[str, CommandTermCfg] = {
     "twist": UniformVelocityCommandCfg(
       entity_name="robot",
-      resampling_time_range=(3.0, 8.0),
+      resampling_time_range=(10.0, 18.0),
       rel_standing_envs=0.1,
       rel_heading_envs=0.1, #给一个期望的朝向角（heading），不要求前进/横移速度；通过朝向控制把机体转到目标朝向
-      rel_pure_x_envs=0.4, # 10% 的概率只产生 X 方向速度 (vy=0)
-      rel_pure_y_envs=0.2, # 10% 的概率只产生 Y 方向速度 (vx=0)
+      rel_pure_x_envs=0.65, # 10% 的概率只产生 X 方向速度 (vy=0)
+      rel_pure_y_envs=0.15, # 10% 的概率只产生 Y 方向速度 (vx=0)
       heading_command=True,
       heading_control_stiffness=0.5,
       debug_vis=True,
@@ -260,23 +260,23 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "upright": RewardTermCfg(
       func=mdp.flat_orientation,
-      weight=0.75,
+      weight=0.7,
       params={
-        "std": math.sqrt(0.25),
+        "std": math.sqrt(0.2),
         "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
       },
     ),
     "pose": RewardTermCfg( #保持关节角度，threshold代表在行走或者是跑动的时候限制将被放宽
       func=mdp.variable_posture,
-      weight=1.0,
+      weight=0.8,
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
         "command_name": "twist",
         "std_standing": {},  # Set per-robot.
         "std_walking": {},  # Set per-robot.
         "std_running": {},  # Set per-robot.
-        "walking_threshold": 0.025,
-        "running_threshold": 1.5,
+        "walking_threshold": 0.10,
+        "running_threshold": 1.25,
       },
     ),
     "body_ang_vel": RewardTermCfg(
@@ -376,7 +376,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "feet_air_time_variance": RewardTermCfg(
       func=mdp.feet_air_time_variance_penalty,
-      weight=-0.001, # Default to 0.0, to be tuned per robot/task
+      weight=-0.4, # Default to 0.0, to be tuned per robot/task
       params={
         "sensor_name": "feet_ground_contact",
         "asset_cfg": SceneEntityCfg("robot"),
@@ -411,9 +411,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       params={
         "command_name": "twist",
         "velocity_stages": [
-          {"step": 0, "lin_vel_x": (-0.5, 1.5), "ang_vel_z": (-0.5, 0.5)},
-          {"step": 1500 * 24, "lin_vel_x": (-0.75, 1.25), "ang_vel_z": (-0.7, 0.7)},
-          {"step": 3000 * 24, "lin_vel_x": (-1.0, 2.0)},  
+          {"step": 0, "lin_vel_x": (-0.5, 1.05), "ang_vel_z": (-0.0, 0.0)},
+          {"step": 1800 * 24, "lin_vel_x": (-0.75, 1.25), "ang_vel_z": (-0.7, 0.7)},
+          {"step": 4000 * 24, "lin_vel_x": (-1.0, 2.0)},  
         ],
       },
     ),
