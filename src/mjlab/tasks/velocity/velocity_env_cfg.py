@@ -260,7 +260,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "upright": RewardTermCfg(
       func=mdp.flat_orientation,
-      weight=0.25,
+      weight=0.75,
       params={
         "std": math.sqrt(0.25),
         "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
@@ -296,10 +296,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=0.0,  # Increased to encourage lifting legs
       params={
         "sensor_name": "feet_ground_contact",
-        "threshold_min": 0.05,
+        "threshold_min": 0.125,
         "threshold_max": 0.5,
         "command_name": "twist",
-        "command_threshold": 0.5,
+        "command_threshold": 0.25,
       },
     ),
     "base_height": RewardTermCfg(
@@ -333,7 +333,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=0.0,
       params={
         "sensor_name": "feet_ground_contact",
-        "target_height": 0.220,
+        "target_height": 0.15,
         "command_name": "twist",
         "command_threshold": 0.05,
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
@@ -373,7 +373,15 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.energy_saving,
       weight= -0.000001,
       params={"asset_cfg":SceneEntityCfg("robot")}
-    )
+    ),
+    "feet_air_time_variance": RewardTermCfg(
+      func=mdp.feet_air_time_variance_penalty,
+      weight=-0.001, # Default to 0.0, to be tuned per robot/task
+      params={
+        "sensor_name": "feet_ground_contact",
+        "asset_cfg": SceneEntityCfg("robot"),
+      },
+    ),
   }
 
 
@@ -404,8 +412,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "command_name": "twist",
         "velocity_stages": [
           {"step": 0, "lin_vel_x": (-0.5, 1.5), "ang_vel_z": (-0.5, 0.5)},
-          {"step": 1500 * 24, "lin_vel_x": (-1.0, 2.0), "ang_vel_z": (-0.7, 0.7)},
-          {"step": 3000 * 24, "lin_vel_x": (-1.25, 2.5)},  
+          {"step": 1500 * 24, "lin_vel_x": (-0.75, 1.25), "ang_vel_z": (-0.7, 0.7)},
+          {"step": 3000 * 24, "lin_vel_x": (-1.0, 2.0)},  
         ],
       },
     ),

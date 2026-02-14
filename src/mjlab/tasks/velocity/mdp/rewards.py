@@ -846,3 +846,34 @@ def energy_saving ( #只需要关节传感器
   torques = asset.data.actuator_force[:,asset_cfg.joint_ids]
   joint_vel = asset.data.joint_vel[:,asset_cfg.joint_ids]
   return torch.sum(torch.abs(torques*joint_vel),dim=1)
+
+
+def feet_air_time_variance_penalty(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize variance in the amount of time each foot spends in the air/on the ground relative to each other."""
+  contact_sensor: ContactSensor = env.scene[sensor_name]
+  sensor_data = contact_sensor.data
+
+  # Check if data is available
+  if sensor_data.last_air_time is None or sensor_data.last_contact_time is None:
+    return torch.zeros(env.num_envs, device=env.device)
+
+  last_air_time = sensor_data.last_air_time
+  last_contact_time = sensor_data.last_contact_time
+
+  # Compute variance across feet (dim=1)计算方差
+  # penalize high variance in air time and contact time between feet to encourage symmetry
+  reward = torch.var(torch.clamp(last_air_time, max=0.6), dim=1) + \
+       torch.var(torch.clamp(last_contact_time, max=0.6), dim=1)
+  # Upright mask (using asset_cfg to find robot)
+  try:
+    asset: Entity = env.scene[asset_cfg.name]
+    proj_grav_z = asset.data.projected_gravity_b[:, 2]
+    upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
+  except KeyError:
+    upright_scale = torch.ones_like(reward)
+
+  return reward * upright_scale
