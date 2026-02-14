@@ -59,7 +59,19 @@ def track_angular_velocity(
   assert command is not None, f"Command '{command_name}' not found."
   actual = asset.data.root_link_ang_vel_b
   z_error = torch.square(command[:, 2] - actual[:, 2])
-  xy_error = torch.sum(torch.square(actual[:, :2]), dim=1)
+
+  # --- Original Code (Commented Out) ---
+  # Penalizes both Roll (index 0) and Pitch (index 1) rates.
+  # xy_error = torch.sum(torch.square(actual[:, :2]), dim=1)
+  # -------------------------------------
+
+  # --- Modification for Stair Climbing ---
+  # Only penalizes Roll rate (Index 0).
+  # We IGNORE Pitch rate (Index 1) because the robot needs to pitch up/down significantly
+  # to climb stairs. Penalizing it forces the robot to stay flat, causing failure on slopes/stairs.
+  xy_error = torch.square(actual[:, 0])
+  # -------------------------------------
+
   ang_vel_error = z_error + xy_error
   return torch.exp(-ang_vel_error / std**2)
 
