@@ -5,11 +5,11 @@ from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
 from mjlab.terrains.terrain_importer import TerrainImporter, TerrainImporterCfg
 
 ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
-  size=(8.0, 8.0),#每个小地形的大小
-  border_width=20.0,
-  num_rows=10,
-  num_cols=20,
-  sub_terrains={
+    size=(8.0, 8.0),#每个小地形的大小
+    border_width=20.0,
+    num_rows=10,
+    num_cols=20,
+    sub_terrains={
     "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.0),
     "pyramid_stairs": terrain_gen.BoxPyramidStairsTerrainCfg(
       proportion=0.1,

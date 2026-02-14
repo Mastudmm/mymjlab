@@ -149,11 +149,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       entity_name="robot",
       resampling_time_range=(10.0, 18.0),
       rel_standing_envs=0.1,
-      rel_heading_envs=0.1, #给一个期望的朝向角（heading），不要求前进/横移速度；通过朝向控制把机体转到目标朝向
+      rel_heading_envs=0.85, #给一个期望的朝向角（heading），不要求前进/横移速度；通过朝向控制把机体转到目标朝向
       rel_pure_x_envs=0.65, # 10% 的概率只产生 X 方向速度 (vy=0)
       rel_pure_y_envs=0.15, # 10% 的概率只产生 Y 方向速度 (vx=0)
       heading_command=True,
-      heading_control_stiffness=0.5,
+      heading_control_stiffness=0.6,
       debug_vis=True,
       ranges=UniformVelocityCommandCfg.Ranges(
         lin_vel_x=(-0.5, 1.5),
