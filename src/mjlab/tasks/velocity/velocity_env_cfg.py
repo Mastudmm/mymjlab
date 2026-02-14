@@ -147,13 +147,13 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   commands: dict[str, CommandTermCfg] = {
     "twist": UniformVelocityCommandCfg(
       entity_name="robot",
-      resampling_time_range=(10.0, 18.0),
+      resampling_time_range=(15.0, 18.0),
       rel_standing_envs=0.1,
-      rel_heading_envs=0.85, #给一个期望的朝向角（heading），不要求前进/横移速度；通过朝向控制把机体转到目标朝向
-      rel_pure_x_envs=0.65, # 10% 的概率只产生 X 方向速度 (vy=0)
-      rel_pure_y_envs=0.15, # 10% 的概率只产生 Y 方向速度 (vx=0)
+      rel_heading_envs=1.0, #给一个期望的朝向角（heading），不要求前进/横移速度；通过朝向控制把机体转到目标朝向
+      rel_pure_x_envs=0.8, # 10% 的概率只产生 X 方向速度 (vy=0)
+      rel_pure_y_envs=0.1, # 10% 的概率只产生 Y 方向速度 (vx=0)
       heading_command=True,
-      heading_control_stiffness=0.6,
+      heading_control_stiffness=1.0,
       debug_vis=True,
       ranges=UniformVelocityCommandCfg.Ranges(
         lin_vel_x=(-0.5, 1.5),
@@ -214,7 +214,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # Set per-robot.
         "operation": "abs",
         "field": "geom_friction",
-        "ranges": (0.3, 1.2),
+        "ranges": (0.3, 1.0),
         "shared_random": True,  # All foot geoms share the same friction.
       },
     ),
@@ -255,8 +255,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "track_angular_velocity": RewardTermCfg(
       func=mdp.track_angular_velocity,
-      weight=2.0,
-      params={"command_name": "twist", "std": math.sqrt(0.12)},
+      weight=3.5,
+      params={"command_name": "twist", "std": math.sqrt(0.09)},
     ),
     "upright": RewardTermCfg(
       func=mdp.flat_orientation,
@@ -411,8 +411,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       params={
         "command_name": "twist",
         "velocity_stages": [
-          {"step": 0, "lin_vel_x": (-0.5, 1.05), "ang_vel_z": (-0.0, 0.0)},
-          {"step": 1800 * 24, "lin_vel_x": (-0.75, 1.25), "ang_vel_z": (-0.7, 0.7)},
+          {"step": 0, "lin_vel_x": (-0.5, 1.25), "ang_vel_z": (-1.25, 1.25)},
+          {"step": 1800 * 24, "lin_vel_x": (-0.75, 1.5), "ang_vel_z": (-1.75, 1.75)},
           {"step": 4000 * 24, "lin_vel_x": (-1.0, 2.0)},  
         ],
       },
