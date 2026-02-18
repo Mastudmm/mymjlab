@@ -260,7 +260,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "progress": RewardTermCfg(
       func=mdp.progress_reward,
-      weight=0.01
+      weight=0.01,
       params={
         "command_name": "twist",
         "threshold": 0.1,

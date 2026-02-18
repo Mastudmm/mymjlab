@@ -94,11 +94,30 @@ def flat_orientation(
     body_quat_w = body_quat_w.squeeze(1)  # [B, 4]
     gravity_w = asset.data.gravity_vec_w  # [3]
     projected_gravity_b = quat_apply_inverse(body_quat_w, gravity_w)  # [B, 3]
-    xy_squared = torch.sum(torch.square(projected_gravity_b[:, :2]), dim=1)
   else:
     # Use root link projected gravity.
-    xy_squared = torch.sum(torch.square(asset.data.projected_gravity_b[:, :2]), dim=1)
-  return torch.exp(-xy_squared / std**2)
+    projected_gravity_b = asset.data.projected_gravity_b
+
+  # projected_gravity_b = [gx, gy, gz]
+  # gx corresponds to Pitch (nose up/down)
+  # gy corresponds to Roll (tilt left/right)
+  
+  # Original Logic: Penalized both equally
+  # xy_squared = torch.sum(torch.square(projected_gravity_b[:, :2]), dim=1)
+  
+  # Modified Logic for Stairs: 
+  # 1. Roll (gy): Hard constraint. Must stay level sideways to look good and stable.
+  roll_part = torch.square(projected_gravity_b[:, 1])
+  
+  # 2. Pitch (gx): Soft constraint. 
+  # Allow significant pitching for stairs. Multiply by small factor (e.g. 0.1)
+  # or clamp it? A small weight allows it to pitch but prefers flat if possible.
+  # 0.0 is too loose (might do wheelies), 0.1 is a good balance.
+  pitch_part = 0.1 * torch.square(projected_gravity_b[:, 0])
+
+  total_error = roll_part + pitch_part
+  
+  return torch.exp(-total_error / std**2)
 
 
 def self_collision_cost(
