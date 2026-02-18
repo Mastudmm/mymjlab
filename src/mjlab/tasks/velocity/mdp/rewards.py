@@ -69,7 +69,7 @@ def track_angular_velocity(
   # Only penalizes Roll rate (Index 0).
   # We IGNORE Pitch rate (Index 1) because the robot needs to pitch up/down significantly
   # to climb stairs. Penalizing it forces the robot to stay flat, causing failure on slopes/stairs.
-  xy_error = torch.square(actual[:, 0])
+  xy_error = 0.01 * torch.square(actual[:, 0])
   # -------------------------------------
 
   ang_vel_error = z_error + xy_error
@@ -552,31 +552,51 @@ def track_base_height(
   else:
      terrain_heights = torch.zeros_like(root_pos[:, 2])
 
-  # Target height in world frame
-  target_h_w = target_height + terrain_heights
-  current_h_w = root_pos[:, 2]
+  # Logging for debug: 
+  # Check Min to see if rays are missing terrain (hitting -10.0)
+  env.extras["log"]["Debug/Terrain_Height_Min"] = torch.min(terrain_heights)
+  env.extras["log"]["Debug/Terrain_Height_Mean"] = torch.mean(terrain_heights)
   
-  # Error: current - target
-  # negative -> too low (crouching)
-  # positive -> too high
-  deviation = current_h_w - target_h_w
+  # Check relative height (Robot Z - Terrain Z)
+  # If this is consistently huge or negative, the rays are wrong.
+  rel_h_world = root_pos[:, 2] - terrain_heights
   
-  # Penalty calculation
-  # We square the error, but we weight 'too low' much more heavily than 'too high'.
-  # If deviation < 0 (too low), multiply error^2 by 2.0 (or more)
-  # If deviation > 0 (too high), multiply error^2 by 1.0 (or less)
-  # This creates a "gradient" pushing the robot up.
-  penalty_scale = torch.where(deviation < 0.0, 2.0, 0.5)
-  
-  error_sq = torch.square(deviation)
-  
-  # Apply gravity scaling (only penalize when upright)
-  # Penalize only if the robot is roughly upright (projected gravity z < 0)
+  # --- Tilt Correction ---
+  # On slopes/stairs, the vertical distance is not the clearance.
+  # We project the vertical distance to the body's local Z axis.
+  # tilt_cos = -projected_gravity_z (approx)
   proj_grav_z = asset.data.projected_gravity_b[:, 2]
-  # Scale goes to 0 if robot falls over (grav_z > -0.1 approx)
-  upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
+  tilt_cos = torch.clamp(-proj_grav_z, min=0.0, max=1.0)
   
-  return error_sq * penalty_scale * upright_scale
+  # Effective clearance height
+  rel_h_body = rel_h_world * tilt_cos
+  
+  # Log mean clearance to check overall behavior
+  env.extras["log"]["Debug/Base_Height_Above_Terrain_Mean"] = torch.mean(rel_h_body)
+  # Log MIN clearance to detect individual "crashes" or "crawling" (Critical Safety Check)
+  # If this hits ~0.0, someone is scraping the floor.
+  env.extras["log"]["Debug/Base_Height_Above_Terrain_Min"] = torch.min(rel_h_body)
+
+  # Target is usually "desired clearance" (e.g. 0.3m)
+  # Error = current_clearance - target
+  deviation = rel_h_body - target_height
+  
+  # Reward calculation: (Positive reward)
+  # Formula: exp(-error^2 / sigma)
+  # We still want to penalize crouching (deviation < 0) more than standing tall.
+  # So we use a smaller sigma (sharper drop) for negative deviation.
+  
+  # sigma for "too low": 0.05 (very strict)
+  # sigma for "too high": 0.1 (more lenient)
+  sigma = torch.where(deviation < 0.0, 0.05, 0.1)
+  
+  reward = torch.exp(-torch.square(deviation) / (2 * torch.square(sigma)))
+  
+  # Apply gravity scaling (only reward when upright)
+  # Scale goes to 0 if robot falls over (grav_z > -0.1 approx)
+  upright_scale = torch.clamp(tilt_cos, min=0.0, max=0.7) / 0.7
+  
+  return reward * upright_scale
 
 
 def stumble_penalty(
@@ -828,14 +848,12 @@ def _get_heights_from_single_ray_sensors(
           continue
           
       # Read hit Z
-      # sensor.data.hit_pos_w is [B, ray_num, 3]. For single ray, ray_num=1.
-      # [B, 1, 3] -> [B]
-      hit_z = sensor.data.hit_pos_w[..., 0, 2] # View, no clone
+      # sensor.data.hit_pos_w is [B, ray_num, 3].
+      hit_pos_w = sensor.data.hit_pos_w[..., 0, :] # [B, 3]
+      hit_z = hit_pos_w[..., 2]
       dist = sensor.data.distances[..., 0]
       
       # Handle misses: if dist < 0, it means we scanned "sky" or hole.
-      # Use torch.where to avoid in-place modification and cloning
-      # If dist < 0, use -10.0, else use hit_z
       safe_z = torch.where(dist < 0, torch.tensor(-10.0, device=env.device), hit_z)
       
       heights_list.append(safe_z)
@@ -888,4 +906,110 @@ def feet_air_time_variance_penalty(
   except KeyError:
     upright_scale = torch.ones_like(reward)
 
+
   return reward * upright_scale
+
+
+class progress_reward:
+  """Reward for making progress since the last command update.
+  
+  Encourages the robot to actually move away from the starting point of the current command,
+  preventing it from getting stuck (e.g., at stairs).
+  
+  Logic:
+  - When command changes (or env resets), define a "checkpoint" P0 at current position.
+  - Calculate distance D = |P_current - P0|.
+  - Calculate expected distance D_exp = |V_cmd| * time_elapsed.
+  - Ratio R = D / D_exp.
+  - If R < 0.2 (stuck) and time > 0.5s: PENALTY.
+  - If R > 0.2 (moving): REWARD (scaled by R).
+  """
+  
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self.command_name = cfg.params["command_name"]
+    self.threshold = cfg.params.get("threshold", 0.1)
+    
+    # State: [B, 3] last command (vx, vy, wz)
+    self.last_command = torch.zeros((env.num_envs, 3), device=env.device)
+    # State: [B, 2] checkpoint position (x, y)
+    self.checkpoint_pos_w = torch.zeros((env.num_envs, 2), device=env.device)
+    # State: [B] time since last command change
+    self.accumulated_time = torch.zeros(env.num_envs, device=env.device)
+    
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    command_name: str,
+    threshold: float = 0.1,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    
+    # 1. Get current command
+    current_command = env.command_manager.get_command(command_name) # [B, 3]
+    if current_command is None:
+        return torch.zeros(env.num_envs, device=env.device)
+        
+    # Command magnitude (linear only)
+    line_vel_cmd = current_command[:, :2] 
+    cmd_norm = torch.norm(line_vel_cmd, dim=1) # [B]
+    
+    # 2. Detect Command Change or Environment Reset
+    # Change if command vector differs significantly
+    cmd_changed = torch.norm(current_command - self.last_command, dim=1) > 1e-4
+    # Also treat episode reset (step 0) as a change point
+    # We can check env.episode_length_buf, but ideally the caller relies on standard reset mechanisms.
+    # However, for stateful rewards, we must handle restarts manually if not using built-in reset hooks.
+    # Luckily, when env resets, usually commands correspond to a new set, or we can just rely on position jump.
+    # A robust check: if accumulated_time > episode_length * dt (impossible), or just rely on cmd change.
+    
+    # Let's trust command change detection. 
+    # Important: On env.reset(), `last_command` in memory might be stale but robot pos is new. 
+    # We should probably reset if `env.episode_length_buf == 0`.
+    is_reset = (env.episode_length_buf == 0)
+    should_reset = cmd_changed | is_reset
+
+    # 3. Update Checkpoints
+    current_pos_w_xy = asset.data.root_link_pos_w[:, :2] # [B, 2]
+    
+    reset_indices = torch.nonzero(should_reset).squeeze(-1)
+    if len(reset_indices) > 0:
+        self.checkpoint_pos_w[reset_indices] = current_pos_w_xy[reset_indices]
+        self.last_command[reset_indices] = current_command[reset_indices]
+        self.accumulated_time[reset_indices] = 0.0
+        
+    # 4. Update Time
+    self.accumulated_time += env.step_dt
+    
+    # 5. Calculate Metrics
+    # Displacement from checkpoint
+    displacement = current_pos_w_xy - self.checkpoint_pos_w
+    dist_travelled = torch.norm(displacement, dim=1)
+    
+    expected_dist = cmd_norm * self.accumulated_time
+    
+    # Avoid division by zero
+    progress_ratio = dist_travelled / (expected_dist + 1e-5)
+    
+    # 6. Compute Reward
+    # Only active if command is significant (e.g. > threshold)
+    active_mask = (cmd_norm > threshold).float()
+    
+    # Logic Refined: Use Soft Constraints instead of Hard Penalties (Tanh)
+    # We want the ratio to be closer to 1.0. 
+    # Use tanh to bound the reward smoothly between 0 and 1.
+    # tanh(1.0) ~= 0.76, tanh(0.25) ~= 0.24, tanh(inf) -> 1.0
+    
+    # Check for stuck condition
+    # If stuck (ratio < 0.25 after 0.5s), we force reward to 0.0.
+    # Otherwise, we give the tanh(ratio).
+    is_stuck = (progress_ratio < 0.25) & (self.accumulated_time > 0.5)
+    
+    # We remove explicit negative penalties to avoid value function collapse.
+    # 0.0 is "bad enough" compared to positive rewards elsewhere.
+    reward_term = torch.tanh(progress_ratio)
+    
+    final_reward = torch.where(is_stuck, torch.zeros_like(reward_term), reward_term)
+    
+    return final_reward * active_mask
+

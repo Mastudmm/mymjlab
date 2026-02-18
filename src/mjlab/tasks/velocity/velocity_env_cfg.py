@@ -255,8 +255,16 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "track_angular_velocity": RewardTermCfg(
       func=mdp.track_angular_velocity,
-      weight=1.75,
+      weight=1.0,
       params={"command_name": "twist", "std": math.sqrt(0.2)},
+    ),
+    "progress": RewardTermCfg(
+      func=mdp.progress_reward,
+      weight=0.01
+      params={
+        "command_name": "twist",
+        "threshold": 0.1,
+      },
     ),
     "upright": RewardTermCfg(
       func=mdp.flat_orientation,
@@ -268,7 +276,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "pose": RewardTermCfg( #保持关节角度，threshold代表在行走或者是跑动的时候限制将被放宽
       func=mdp.variable_posture,
-      weight=1.25,
+      weight=0.75,
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
         "command_name": "twist",
@@ -291,6 +299,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "dof_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-1.0),
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.1),
+    "j_vel_l2": RewardTermCfg(func=mdp.joint_vel_l2, weight=-0.0013),
     "air_time": RewardTermCfg(
       func=mdp.feet_air_time,
       weight=0.0,  # Increased to encourage lifting legs
@@ -299,7 +308,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "threshold_min": 0.125,
         "threshold_max": 0.5,
         "command_name": "twist",
-        "command_threshold": 0.25,
+        "command_threshold": 0.10,
       },
     ),
     "base_height": RewardTermCfg(
@@ -356,7 +365,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       params={
         "sensor_name": "feet_ground_contact",
         "command_name": "twist",
-        "command_threshold": 0.025,
+        "command_threshold": 0.10,
       },
     ),
     "calf_collision": RewardTermCfg(
