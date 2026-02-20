@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import os
 import hashlib
+import re
 
 from mjlab.entity import Entity
 from mjlab.managers.reward_manager import RewardTermCfg
@@ -159,7 +160,7 @@ def self_collision_cost(
   except KeyError:
     upright_scale = torch.ones_like(collision_count)
 
-  return collision_count * upright_scale
+  return collision_count 
 
 
 def body_angular_velocity_penalty(
@@ -671,7 +672,7 @@ def stumble_penalty(
     total_penalty += penalty
 
   # Apply upright mask
-  return total_penalty * upright_scale
+  return total_penalty 
 
 
 def feet_clearance_body(
@@ -755,6 +756,155 @@ def feet_clearance_body(
   cost *= upright_scale
   
   return cost
+
+
+class action_mirror:
+  """Reward term that penalizes asymmetry between left and right side actions.
+
+  This term computes the squared difference between the absolute values of actions for
+  specified pairs of joints (e.g., left and right hip).
+
+  Formula: sum((|action_left| - |action_right|)**2)
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self.cfg = cfg
+    self._env = env
+    self.l_indices = None
+    self.r_indices = None
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    mirror_joints: list[list[str]],
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ) -> torch.Tensor:
+    # Resolve indices once
+    if self.l_indices is None:
+      asset: Entity = env.scene[asset_cfg.name]
+      joint_names = asset.joint_names
+      
+      l_idxs = []
+      r_idxs = []
+      
+      # mirror_joints is a list of [name_L, name_R] pairs (or vice versa)
+      # The user config provided: ["FR_hip", "FL_hip"], so index 0 is R, index 1 is L?
+      # Actually symmetry is |a| - |b|, order doesn't matter for square diff.
+      
+      for pair in mirror_joints:
+        if len(pair) != 2:
+          raise ValueError(f"action_mirror: Expected pair of joints, got {pair}")
+        
+        # Resolve indices for each pattern in the pair
+        # pair[0] and pair[1] are regex patterns or exact names
+        regex1 = re.compile(pair[0])
+        regex2 = re.compile(pair[1])
+        
+        idxs1 = [i for i, name in enumerate(joint_names) if regex1.match(name)]
+        idxs2 = [i for i, name in enumerate(joint_names) if regex2.match(name)]
+        
+        # Ensure we found matches
+        if not idxs1:
+             raise ValueError(f"action_mirror: No joints found matching {pair[0]}")
+        if not idxs2:
+             raise ValueError(f"action_mirror: No joints found matching {pair[1]}")
+             
+        # Ensure we have equal number of matches to pair them up
+        if len(idxs1) != len(idxs2):
+             raise ValueError(f"action_mirror: Mismatched joint counts for patterns {pair}. Got {len(idxs1)} and {len(idxs2)}.")
+
+        l_idxs.extend(idxs1)
+        r_idxs.extend(idxs2)
+
+      self.l_indices = l_idxs
+      self.r_indices = r_idxs
+
+    # Calculate
+    actions = env.action_manager.action
+    
+    # Extract actions for the pairs
+    # actions shape: [num_envs, num_actions]
+    # We need to slice accurately.
+    # Note: env.action_manager.action is the raw action vector sent to the actuator (or policy output).
+    # If the action space matches joint order, this works.
+    # However, 'actions' might be different from 'joint_pos_target'.
+    # Usually in these frameworks, the action vector corresponds one-to-one with active joints.
+    # We assume 'joint_names' indices map to action indices correctly if all joints are actuated.
+    # If not, we might need to map joint_name -> actuator_index -> action_index.
+    
+    # For now, assuming straightforward mapping (referenced by joint_names index).
+    # But wait, 'joint_names' are from the ARTICULATION/ASSET. 
+    # The action vector depends on the ACTION MANAGER.
+    # Let's verify if we should use joint torques or policy actions.
+    # The term is called 'action_mirror', so likely policy actions.
+    
+    # Using cached indices to slice
+    # Convert lists to tensors for indexing? Not needed if 1D slicing works or just construct mask.
+    # Best to use torch indexing.
+    
+    act_l = actions[:, self.l_indices]
+    act_r = actions[:, self.r_indices]
+    
+    diff = torch.square(torch.abs(act_l) - torch.abs(act_r))
+    return torch.sum(diff, dim=1)
+
+
+class action_sync:
+  """Reward term that penalizes variance of action magnitudes within specified groups.
+
+  For each group of joints (e.g. all hips), this computes the variance of their
+  action magnitudes.
+
+  Formula: sum(variance(|action_i|...)) across groups
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self.cfg = cfg
+    self._env = env
+    self.group_indices = None
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    joint_groups: list[str | tuple[str]], # List of regex strings or tuples of strings
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ) -> torch.Tensor:
+    
+    if self.group_indices is None:
+      asset: Entity = env.scene[asset_cfg.name]
+      self.group_indices = []
+      
+      all_joint_names = asset.joint_names
+      
+      for group_def in joint_groups:
+        patterns = group_def if isinstance(group_def, (tuple, list)) else [group_def]
+        
+        indices = []
+        for pattern in patterns:
+            try:
+                regex = re.compile(pattern)
+                matched = [i for i, name in enumerate(all_joint_names) if regex.match(name)]
+                indices.extend(matched)
+            except re.error as e:
+                print(f"Warning: Invalid regex '{pattern}' in action_sync: {e}")
+            
+        indices = sorted(list(set(indices)))
+        if indices:
+            self.group_indices.append(indices)
+            
+    actions = env.action_manager.action
+    total_variance = torch.zeros(env.num_envs, device=env.device)
+    
+    for indices in self.group_indices:
+        if not indices:
+            continue
+        group_actions = torch.abs(actions[:, indices])
+        
+        if len(indices) > 1:
+            var = torch.var(group_actions, dim=1, unbiased=False)
+            total_variance += var
+            
+    return total_variance
 
 
 def _get_heights_from_sensor(
@@ -901,8 +1051,9 @@ def feet_air_time_variance_penalty(
   env: ManagerBasedRlEnv,
   sensor_name: str,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  sigma: float = 0.05,
 ) -> torch.Tensor:
-  """Penalize variance in the amount of time each foot spends in the air/on the ground relative to each other."""
+  """Reward for symmetry (low variance) in air/contact time."""
   contact_sensor: ContactSensor = env.scene[sensor_name]
   sensor_data = contact_sensor.data
 
@@ -913,20 +1064,23 @@ def feet_air_time_variance_penalty(
   last_air_time = sensor_data.last_air_time
   last_contact_time = sensor_data.last_contact_time
 
-  # Compute variance across feet (dim=1)计算方差
+  # Compute variance across feet (dim=1)
   # penalize high variance in air time and contact time between feet to encourage symmetry
-  reward = torch.var(torch.clamp(last_air_time, max=0.6), dim=1) + \
-       torch.var(torch.clamp(last_contact_time, max=0.6), dim=1)
+  total_variance = torch.var(torch.clamp(last_air_time, max=0.6), dim=1) + \
+                   torch.var(torch.clamp(last_contact_time, max=0.6), dim=1)
+  
   # Upright mask (using asset_cfg to find robot)
   try:
     asset: Entity = env.scene[asset_cfg.name]
     proj_grav_z = asset.data.projected_gravity_b[:, 2]
+    # Scale: 1.0 when upright (-1), goes to 0 when tilted > ~45 deg
     upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
   except KeyError:
-    upright_scale = torch.ones_like(reward)
+    upright_scale = torch.ones_like(total_variance)
 
-
-  return reward * upright_scale
+  # Changed from direct variance (Penalty) to Exponential (Reward)
+  # Uses sigma to control sensitivity.
+  return torch.exp(-total_variance / sigma) * upright_scale 
 
 
 class progress_reward:

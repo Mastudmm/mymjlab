@@ -385,10 +385,35 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "feet_air_time_variance": RewardTermCfg(
       func=mdp.feet_air_time_variance_penalty,
-      weight=-0.4, # Default to 0.0, to be tuned per robot/task
+      weight=0.5, # Reward for symmetry (low variance). Tuned: positive weight.
       params={
         "sensor_name": "feet_ground_contact",
         "asset_cfg": SceneEntityCfg("robot"),
+        "sigma": 0.15,
+      },
+    ),
+    "action_mirror": RewardTermCfg(
+      func=mdp.action_mirror,
+      weight=-0.2, # Penalize asymmetry in action magnitude (Trot Diagonal Lock)
+      params={
+          "asset_cfg": SceneEntityCfg("robot"),
+          "mirror_joints": [
+              ["FR.*", "RL.*"], 
+              ["FL.*", "RR.*"]
+          ],
+      },
+    ),
+    "action_sync": RewardTermCfg(
+      func=mdp.action_sync,
+      weight=-0.1, # Penalize high variance of action magnitudes within groups
+      params={
+          "asset_cfg": SceneEntityCfg("robot"),
+          "joint_groups": [
+              # Using explicit groups or regex both work. Regex is cleaner.
+              (".*_hip_joint",),
+              (".*_thigh_joint",),
+              (".*_calf_joint",),
+          ],
       },
     ),
   }
