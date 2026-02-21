@@ -422,11 +422,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "std": 0.1,
         "max_err": 0.2,
         "sensor_name": "feet_ground_contact",
-        "asset_cfg": SceneEntityCfg("robot", site_names=(".*L_foot", ".*R_foot")),
+        "asset_cfg": SceneEntityCfg("robot", site_names=("FL", "FR", "RL", "RR")),
         "pairs": [
           # Trot: Diagonal pairs should be in sync
-          [".*FL_foot", ".*RR_foot"],
-          [".*FR_foot", ".*RL_foot"],
+          ["FL", "RR"],
+          ["FR", "RL"],
         ],
       },
     ),
@@ -437,11 +437,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "std": 0.1,
         "max_err": 0.2,
         "sensor_name": "feet_ground_contact",
-        "asset_cfg": SceneEntityCfg("robot", site_names=(".*L_foot", ".*R_foot")),
+        "asset_cfg": SceneEntityCfg("robot", site_names=("FL", "FR", "RL", "RR")),
         "pairs": [
           # Trot: Adjacent pairs should be anti-sync
-          [".*FL_foot", ".*FR_foot"],
-          [".*RL_foot", ".*RR_foot"],
+          ["FL", "FR"],
+          ["RL", "RR"],
         ],
       },
     ),
@@ -475,8 +475,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "command_name": "twist",
         "velocity_stages": [
           {"step": 0, "lin_vel_x": (-0.5, 1.25), "ang_vel_z": (-1.25, 1.25)},
-          {"step": 600, "lin_vel_x": (-0.2, 1.25), "ang_vel_z": (-1.25, 1.25)},
-          {"step": 2000 * 24, "lin_vel_x": (-0.75, 1.5), "ang_vel_z": (-1.75, 1.75)},
+          {"step": 600, "lin_vel_x": (-0.2, 1.5), "ang_vel_z": (-1.25, 1.25)},
+          {"step": 2200 * 24, "lin_vel_x": (-0.75, 1.5), "ang_vel_z": (-1.75, 1.75)},
           {"step": 4000 * 24, "lin_vel_x": (-1.0, 2.0)}, 
         ],
       },
