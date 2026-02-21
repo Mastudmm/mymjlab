@@ -405,15 +405,44 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "action_sync": RewardTermCfg(
       func=mdp.action_sync,
-      weight=-0.1, # Penalize high variance of action magnitudes within groups
+      weight=-0.1, 
       params={
           "asset_cfg": SceneEntityCfg("robot"),
           "joint_groups": [
-              # Using explicit groups or regex both work. Regex is cleaner.
               (".*_hip_joint",),
               (".*_thigh_joint",),
               (".*_calf_joint",),
           ],
+      },
+    ),
+    "gait_force_sync": RewardTermCfg(
+      func=mdp.gait_force_sync,
+      weight=2.5e-3,
+      params={
+        "std": 0.1,
+        "max_err": 0.2,
+        "sensor_name": "feet_ground_contact",
+        "asset_cfg": SceneEntityCfg("robot", site_names=(".*L_foot", ".*R_foot")),
+        "pairs": [
+          # Trot: Diagonal pairs should be in sync
+          [".*FL_foot", ".*RR_foot"],
+          [".*FR_foot", ".*RL_foot"],
+        ],
+      },
+    ),
+    "gait_force_async": RewardTermCfg(
+      func=mdp.gait_force_async,
+      weight=2.5e-3,
+      params={
+        "std": 0.1,
+        "max_err": 0.2,
+        "sensor_name": "feet_ground_contact",
+        "asset_cfg": SceneEntityCfg("robot", site_names=(".*L_foot", ".*R_foot")),
+        "pairs": [
+          # Trot: Adjacent pairs should be anti-sync
+          [".*FL_foot", ".*FR_foot"],
+          [".*RL_foot", ".*RR_foot"],
+        ],
       },
     ),
   }
@@ -446,8 +475,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "command_name": "twist",
         "velocity_stages": [
           {"step": 0, "lin_vel_x": (-0.5, 1.25), "ang_vel_z": (-1.25, 1.25)},
-          {"step": 1800 * 24, "lin_vel_x": (-0.75, 1.5), "ang_vel_z": (-1.75, 1.75)},
-          {"step": 4000 * 24, "lin_vel_x": (-1.0, 2.0)},  
+          {"step": 600, "lin_vel_x": (-0.2, 1.25), "ang_vel_z": (-1.25, 1.25)},
+          {"step": 2000 * 24, "lin_vel_x": (-0.75, 1.5), "ang_vel_z": (-1.75, 1.75)},
+          {"step": 4000 * 24, "lin_vel_x": (-1.0, 2.0)}, 
         ],
       },
     ),

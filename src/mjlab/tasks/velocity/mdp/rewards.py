@@ -1186,3 +1186,146 @@ class progress_reward:
     
     return final_reward * active_mask
 
+
+class gait_force_sync:
+  """Reward for synchronizing foot phases (Air-Air, Contact-Contact).
+  
+  Encourages two legs (e.g. diagonal pairs in Trot) to be in the same state.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self.std = cfg.params.get("std", 0.1)
+    self.max_err = cfg.params.get("max_err", 0.2)
+    
+    # Resolve indices based on site names
+    self.foot_indices_list: list[tuple[int, int]] = []
+    
+    asset_cfg: SceneEntityCfg = cfg.params["asset_cfg"]
+    site_names = asset_cfg.site_names
+    
+    if site_names is None:
+        raise ValueError("gait_force_sync: asset_cfg.site_names is None.")
+
+    if isinstance(site_names, str):
+        site_names = [site_names]
+
+    pairs = cfg.params["pairs"] # List of [nameA, nameB]
+    
+    import re
+    for pair in pairs:
+        idx0 = -1
+        idx1 = -1
+        for i, name in enumerate(site_names):
+            if re.match(pair[0], name): idx0 = i
+            if re.match(pair[1], name): idx1 = i
+            
+        if idx0 == -1 or idx1 == -1:
+            print(f"Warning: gait_force_sync could not find pair {pair}")
+            continue
+        self.foot_indices_list.append((idx0, idx1))
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    pairs: list[list[str]], 
+    std: float = 0.1,
+    max_err: float = 0.2,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ) -> torch.Tensor:
+    
+    contact_sensor: ContactSensor = env.scene[sensor_name]
+    
+    if contact_sensor.data.current_air_time is None or contact_sensor.data.current_contact_time is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    current_air = contact_sensor.data.current_air_time
+    current_contact = contact_sensor.data.current_contact_time
+    
+    total_error = torch.zeros(env.num_envs, device=env.device)
+    
+    for (i0, i1) in self.foot_indices_list:
+        air0 = current_air[:, i0]
+        contact0 = current_contact[:, i0]
+        air1 = current_air[:, i1]
+        contact1 = current_contact[:, i1]
+        
+        # SYNC: Penalize difference between SAME states
+        e_air = torch.clamp(torch.square(air0 - air1), max=max_err**2)
+        e_contact = torch.clamp(torch.square(contact0 - contact1), max=max_err**2)
+        
+        total_error += (e_air + e_contact)
+    
+    return torch.exp(-total_error / std)
+
+
+class gait_force_async:
+  """Reward for anti-synchronizing foot phases (Air-Contact).
+  
+  Encourages two legs (e.g. adjacent pairs in Trot) to be in opposite states.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self.std = cfg.params.get("std", 0.1)
+    self.max_err = cfg.params.get("max_err", 0.2)
+    
+    self.foot_indices_list: list[tuple[int, int]] = []
+    
+    asset_cfg: SceneEntityCfg = cfg.params["asset_cfg"]
+    site_names = asset_cfg.site_names
+    
+    if site_names is None:
+        raise ValueError("gait_force_async: asset_cfg.site_names is None.")
+
+    if isinstance(site_names, str):
+        site_names = [site_names]
+
+    pairs = cfg.params["pairs"]
+    
+    import re
+    for pair in pairs:
+        idx0 = -1
+        idx1 = -1
+        for i, name in enumerate(site_names):
+            if re.match(pair[0], name): idx0 = i
+            if re.match(pair[1], name): idx1 = i
+            
+        if idx0 == -1 or idx1 == -1:
+            print(f"Warning: gait_force_async could not find pair {pair}")
+            continue
+        self.foot_indices_list.append((idx0, idx1))
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    pairs: list[list[str]], 
+    std: float = 0.1,
+    max_err: float = 0.2,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ) -> torch.Tensor:
+    
+    contact_sensor: ContactSensor = env.scene[sensor_name]
+    
+    if contact_sensor.data.current_air_time is None or contact_sensor.data.current_contact_time is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    current_air = contact_sensor.data.current_air_time
+    current_contact = contact_sensor.data.current_contact_time
+    
+    total_error = torch.zeros(env.num_envs, device=env.device)
+    
+    for (i0, i1) in self.foot_indices_list:
+        air0 = current_air[:, i0]
+        contact0 = current_contact[:, i0]
+        air1 = current_air[:, i1]
+        contact1 = current_contact[:, i1]
+        
+        # ASYNC: Penalize difference between OPPOSITE states
+        e1 = torch.clamp(torch.square(air0 - contact1), max=max_err**2)
+        e2 = torch.clamp(torch.square(contact0 - air1), max=max_err**2)
+        
+        total_error += (e1 + e2)
+    
+    return torch.exp(-total_error / std)
+
