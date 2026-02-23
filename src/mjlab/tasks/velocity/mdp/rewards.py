@@ -114,7 +114,7 @@ def flat_orientation(
   # Allow significant pitching for stairs. Multiply by small factor (e.g. 0.1)
   # or clamp it? A small weight allows it to pitch but prefers flat if possible.
   # 0.0 is too loose (might do wheelies), 0.1 is a good balance.
-  pitch_part = 0.1 * torch.square(projected_gravity_b[:, 0])
+  pitch_part = torch.square(projected_gravity_b[:, 0])
 
   total_error = roll_part + pitch_part
   
@@ -1051,9 +1051,8 @@ def feet_air_time_variance_penalty(
   env: ManagerBasedRlEnv,
   sensor_name: str,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-  sigma: float = 0.05,
 ) -> torch.Tensor:
-  """Reward for symmetry (low variance) in air/contact time."""
+  """Penalize variance in the amount of time each foot spends in the air/on the ground relative to each other."""
   contact_sensor: ContactSensor = env.scene[sensor_name]
   sensor_data = contact_sensor.data
 
@@ -1066,8 +1065,8 @@ def feet_air_time_variance_penalty(
 
   # Compute variance across feet (dim=1)
   # penalize high variance in air time and contact time between feet to encourage symmetry
-  total_variance = torch.var(torch.clamp(last_air_time, max=0.6), dim=1) + \
-                   torch.var(torch.clamp(last_contact_time, max=0.6), dim=1)
+  total_variance = torch.var(torch.clamp(last_air_time, max=0.5), dim=1) + \
+                   torch.var(torch.clamp(last_contact_time, max=0.5), dim=1)
   
   # Upright mask (using asset_cfg to find robot)
   try:
@@ -1078,9 +1077,7 @@ def feet_air_time_variance_penalty(
   except KeyError:
     upright_scale = torch.ones_like(total_variance)
 
-  # Changed from direct variance (Penalty) to Exponential (Reward)
-  # Uses sigma to control sensitivity.
-  return torch.exp(-total_variance / sigma) * upright_scale 
+  return total_variance * upright_scale 
 
 
 class progress_reward:

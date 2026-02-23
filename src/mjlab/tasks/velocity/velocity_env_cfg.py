@@ -385,11 +385,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "feet_air_time_variance": RewardTermCfg(
       func=mdp.feet_air_time_variance_penalty,
-      weight=0.5, # Reward for symmetry (low variance). Tuned: positive weight.
+      weight=-0.1, # Penalty for variance (asymmetry).
       params={
         "sensor_name": "feet_ground_contact",
         "asset_cfg": SceneEntityCfg("robot"),
-        "sigma": 0.15,
       },
     ),
     "action_mirror": RewardTermCfg(
