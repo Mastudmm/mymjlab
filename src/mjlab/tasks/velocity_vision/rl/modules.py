@@ -1,0 +1,354 @@
+import torch
+import torch.nn as nn
+from rsl_rl.modules import ActorCritic
+
+def get_activation_fn(activation_name):
+    """
+    根据传入的字符串名称返回对应的 PyTorch 激活函数。
+    由于原始 rsl_rl 的 get_activation 导入可能存在兼容问题，此处本地实现。
+    """
+    if activation_name == "elu":
+        return nn.ELU()
+    elif activation_name == "selu":
+        return nn.SELU()
+    elif activation_name == "relu":
+        return nn.ReLU()
+    elif activation_name == "crelu":
+        return nn.ReLU()  # specific to rsl_rl, fallback
+    elif activation_name == "lrelu":
+        return nn.LeakyReLU()
+    elif activation_name == "tanh":
+        return nn.Tanh()
+    elif activation_name == "sigmoid":
+        return nn.Sigmoid()
+    else:
+        print(f"Activation function {activation_name} not found, defaulting to ELU")
+        return nn.ELU()
+
+class DepthActorCritic(ActorCritic):
+    def __init__(
+        self,
+        obs,
+        obs_groups,
+        num_actions,
+        actor_hidden_dims=[256, 256, 128],
+        critic_hidden_dims=[256, 256, 128],
+        activation="elu",
+        init_noise_std=1.0,
+        **kwargs,
+    ):
+        # ----------------------------------------------------------------------
+        # 1. Configuration & Dimension Calculation
+        #    配置与维度计算
+        # ----------------------------------------------------------------------
+        # 从 kwargs 获取自定义参数
+        self.depth_shape = kwargs.pop("depth_shape", (1, 50, 80)) # 默认C, H, W(1, 50, 80)，可由外部传入
+        self.depth_history_num = kwargs.pop("depth_history_num", 1) # CNN处理多帧深度图 (本例中为1帧)
+        
+        # history_length 用于扩大除了展平的 depth 或 scan 外，其余本体信息的大小
+        self.obs_history_num = kwargs.pop("obs_history_num", 10)  
+        depth_vol = self.depth_shape[0] * self.depth_shape[1] * self.depth_shape[2]
+        
+        # 按照 rsl_rl 的模式，从传入的字典和观测组实时解包出所有的特征大小
+        '''groups obs字典内拿到的是已经展平好的'''
+        self.obs_groups = obs_groups  
+        num_actor_obs = 0
+        for obs_group in obs_groups["policy"]:
+            num_actor_obs += obs[obs_group].shape[-1] 
+        num_critic_obs = 0
+        for obs_group in obs_groups["critic"]:
+            num_critic_obs += obs[obs_group].shape[-1] 
+
+        
+        #对于 Actor来说
+        # 我们假设 actor 的总观测 = 本体系特征10帧 + 深度图展平(depth_vol * depth_history_num帧)
+        self.depth_total_vol_actor = depth_vol * self.depth_history_num
+        self.proprio_total_dim = num_actor_obs - self.depth_total_vol_actor
+        self.proprio_single_dim = self.proprio_total_dim // self.obs_history_num # 恢复出当前这一帧的特征维度
+
+        # Scan Config (for Teacher/Critic)
+        # 对于 Critic：已知总观测 = Critic特有本体与特权状态(非scan) + 地形扫描 (scan * 1帧)
+        # Critic 不再使用 10 帧历史，所以此时 history 对于 critic 为 1
+        self.scan_dim = kwargs.pop("scan_dim", 256) # 默认 256，允许外部传入避免硬编码
+        self.scan_total_dim = self.scan_dim  #scan木有历史数据，直接等于一帧大小
+        self.critic_proprio_priv_total_dim = num_critic_obs - self.scan_total_dim
+
+        print(f"[DepthActorCritic] Architecture Dimensions:")
+        print(f"  -> Actor Proprio Total: {self.proprio_total_dim}, Single Frame: {self.proprio_single_dim} | Depth Vol (Single): {depth_vol}")
+        print(f"  -> Critic Privileged+Proprio Total: {self.critic_proprio_priv_total_dim} | Scan Base: {self.scan_dim}")
+
+        # Latent Feature Dimensions
+        # 隐层特征空间的表示维度
+        self.visual_latent_dim = 32 # 由CNN生成的视觉隐特征维度输入进actor
+        self.history_latent_dim = 32 # 由MLP提取的本体历史记忆隐特征输入进actor
+        self.scan_latent_dim = 32   # 由Critic地形扫描压缩出的特征维度
+        '''
+        self.gru_hidden_dim = 512   # 时序核心GRU中隐藏状态向量的维度 (已弃用)
+        '''
+
+        # ----------------------------------------------------------------------
+        # 2. Network Construction
+        # ----------------------------------------------------------------------
+        
+        # To reuse the parent variable names but init them later, we call super with dummy values
+        # or we just init the base class stuff manually. Calling super is safer for other props.
+        # 注意此处的参数传递，需要将修改过的 kwargs 再回传
+        super().__init__(
+            obs=obs,
+            obs_groups=obs_groups,
+            num_actions=num_actions,
+            actor_hidden_dims=actor_hidden_dims,
+            critic_hidden_dims=critic_hidden_dims,
+            activation=activation,
+            init_noise_std=init_noise_std,
+            **kwargs,
+        )
+        # Immediate overwrite of self.actor and self.critic
+        activation_fn = get_activation_fn(activation)
+
+        # ---------------------------
+        # A. Visual Encoder (CNN)
+        #    视觉编码器 (卷积神经网络)
+        #    作用: 将高维、带有噪声的深度图像通过卷积池化压缩为紧凑的32维隐特征
+        #    输入: 深度图图像张量, 形状为 (Batch, Channels=1, Height=50, Width=80) 
+        #    输出: 降维后的视觉特征, 张量形状 (Batch, visual_latent_dim=32)
+        # ---------------------------
+        # 已知输入图像定死为 C=1, H=50, W=80
+        # Conv1: input (1, 50, 80) -> kernel (5x5), valid padding默认(无填充) -> (32, 46, 76)
+        # MaxPool: input (32, 46, 76) -> kernel 2, stride 2 -> (32, 23, 38)
+        # Conv2: input (32, 23, 38) -> kernel (3x3), padding 0 -> (64, 21, 36)
+        # Flatten: 64 * 21 * 36 = 48384
+        cnn_in_channels = self.depth_shape[0] * self.depth_history_num
+        flatten_dim = 64 * 21 * 36
+            
+        self.visual_encoder = nn.Sequential(
+            nn.Conv2d(cnn_in_channels, 32, kernel_size=5),
+            nn.MaxPool2d(kernel_size=2),
+            activation_fn,
+            nn.Conv2d(32, 64, kernel_size=3),
+            activation_fn,
+            nn.Flatten(),
+            nn.Linear(flatten_dim, 128),
+            activation_fn,
+            nn.Linear(128, self.visual_latent_dim) # Compressed to 32 (压缩至最终视觉隐空间 32维)
+        )
+
+        # ---------------------------
+        # B. Temporal History Encoder (MLP 代替 GRU 提取 10 帧 proprio)
+        # ---------------------------
+        self.history_encoder = nn.Sequential(
+            nn.Linear(self.proprio_total_dim, 128),
+            activation_fn,
+            nn.Linear(128, self.history_latent_dim),
+            activation_fn
+        )
+        
+        '''
+        # ---------------------------
+        # C. Fusion & GRU (Temporal) - 【弃用】
+        # ---------------------------
+        # Fusion MLP: Combines Proprio + Visual Latent -> GRU Input
+        fusion_input_dim = self.proprio_total_dim
+        self.fusion_mlp = nn.Sequential(
+            nn.Linear(fusion_input_dim, 128),
+            activation_fn,
+            nn.Linear(128, 32),
+            activation_fn
+        )
+        
+        # GRU: Input 32 -> Hidden 512
+        # GRU 网络作用: 为机器人提供短期的时序记忆，解决视觉被遮挡或动作间的时序依赖问题
+        # 输入: 融合层输出特征, 形状 (Batch, Seq_len=1, gru_input_size=32)
+        # 输出: (此步输出隐状态, 传给下一步记忆的状态), 最终提供隐藏维度 512 的结果
+        self.gru_input_size = 32 + self.visual_latent_dim
+        self.gru = nn.GRU(input_size=self.gru_input_size, hidden_size=self.gru_hidden_dim, batch_first=True)
+        
+        # Decoder: Hidden 512 -> Latent 32 (to be fed to Actor)
+        # GRU 解码器作用: 将 GRU 庞大 (512维度) 的主导隐状态精炼还原为短小的特征(32维)，喂给最终的主 Actor 网络
+        # 输入: GRU的主输出, 维度为 512
+        # 输出: 供策略下达判断的提纯特征, 维度 32
+        self.gru_decoder = nn.Linear(self.gru_hidden_dim, 32)
+        '''
+
+        # ---------------------------
+        # C. Scan Encoder (Critic)
+        #    扫描信息编码器 (Critic 专属)
+        #    作用: 针对老师训练框架，利用全局准确的特权点云信息提升 Value 指导正确率
+        #    输入: 地形精确一维测距扫描特征, 长度 scan_dim 
+        #    输出: 一元特权隐特征, 维度 32
+        # ---------------------------
+        if self.scan_dim > 0:
+            self.scan_encoder = nn.Sequential(
+                nn.Linear(self.scan_dim, 256),
+                activation_fn,
+                nn.Linear(256, 128),
+                activation_fn,
+                nn.Linear(128, self.scan_latent_dim)
+            )
+        '''
+        拟合scan dots的特权信息，输出32维度
+        scan加上本体信息加上特权信息展平放入value network（512x256x128x1）里进行训练。
+        '''
+        # ---------------------------
+        # D. Main Actor MLP
+        #    主角策略网络 (Main Actor)
+        #    作用: 根据机器人内部的本体状态 + 时序上的长线视觉记忆综合制定关节的目标指令
+        #    输入: 拼接后的 [本体信息张量 (proprio_dim * obs_history_num), GRU输出提取张量 (32)], 所以总大小=proprio_dim * history + 32
+        #    输出: 需要控制的所有动作维度 logits 预测 (num_actions)
+        # ---------------------------
+        # Input: Proprio + GRU_Decoder_Out (32)
+        actor_in_dim = self.proprio_single_dim + self.history_latent_dim + self.visual_latent_dim
+        
+        actor_layers = []
+        actor_layers.append(nn.Linear(actor_in_dim, actor_hidden_dims[0]))
+        actor_layers.append(activation_fn)
+        for i in range(len(actor_hidden_dims) - 1):
+            actor_layers.append(nn.Linear(actor_hidden_dims[i], actor_hidden_dims[i + 1]))
+            actor_layers.append(activation_fn)
+        actor_layers.append(nn.Linear(actor_hidden_dims[-1], num_actions))
+        self.actor = nn.Sequential(*actor_layers)
+        
+        # ---------------------------
+        # E. Main Critic MLP
+        #    价值评估网络 (Main Critic)
+        #    作用: 基于准确不带噪声的状态，对未来的汇报/Value做出精准估算
+        #    输入: 拼接后的 [本体信息 (proprio_dim * history), 压缩后特权地形点云扫描 (32)]
+        #    输出: 单个标量期望回报 (Value), 维度 1
+        # ---------------------------
+        # Input: Proprio + Scan_Latent (32)
+        # Or if scan_dim is 0, just privileged proprio
+        critic_in_dim = self.critic_proprio_priv_total_dim + (self.scan_latent_dim if self.scan_dim > 0 else 0)
+        
+        critic_layers = []
+        critic_layers.append(nn.Linear(critic_in_dim, critic_hidden_dims[0]))
+        critic_layers.append(activation_fn)
+        for i in range(len(critic_hidden_dims) - 1):
+            critic_layers.append(nn.Linear(critic_hidden_dims[i], critic_hidden_dims[i + 1]))
+            critic_layers.append(activation_fn)
+        critic_layers.append(nn.Linear(critic_hidden_dims[-1], 1))
+        self.critic = nn.Sequential(*critic_layers)
+
+        # Init weights
+        self._init_weights()
+        
+    def _init_weights(self):
+        # Orthogonal init
+        for m in [self.actor, self.critic, self.visual_encoder, self.history_encoder]:
+            if isinstance(m, nn.Sequential) or isinstance(m, nn.Linear):
+                if isinstance(m, nn.Sequential):
+                    for layer in m:
+                        if isinstance(layer, nn.Linear):
+                            nn.init.orthogonal_(layer.weight, gain=2**0.5)
+                            if layer.bias is not None: nn.init.constant_(layer.bias, 0.0)
+                        elif isinstance(layer, nn.Conv2d):
+                             nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
+                elif isinstance(m, nn.Linear):
+                    nn.init.orthogonal_(m.weight, gain=2**0.5)
+                    if m.bias is not None: nn.init.constant_(m.bias, 0.0)
+
+        if hasattr(self, 'scan_encoder'):
+             for layer in self.scan_encoder:
+                if isinstance(layer, nn.Linear):
+                    nn.init.orthogonal_(layer.weight, gain=2**0.5)
+
+    def reset(self, dones=None):
+        # 负责处理循环或记忆模型的隐藏状态
+        # 当环境 (env) episode 结束重置时，清空对应位置的隐藏记忆
+        '''
+        if hasattr(self, 'actor_hidden_state') and self.actor_hidden_state is not None:
+            if dones is None:
+                self.actor_hidden_state.fill_(0.0)
+            else:
+                self.actor_hidden_state[:, dones, :] = 0.0
+        '''
+        pass
+
+    def _process_actor_obs(self, obs):
+        # 处理 Actor 的实际包含图像观测的数据流，进行前向传播
+        proprio = obs[:, :self.proprio_total_dim]
+        # 由于 policy 设定了 proprio 的 history_length = 10，这里的 depth 已经是设置了单帧长度或外部设定长度（即只有 depth_history_num 个帧）
+        depth_all_frames = obs[:, self.proprio_total_dim:]
+        
+        # 1. 截取最新单帧本体观测 (当前状态 obs)
+        curr_proprio = proprio[:, -self.proprio_single_dim:]
+        
+        # 2. 本体历史通过 MLP 提取特征
+        history_latent = self.history_encoder(proprio)
+
+        # 3. 读取设定的最新深度的信息帧张量
+        depth_vol = self.depth_shape[0] * self.depth_shape[1] * self.depth_shape[2]
+        latest_depth_frames_dim = depth_vol * self.depth_history_num
+        depth = depth_all_frames
+
+        # 把一维展平的图像重新转回张量 (Batch, Channels, Height, Width)
+        cnn_in_channels = self.depth_shape[0] * self.depth_history_num
+        depth = depth.view(-1, cnn_in_channels, self.depth_shape[1], self.depth_shape[2])
+        
+        # Encoder: 提取图像隐特征
+        visual_latent = self.visual_encoder(depth)
+        
+        '''
+        # Fusion: 将机器人自身状态与提取出的周边图像隐特征拼接，送入多层感知机融合
+        fusion_in = torch.cat((proprio, visual_latent), dim=-1)
+        fusion_out = self.fusion_mlp(fusion_in) 
+        
+        # GRU Logic: 处理时间的序列特征，保存环境记忆
+        batch_size = obs.shape[0]
+        # 若是新环境启动或 batch/并行数量发生变化，重新初始化隐藏状态
+        if not hasattr(self, 'actor_hidden_state') or self.actor_hidden_state.shape[1] != batch_size:
+             # Init hidden state (1, batch, hidden)
+             self.actor_hidden_state = torch.zeros(1, batch_size, self.gru_hidden_dim, device=obs.device)
+        
+        # Inputs: (batch, seq=1, input_size) GRU在PyTorch中期待3D的输入，即便序列长度=1
+        gru_in = fusion_out.unsqueeze(1)
+        # 前向GRu，保存输出并更新自身储存的隐特征
+        gru_out, self.actor_hidden_state = self.gru(gru_in, self.actor_hidden_state)
+        
+        # Decoder
+        # gru_out 维度还原: 去掉序列长度的壳 (batch, hidden)
+        gru_out = gru_out.squeeze(1)
+        # 将巨大的GRU状态降低维度，提纯为包含记忆的简洁向量，辅助主网判断
+        decoded = self.gru_decoder(gru_out)
+        '''
+        
+        # Concat for Actor MLP: 组合最新的单帧本体信息 + 10帧历史提取特征 + 深度图视觉特征
+        return torch.cat((curr_proprio, history_latent, visual_latent), dim=-1)
+
+    def _process_critic_obs(self, obs):
+        # 处理 Critic 包含精准特权信息（地形扫描）的数据流
+        if self.scan_dim <= 0:
+            return obs
+            
+        proprio_priv = obs.narrow(1, 0, self.critic_proprio_priv_total_dim)
+        scan = obs.narrow(1, self.critic_proprio_priv_total_dim, self.scan_total_dim)
+        
+        # 将带有历史栈的特权的地形扫描图经过高精度的简单全结合网络降维
+        scan_latent = self.scan_encoder(scan) # [B, 32]
+        # 和 Critic 特有的本体+全知特权信息拼接，作为 Value 评估的输入
+        return torch.cat([proprio_priv, scan_latent], dim=1)
+
+    def act(self, obs, **kwargs):
+        obs = self.get_actor_obs(obs)
+        obs = self.actor_obs_normalizer(obs)
+        features = self._process_actor_obs(obs)
+        self.update_distribution(features)
+        if self.distribution is None:
+            raise RuntimeError("Distribution was not initialized after update.")
+        return self.distribution.sample()
+
+    def get_actions_log_prob(self, actions):
+        if self.distribution is None:
+            raise RuntimeError("Distribution was not initialized.")
+        return self.distribution.log_prob(actions).sum(dim=-1)
+
+    def act_inference(self, obs):
+        obs = self.get_actor_obs(obs)
+        obs = self.actor_obs_normalizer(obs)
+        features = self._process_actor_obs(obs)
+        return self.actor(features)
+
+    def evaluate(self, obs, **kwargs):
+        obs = self.get_critic_obs(obs)
+        obs = self.critic_obs_normalizer(obs)
+        features = self._process_critic_obs(obs)
+        return self.critic(features)
