@@ -10,10 +10,12 @@ from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers import TerminationTermCfg
+from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg
 from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
+from mjlab.envs.mdp import dr
 from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 
 TerrainType = Literal["rough", "obstacles"]
@@ -66,6 +68,7 @@ def unitree_go1_rough_env_cfg(
     fields=("found","force"),
     reduce="none",
     num_slots=1,
+    history_length=4,
   )
   # Thigh contact: used for penalty (no termination).
   thigh_ground_cfg = ContactSensorCfg(
@@ -75,8 +78,9 @@ def unitree_go1_rough_env_cfg(
     fields=("found", "force"),
     reduce="none",
     num_slots=1,
+    history_length=4,
   )
-  nonfootleg_ground_cfg = ContactSensorCfg(
+  nonfoot_ground_cfg = ContactSensorCfg(
     name="nonfoot_ground_touch",
     primary=ContactMatch(
       mode="geom",
@@ -96,8 +100,9 @@ def unitree_go1_rough_env_cfg(
   cfg.scene.sensors = (cfg.scene.sensors or ()) + (
     feet_ground_cfg,
     nonfoot_ground_cfg,
+    calf_ground_cfg,
+    thigh_ground_cfg,
   )
-  cfg.scene.sensors = (feet_ground_cfg, nonfoot_ground_cfg)
 
   if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
     cfg.scene.terrain.terrain_generator.curriculum = True
@@ -118,32 +123,31 @@ def unitree_go1_rough_env_cfg(
   cfg.events["base_com"].params["asset_cfg"].body_names = ("trunk",)
 
   # Added Domain Randomization: Mass, Damping, Friction Loss
-  cfg.events["body_mass"] = EventTermCfg(
-      func=mdp.randomize_field,
+  # Now physically accurate: pseudo_inertia smoothly scales both mass and moment of inertia
+  cfg.events["body_inertia_mass"] = EventTermCfg(
+      func=dr.pseudo_inertia,
       mode="startup",
       params={
           "asset_cfg": SceneEntityCfg("robot", body_names="trunk"),
-          "field": "body_mass",
-          "operation": "scale",
-          "ranges": (0.8, 1.2), # Mass +/- 20%
+          # Use alpha_range to describe the symmetric scale limit. 
+          # alpha param is the log-scale: [-0.2, 0.2] is roughly equivalent to scaling ~[0.8, 1.2]
+          "alpha_range": (-0.2, 0.2), 
       },
   )
   cfg.events["dof_friction"] = EventTermCfg(
-      func=mdp.randomize_field,
+      func=dr.dof_frictionloss,
       mode="startup",
       params={
           "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
-          "field": "dof_frictionloss",
           "operation": "add",
           "ranges": (0.0, 0.2), # Add random friction loss
       },
   )
   cfg.events["dof_damping"] = EventTermCfg(
-      func=mdp.randomize_field,
+      func=dr.dof_damping,
       mode="startup",
       params={
           "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
-          "field": "dof_damping",
           "operation": "scale",
           "ranges": (0.8, 1.2), # Damping +/- 20%
       },
@@ -191,10 +195,12 @@ def unitree_go1_rough_env_cfg(
   cfg.rewards["air_time"].weight = 0.475
   # Override base placeholder reward: bind sensor + weight.
   cfg.rewards["calf_collision"].params["sensor_name"] = calf_ground_cfg.name
-  cfg.rewards["calf_collision"].params["threshold"] = 2.0  # Allow grazing contacts < 15N
+  #cfg.rewards["calf_collision"].params["threshold"] = 2.0  # Allow grazing contacts < 15N
+  cfg.rewards["calf_collision"].params["force_threshold"] = 2.0 
   cfg.rewards["calf_collision"].weight = -1.0  # tweak within [-1.0, -3.0]
   cfg.rewards["thigh_collision"].params["sensor_name"] = thigh_ground_cfg.name
-  cfg.rewards["thigh_collision"].params["threshold"] = 2.0
+  cfg.rewards["thigh_collision"].params["force_threshold"] = 2.0
+  #cfg.rewards["thigh_collision"].params["threshold"] = 2.0
   cfg.rewards["thigh_collision"].weight = -0.75  # tweak within [-1.0, -3.0]
   cfg.rewards["stumble"].params["sensor_names"] = [
     calf_ground_cfg.name,   
@@ -211,7 +217,10 @@ def unitree_go1_rough_env_cfg(
 
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
     func=mdp.illegal_contact,
-    params={"sensor_name": nonfoot_ground_cfg.name, "force_threshold": 10.0},
+    params={
+      "sensor_name": nonfoot_ground_cfg.name,
+      "force_threshold": 10.0,  # Required by recent history-based contact API updates
+    },
   )
 
 
@@ -257,8 +266,8 @@ def unitree_go1_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.scene.sensors = tuple(
     s for s in (cfg.scene.sensors or ()) if s.name != "terrain_scan"
   )
-  del cfg.observations["actor"].terms["height_scan"]
-  del cfg.observations["critic"].terms["height_scan"]
+  #del cfg.observations["actor"].terms["height_scan"]
+  #del cfg.observations["critic"].terms["height_scan"]
 
   # Disable terrain curriculum (not present in play mode since rough clears all).
   cfg.curriculum.pop("terrain_levels", None)

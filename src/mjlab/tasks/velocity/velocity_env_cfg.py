@@ -82,26 +82,26 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
   }
   # 为 joint_pos 增加延迟
-  policy_terms["joint_pos"].delay_min_lag = 1
-  policy_terms["joint_pos"].delay_max_lag = 3
-  policy_terms["joint_pos"].delay_per_env = True
-  policy_terms["joint_pos"].delay_hold_prob = 0.7      # 70% 的概率保持当前延迟不变
-  policy_terms["joint_pos"].delay_update_period = 50   # 每 50 步尝试更新一次延迟
-  policy_terms["joint_pos"].delay_per_env_phase = True # 每个 env 的刷新相位不同
+  actor_terms["joint_pos"].delay_min_lag = 1
+  actor_terms["joint_pos"].delay_max_lag = 3
+  actor_terms["joint_pos"].delay_per_env = True
+  actor_terms["joint_pos"].delay_hold_prob = 0.7      # 70% 的概率保持当前延迟不变
+  actor_terms["joint_pos"].delay_update_period = 50   # 每 50 步尝试更新一次延迟
+  actor_terms["joint_pos"].delay_per_env_phase = True # 每个 env 的刷新相位不同
 
   # 为 joint_vel 增加延迟
-  policy_terms["joint_vel"].delay_min_lag = 1
-  policy_terms["joint_vel"].delay_max_lag = 3
-  policy_terms["joint_vel"].delay_per_env = True
-  policy_terms["joint_vel"].delay_hold_prob = 0.7
-  policy_terms["joint_vel"].delay_update_period = 50
-  policy_terms["joint_vel"].delay_per_env_phase = True
+  actor_terms["joint_vel"].delay_min_lag = 1
+  actor_terms["joint_vel"].delay_max_lag = 3
+  actor_terms["joint_vel"].delay_per_env = True
+  actor_terms["joint_vel"].delay_hold_prob = 0.7
+  actor_terms["joint_vel"].delay_update_period = 50
+  actor_terms["joint_vel"].delay_per_env_phase = True
   '''
-  如果是单独添加历史，就在这里处理：policy_terms["joint_pos"].history_length = 3
-    policy_terms["joint_pos"].flatten_history_dim = True
-    policy_terms["joint_vel"].history_length = 3
-    policy_terms["joint_vel"].flatten_history_dim = True
-    为什么不在上面直接加？因为 critic_terms = 复用了policy_terms,如果直接加critic也会有历史
+  如果是单独添加历史，就在这里处理：actor_terms["joint_pos"].history_length = 3
+    actor_terms["joint_pos"].flatten_history_dim = True
+    actor_terms["joint_vel"].history_length = 3
+    actor_terms["joint_vel"].flatten_history_dim = True
+    为什么不在上面直接加？因为 critic_terms = 复用了actor_terms,如果直接加critic也会有历史
   '''
   critic_terms = {
     **actor_terms,
@@ -143,8 +143,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
 
   # Apply history to the entire policy observation group:
   # stack current + past 2 frames for all policy terms, flatten history dims for MLP inputs.
-  observations["policy"].history_length = 10
-  observations["policy"].flatten_history_dim = True
+  observations["actor"].history_length = 10
+  observations["actor"].flatten_history_dim = True
   observations["critic"].history_length = 10
   observations["critic"].flatten_history_dim = True
 
@@ -277,7 +277,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "progress": RewardTermCfg(
       func=mdp.progress_reward,
-      weight=0.01,
+      weight=0.0,
       params={
         "command_name": "twist",
         "threshold": 0.1,
@@ -388,12 +388,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "calf_collision": RewardTermCfg(
       func=mdp.self_collision_cost,
       weight=0.0,  # Override per-robot
-      params={"sensor_name": "", "threshold": 1.0},  # Set per-robot (e.g. calf_ground_contact)
+      params={"sensor_name": "", "force_threshold": 1.0},  # Set per-robot (e.g. calf_ground_contact)
     ),
     "thigh_collision": RewardTermCfg(
       func=mdp.self_collision_cost,
       weight=0.0,  # Override per-robot
-      params={"sensor_name": "", "threshold": 1.0},  # Set per-robot (e.g. thigh_ground_contact)
+      params={"sensor_name": "", "force_threshold": 1.0},  # Set per-robot (e.g. thigh_ground_contact)
     ),
     "energy_save":RewardTermCfg(
       func=mdp.energy_saving,
