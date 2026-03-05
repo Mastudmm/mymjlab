@@ -1,20 +1,27 @@
 """Unitree Go1 velocity environment configurations."""
 
+from typing import Literal
+
 from mjlab.asset_zoo.robots import (
   GO1_ACTION_SCALE,
   get_go1_robot_cfg,
 )
 from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
+from mjlab.managers import TerminationTermCfg
 from mjlab.managers.event_manager import EventTermCfg
-from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.managers.termination_manager import TerminationTermCfg
-from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg, ObjRef, GridPatternCfg
+from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg
 from mjlab.tasks.velocity import mdp
+from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 
+TerrainType = Literal["rough", "obstacles"]
 
-def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+
+def unitree_go1_rough_env_cfg(
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
   """Create Unitree Go1 rough terrain velocity configuration."""
   cfg = make_velocity_env_cfg()
 
@@ -22,6 +29,12 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.sim.contact_sensor_maxmatch = 64 # Sufficient for most terrains
 
   cfg.scene.entities = {"robot": get_go1_robot_cfg()}
+
+  # Set raycast sensor frame to Go1 trunk.
+  for sensor in cfg.scene.sensors or ():
+    if sensor.name == "terrain_scan":
+      assert isinstance(sensor, RayCastSensorCfg)
+      sensor.frame.name = "trunk"
 
   foot_names = ("FR", "FL", "RR", "RL")
   site_names = ("FR", "FL", "RR", "RL")
@@ -75,53 +88,16 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       exclude=tuple(geom_names) + tuple(calf_geom_names) + tuple(thigh_geom_names) ,
     ),
     secondary=ContactMatch(mode="body", pattern="terrain"),
-    fields=("found",),
+    fields=("found", "force"),
     reduce="none",
     num_slots=1,
+    history_length=4,
   )
-  
-  # Minimalistic Per-Foot Ray Sensors (1 ray per foot)
-  # This dramatically reduces VRAM usage and computation vs a full grid.
-  foot_ray_sensors = []
-  for site_name in site_names: # FR, FL, RR, RL
-      sensor = RayCastSensorCfg(
-          name=f"ray_{site_name}",
-          # Offset the ray origin slightly upwards (Z+0.05m) to prevent it from starting "inside" the ground
-          frame=ObjRef(type="site", name=site_name, entity="robot"),
-          # Single ray pointing down
-          pattern=GridPatternCfg(size=(0.0, 0.0), resolution=1.0, direction=(0.0, 0.0, -1.0), offset=(0.0, 0.0, 0.05)),
-          ray_alignment="world", # Always point down in world frame, ignore foot rotation
-          max_distance=1.5,
-          debug_vis=False, # Ensure debug visualization is off
-          # OPTIMIZATION: Only hit terrain (usually group 0), ignore robot parts (usually 1, 2...)
-          # If this causes rays to pass through floor, remove this line.
-          include_geom_groups=(0,), 
-          exclude_parent_body=True, 
-      )
-      foot_ray_sensors.append(sensor)
-  
-  # Base height sensor (1 ray at trunk center)
-  base_ray_sensor = RayCastSensorCfg(
-      name="ray_base",
-      frame=ObjRef(type="body", name="trunk", entity="robot"),
-      pattern=GridPatternCfg(size=(0.0, 0.0), resolution=1.0, direction=(0.0, 0.0, -1.0)),
-      ray_alignment="world", 
-      max_distance=1.5,
-      debug_vis=False,
-      include_geom_groups=(0,),
-      exclude_parent_body=True,
-  )
-
-  # Register sensors
-  cfg.scene.sensors = (
+  cfg.scene.sensors = (cfg.scene.sensors or ()) + (
     feet_ground_cfg,
-    calf_ground_cfg,
-    thigh_ground_cfg,
-    nonfootleg_ground_cfg,
-    *foot_ray_sensors, 
-    base_ray_sensor,
+    nonfoot_ground_cfg,
   )
-
+  cfg.scene.sensors = (feet_ground_cfg, nonfoot_ground_cfg)
 
   if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
     cfg.scene.terrain.terrain_generator.curriculum = True
@@ -235,7 +211,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
     func=mdp.illegal_contact,
-    params={"sensor_name": nonfootleg_ground_cfg.name},
+    params={"sensor_name": nonfoot_ground_cfg.name, "force_threshold": 10.0},
   )
 
 
@@ -244,8 +220,14 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     # Effectively infinite episode length.
     cfg.episode_length_s = int(1e9)
 
-    cfg.observations["policy"].enable_corruption = False
+    cfg.observations["actor"].enable_corruption = False
     cfg.events.pop("push_robot", None)
+    cfg.curriculum = {}
+    cfg.events["randomize_terrain"] = EventTermCfg(
+      func=envs_mdp.randomize_terrain,
+      mode="reset",
+      params={},
+    )
 
     if cfg.scene.terrain is not None:
       if cfg.scene.terrain.terrain_generator is not None:
@@ -264,13 +246,27 @@ def unitree_go1_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.sim.njmax = 300
   cfg.sim.mujoco.ccd_iterations = 50
   cfg.sim.contact_sensor_maxmatch = 64
+  cfg.sim.nconmax = None
 
   # Switch to flat terrain.
   assert cfg.scene.terrain is not None
   cfg.scene.terrain.terrain_type = "plane"
   cfg.scene.terrain.terrain_generator = None
 
-  # Disable terrain curriculum.
-  del cfg.curriculum["terrain_levels"]
+  # Remove raycast sensor and height scan (no terrain to scan).
+  cfg.scene.sensors = tuple(
+    s for s in (cfg.scene.sensors or ()) if s.name != "terrain_scan"
+  )
+  del cfg.observations["actor"].terms["height_scan"]
+  del cfg.observations["critic"].terms["height_scan"]
+
+  # Disable terrain curriculum (not present in play mode since rough clears all).
+  cfg.curriculum.pop("terrain_levels", None)
+
+  if play:
+    twist_cmd = cfg.commands["twist"]
+    assert isinstance(twist_cmd, UniformVelocityCommandCfg)
+    twist_cmd.ranges.lin_vel_x = (-1.5, 2.0)
+    twist_cmd.ranges.ang_vel_z = (-0.7, 0.7)
 
   return cfg

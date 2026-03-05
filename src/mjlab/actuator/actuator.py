@@ -111,6 +111,7 @@ class Actuator(ABC, Generic[ActuatorCfgT]):
     self._target_names = target_names
     self._target_ids: torch.Tensor | None = None
     self._ctrl_ids: torch.Tensor | None = None
+    self._global_ctrl_ids: torch.Tensor | None = None
     self._mjs_actuators: list[mujoco.MjsActuator] = []
     self._site_zeros: torch.Tensor | None = None
 
@@ -132,9 +133,15 @@ class Actuator(ABC, Generic[ActuatorCfgT]):
 
   @property
   def ctrl_ids(self) -> torch.Tensor:
-    """Global indices of control inputs for this actuator."""
+    """Local indices of control inputs within the entity."""
     assert self._ctrl_ids is not None
     return self._ctrl_ids
+
+  @property
+  def global_ctrl_ids(self) -> torch.Tensor:
+    """Global indices of control inputs in the MuJoCo model."""
+    assert self._global_ctrl_ids is not None
+    return self._global_ctrl_ids
 
   @abstractmethod
   def edit_spec(self, spec: mujoco.MjSpec, target_names: list[str]) -> None:
@@ -144,8 +151,10 @@ class Actuator(ABC, Generic[ActuatorCfgT]):
 
     Args:
       spec: The entity's MjSpec to edit.
-      target_names: Names of targets (joints, tendons, or sites) controlled by
-        this actuator.
+      target_names: Names of targets (joints, tendons, or sites) as they
+        appear in the spec. When the entity's ``spec_fn`` uses internal
+        ``MjSpec.attach(prefix=...)``, these will include the prefix
+        (e.g., ``"left/elbow"`` rather than ``"elbow"``).
     """
     raise NotImplementedError
 
@@ -170,8 +179,17 @@ class Actuator(ABC, Generic[ActuatorCfgT]):
     self._target_ids = torch.tensor(
       self._target_ids_list, dtype=torch.long, device=device
     )
-    ctrl_ids_list = [act.id for act in self._mjs_actuators]
-    self._ctrl_ids = torch.tensor(ctrl_ids_list, dtype=torch.long, device=device)
+    global_ctrl_ids_list = [act.id for act in self._mjs_actuators]
+    self._global_ctrl_ids = torch.tensor(
+      global_ctrl_ids_list, dtype=torch.long, device=device
+    )
+    entity_ctrl_ids = self.entity.indexing.ctrl_ids
+    global_to_local = {gid.item(): i for i, gid in enumerate(entity_ctrl_ids)}
+    self._ctrl_ids = torch.tensor(
+      [global_to_local[gid] for gid in global_ctrl_ids_list],
+      dtype=torch.long,
+      device=device,
+    )
 
     # Pre-allocate zeros for SITE transmission type to avoid repeated allocations.
     if self.transmission_type == TransmissionType.SITE:

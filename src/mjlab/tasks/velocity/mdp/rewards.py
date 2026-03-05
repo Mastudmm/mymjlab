@@ -122,45 +122,25 @@ def flat_orientation(
 
 
 def self_collision_cost(
-  env: ManagerBasedRlEnv, sensor_name: str, threshold: float = 1.0
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  force_threshold: float = 10.0,
 ) -> torch.Tensor:
-  """Penalize self-collisions / undesired contacts exceeding a force threshold.
+  """Penalize self-collisions.
 
-  Returns the number of contacts where the net force magnitude exceeds the threshold.
-  Useful for allowing 'grazing' (light touches) without penalty.
+  When the sensor provides force history (from ``history_length > 0``),
+  counts substeps where any contact force exceeds *force_threshold*.
+  Falls back to the instantaneous ``found`` count otherwise.
   """
   sensor: ContactSensor = env.scene[sensor_name]
-  
-  # Try to use force data if available for thresholding to allow grazing (light touch)
-  if hasattr(sensor.data, "force") and sensor.data.force is not None:
-    forces = sensor.data.force  # [B, N, 3]
-    force_mag = torch.norm(forces[..., :3], dim=-1) # [B, N]
-    violation = (force_mag > threshold).float()
-  else:
-    # Fallback to binary 'found' logic if no force data
-    found = sensor.data.found
-    assert found is not None
-    if found.dim() == 3:  # [B, N, 1]
-      found = found.squeeze(-1)
-    violation = (found > 0.5).float()
-
-  # Sum violations across sensor contact points (e.g. all calf segments)
-  if violation.dim() > 1:
-    collision_count = torch.sum(violation, dim=1)
-  else:
-    collision_count = violation # [B]
-
-  # Apply upright mask to avoid 'punishing the dead' (robot already fell over)
-  # Only punish collisions when the robot is trying to walk (upright)
-  try:
-    asset: Entity = env.scene["robot"]
-    proj_grav_z = asset.data.projected_gravity_b[:, 2]
-    # Scale: 1.0 when upright (-1), goes to 0 when tilted > ~45 deg
-    upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
-  except KeyError:
-    upright_scale = torch.ones_like(collision_count)
-
-  return collision_count 
+  data = sensor.data
+  if data.force_history is not None:
+    # force_history: [B, N, H, 3]
+    force_mag = torch.norm(data.force_history, dim=-1)  # [B, N, H]
+    hit = (force_mag > force_threshold).any(dim=1)  # [B, H]
+    return hit.sum(dim=-1).float()  # [B]
+  assert data.found is not None
+  return data.found.squeeze(-1)
 
 
 def body_angular_velocity_penalty(

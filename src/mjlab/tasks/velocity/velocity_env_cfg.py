@@ -8,6 +8,8 @@ import math
 from dataclasses import replace
 
 from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs import mdp as envs_mdp
+from mjlab.envs.mdp import dr
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.command_manager import CommandTermCfg
@@ -18,10 +20,11 @@ from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.scene import SceneCfg
+from mjlab.sensor import GridPatternCfg, ObjRef, RayCastSensorCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
-from mjlab.terrains import TerrainImporterCfg
+from mjlab.terrains import TerrainEntityCfg
 from mjlab.terrains.config import ROUGH_TERRAINS_CFG
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
@@ -31,11 +34,30 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   """Create base velocity tracking task configuration."""
 
   ##
+  # Sensors
+  ##
+
+  terrain_scan = RayCastSensorCfg(
+    name="terrain_scan",
+    frame=ObjRef(type="body", name="", entity="robot"),  # Set per-robot.
+    ray_alignment="yaw",
+    pattern=GridPatternCfg(size=(1.6, 1.0), resolution=0.1),
+    max_distance=5.0,
+    exclude_parent_body=True,
+    debug_vis=True,
+    viz=RayCastSensorCfg.VizCfg(show_normals=True),
+  )
+
+  ##
   # Observations
   ##
 
-  # Policy 不再包含 base_lin_vel，让其只由 critic 访问。
-  policy_terms = {
+  actor_terms = {
+    "base_lin_vel": ObservationTermCfg(
+      func=mdp.builtin_sensor,
+      params={"sensor_name": "robot/imu_lin_vel"},
+      noise=Unoise(n_min=-0.5, n_max=0.5),
+    ),
     "base_ang_vel": ObservationTermCfg(
       func=mdp.builtin_sensor,
       params={"sensor_name": "robot/imu_ang_vel"},
@@ -82,12 +104,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     为什么不在上面直接加？因为 critic_terms = 复用了policy_terms,如果直接加critic也会有历史
   '''
   critic_terms = {
-    **policy_terms,
-    # 将 base_lin_vel 单独保留在 critic，用于价值估计。
-    "base_lin_vel": ObservationTermCfg(
-      func=mdp.builtin_sensor,
-      params={"sensor_name": "robot/imu_lin_vel"},
-      noise=Unoise(n_min=-0.5, n_max=0.5),
+    **actor_terms,
+    "height_scan": ObservationTermCfg(
+      func=envs_mdp.height_scan,
+      params={"sensor_name": "terrain_scan"},
+      scale=1 / terrain_scan.max_distance,
     ),
     "foot_height": ObservationTermCfg(
       func=mdp.foot_height,
@@ -108,8 +129,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   observations = {
-    "policy": ObservationGroupCfg(
-      terms=policy_terms,
+    "actor": ObservationGroupCfg(
+      terms=actor_terms,
       concatenate_terms=True,
       enable_corruption=True,
     ),
@@ -208,19 +229,17 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_friction": EventTermCfg(
       mode="startup",
-      func=mdp.randomize_field,
-      domain_randomization=True,
+      func=dr.geom_friction,
       params={
         "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # Set per-robot.
         "operation": "abs",
-        "field": "geom_friction",
-        "ranges": (0.3, 1.0),
+        "ranges": (0.3, 1.2),
         "shared_random": True,  # All foot geoms share the same friction.
       },
     ),
     "encoder_bias": EventTermCfg(
       mode="startup",
-      func=mdp.randomize_encoder_bias,
+      func=dr.encoder_bias,
       params={
         "asset_cfg": SceneEntityCfg("robot"),
         "bias_range": (-0.015, 0.015),
@@ -228,12 +247,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "base_com": EventTermCfg(
       mode="startup",
-      func=mdp.randomize_field,
-      domain_randomization=True,
+      func=dr.body_com_offset,
       params={
         "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
         "operation": "add",
-        "field": "body_ipos",
         "ranges": {
           0: (-0.025, 0.025),
           1: (-0.025, 0.025),
@@ -488,11 +505,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
 
   return ManagerBasedRlEnvCfg(
     scene=SceneCfg(
-      terrain=TerrainImporterCfg(
+      terrain=TerrainEntityCfg(
         terrain_type="generator",
         terrain_generator=replace(ROUGH_TERRAINS_CFG),
         max_init_terrain_level=5,
       ),
+      sensors=(terrain_scan,),
       num_envs=1,
       extent=2.0,
     ),
