@@ -2,7 +2,7 @@
 
 from mjlab.rl import (
   RslRlOnPolicyRunnerCfg,
-  RslRlPpoActorCriticCfg,
+  RslRlModelCfg,
   RslRlPpoAlgorithmCfg,
 )
 
@@ -10,12 +10,15 @@ from mjlab.rl import (
 def unitree_g1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   """Create RL runner configuration for Unitree G1 velocity task."""
   return RslRlOnPolicyRunnerCfg(
-    policy=RslRlPpoActorCriticCfg(
+    actor=RslRlModelCfg(
       init_noise_std=1.0,
-      actor_obs_normalization=True,
-      critic_obs_normalization=True,
-      actor_hidden_dims=(512, 256, 128),
-      critic_hidden_dims=(512, 256, 128),
+      obs_normalization=True,
+      hidden_dims=(512, 256, 128),
+      activation="elu",
+    ),
+    critic=RslRlModelCfg(
+      obs_normalization=True,
+      hidden_dims=(512, 256, 128),
       activation="elu",
     ),
     algorithm=RslRlPpoAlgorithmCfg(

@@ -6,12 +6,23 @@ import torch
 
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.sensor import ContactSensor
+from mjlab.sensor import ContactSensor, RayCastSensor
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
 
 _DEFAULT_ASSET_CFG = SceneEntityCfg("robot")
+
+
+def ray_cast_distance(
+  env: ManagerBasedRlEnv, sensor_cfg: SceneEntityCfg
+) -> torch.Tensor:
+  """Get ray cast distances from sensor."""
+  sensor: RayCastSensor = env.scene[sensor_cfg.name]
+  distances = sensor.data.distances
+  # Replace missed rays (< 0) with max_distance
+  distances = torch.where(distances < 0, sensor.cfg.max_distance, distances)
+  return distances.flatten(start_dim=1)
 
 
 def foot_height(
@@ -42,10 +53,3 @@ def foot_contact_forces(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tenso
   assert sensor_data.force is not None
   forces_flat = sensor_data.force.flatten(start_dim=1)  # [B, N*3]
   return torch.sign(forces_flat) * torch.log1p(torch.abs(forces_flat))
-
-
-def ray_cast_distance(
-  env: ManagerBasedRlEnv, sensor_cfg: SceneEntityCfg
-) -> torch.Tensor:
-  sensor = env.scene.sensors[sensor_cfg.name]
-  return sensor.data.distances

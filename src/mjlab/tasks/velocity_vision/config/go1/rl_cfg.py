@@ -3,13 +3,13 @@
 from dataclasses import dataclass
 from mjlab.rl import (
   RslRlOnPolicyRunnerCfg,
-  RslRlPpoActorCriticCfg,
+  RslRlModelCfg,
   RslRlPpoAlgorithmCfg,
 )
 
 
 @dataclass
-class DepthActorCriticCfg(RslRlPpoActorCriticCfg):
+class DepthActorCriticCfg(RslRlModelCfg):
     depth_shape: tuple = (1, 50, 80)
     obs_history_num: int = 1
     # scan_shape is automatically derived
@@ -17,19 +17,24 @@ class DepthActorCriticCfg(RslRlPpoActorCriticCfg):
 
 def unitree_go1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   """Create RL runner configuration for Unitree Go1 velocity task."""
-  policy_cfg = DepthActorCriticCfg(
-      class_name="DepthActorCritic",
+  actor_cfg = DepthActorCriticCfg(
+      class_name="mjlab.tasks.velocity_vision.rl.modules:DepthActorCritic",
       init_noise_std=1.0,
-      actor_obs_normalization=False,
-      critic_obs_normalization=False,
-      actor_hidden_dims=(512, 256, 128),
-      critic_hidden_dims=(512, 256, 128),
+      obs_normalization=False,
+      hidden_dims=(512, 256, 128),
       activation="elu",
       depth_shape=(1, 50, 80),
   )
 
+  critic_cfg = RslRlModelCfg(
+      obs_normalization=False,
+      hidden_dims=(512, 256, 128),
+      activation="elu",
+  )
+
   return RslRlOnPolicyRunnerCfg(
-    policy=policy_cfg,
+    actor=actor_cfg,
+    critic=critic_cfg,
     algorithm=RslRlPpoAlgorithmCfg(
       value_loss_coef=1.0,
       use_clipped_value_loss=True,

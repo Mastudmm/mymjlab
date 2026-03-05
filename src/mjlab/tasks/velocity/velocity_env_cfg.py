@@ -41,7 +41,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     name="terrain_scan",
     frame=ObjRef(type="body", name="", entity="robot"),  # Set per-robot.
     ray_alignment="yaw",
-    pattern=GridPatternCfg(size=(1.6, 1.0), resolution=0.1),
+    pattern=GridPatternCfg(size=(0.8, 0.5), resolution=0.05),
     max_distance=5.0,
     exclude_parent_body=True,
     debug_vis=True,
@@ -142,10 +142,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   # Apply history to the entire policy observation group:
-  # stack current + past 2 frames for all policy terms, flatten history dims for MLP inputs.
-  observations["actor"].history_length = 10
+  # stack current + past 4 frames (total 5) for all policy terms, flatten history dims for MLP inputs.
+  # Checkpoint expects 240 dims which corresponds to 48 dims * 5 frames.
+  observations["actor"].history_length = 5
   observations["actor"].flatten_history_dim = True
-  observations["critic"].history_length = 10
+  observations["critic"].history_length = 5
   observations["critic"].flatten_history_dim = True
 
   ##

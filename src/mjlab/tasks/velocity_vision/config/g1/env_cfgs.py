@@ -73,6 +73,10 @@ def unitree_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = geom_names
   cfg.events["base_com"].params["asset_cfg"].body_names = ("torso_link",)
 
+  # Remove height_scan from critic as G1 doesn't have the sensor configured yet
+  if "height_scan" in cfg.observations["critic"].terms:
+      del cfg.observations["critic"].terms["height_scan"]
+
   # Rationale for std values:
   # - Knees/hip_pitch get the loosest std to allow natural leg bending during stride.
   # - Hip roll/yaw stay tighter to prevent excessive lateral sway and keep gait stable.
@@ -142,7 +146,7 @@ def unitree_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     # Effectively infinite episode length.
     cfg.episode_length_s = int(1e9)
 
-    cfg.observations["policy"].enable_corruption = False
+    cfg.observations["actor"].enable_corruption = False
     cfg.events.pop("push_robot", None)
     cfg.events["randomize_terrain"] = EventTermCfg(
       func=envs_mdp.randomize_terrain,

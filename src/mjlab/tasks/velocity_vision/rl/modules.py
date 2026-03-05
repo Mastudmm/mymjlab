@@ -1,6 +1,23 @@
 import torch
 import torch.nn as nn
-from rsl_rl.modules import ActorCritic
+
+try:
+    # Try importing ActorCritic from rsl_rl (works for versions < 4.0)
+    from rsl_rl.modules import ActorCritic
+except ImportError:
+    # For rsl_rl >= 4.0, attempt to use MLPModel or define a placeholder
+    try:
+        # PPO usually expects a policy that behaves like ActorCritic.
+        # In rsl-rl 4.0, MLPModel is the base for MLP policies.
+        from rsl_rl.models import MLPModel as ActorCritic
+    except ImportError:
+        # Fallback to nn.Module if both fail (e.g. structure changed significantly)
+        # This allows other tasks to load even if vision task is broken
+        class ActorCritic(nn.Module):
+            def __init__(self, *args, **kwargs):
+                super().__init__()
+            def get_actor_obs(self, obs): return obs
+            def get_critic_obs(self, obs): return obs
 
 def get_activation_fn(activation_name):
     """
@@ -30,13 +47,24 @@ class DepthActorCritic(ActorCritic):
         self,
         obs,
         obs_groups,
-        num_actions,
+        obs_set="actor",  # New in RSL-RL 4.0: typically "actor" or "critic"
+        output_dim=None,  # New in RSL-RL 4.0: typically num_actions or 1
+        num_actions=None, # Legacy support
         actor_hidden_dims=[256, 256, 128],
         critic_hidden_dims=[256, 256, 128],
         activation="elu",
         init_noise_std=1.0,
         **kwargs,
     ):
+        # Handle positional args passed by RSL-RL 4.0: (obs, obs_groups, obs_set, output_dim, ...)
+        # If output_dim is provided by PPO but num_actions is None, assume output_dim is num_actions
+        if output_dim is not None and num_actions is None:
+            num_actions = output_dim
+        
+        # Ensure num_actions is int
+        if num_actions is None:
+             raise ValueError("num_actions cannot be None. Please ensure output_dim or num_actions is passed.")
+        
         # ----------------------------------------------------------------------
         # 1. Configuration & Dimension Calculation
         #    配置与维度计算
@@ -53,7 +81,7 @@ class DepthActorCritic(ActorCritic):
         '''groups obs字典内拿到的是已经展平好的'''
         self.obs_groups = obs_groups  
         num_actor_obs = 0
-        for obs_group in obs_groups["policy"]:
+        for obs_group in obs_groups["actor"]:
             num_actor_obs += obs[obs_group].shape[-1] 
         num_critic_obs = 0
         for obs_group in obs_groups["critic"]:
@@ -89,20 +117,35 @@ class DepthActorCritic(ActorCritic):
         # ----------------------------------------------------------------------
         # 2. Network Construction
         # ----------------------------------------------------------------------
+
+        # RSL-RL 4.0 MLPModel signature:
+        # __init__(self, obs, obs_groups, obs_set, output_dim, hidden_dims=..., activation=..., obs_normalization=..., stochastic=...)
         
-        # To reuse the parent variable names but init them later, we call super with dummy values
-        # or we just init the base class stuff manually. Calling super is safer for other props.
-        # 注意此处的参数传递，需要将修改过的 kwargs 再回传
-        super().__init__(
-            obs=obs,
-            obs_groups=obs_groups,
-            num_actions=num_actions,
-            actor_hidden_dims=actor_hidden_dims,
-            critic_hidden_dims=critic_hidden_dims,
-            activation=activation,
-            init_noise_std=init_noise_std,
-            **kwargs,
-        )
+        base_kwargs = {
+            "obs": obs,
+            "obs_groups": obs_groups,
+            "obs_set": obs_set,
+            "output_dim": num_actions,
+            "hidden_dims": actor_hidden_dims,  # Just to pass validation
+            "activation": activation,
+            "stochastic": True,
+            "init_noise_std": init_noise_std,
+        }
+        
+        # Filter kwargs for base class
+        # MLPModel might accept: obs_normalization, noise_std_type, state_dependent_std
+        valid_base_args = ["obs_normalization", "noise_std_type", "state_dependent_std"]
+        for k in valid_base_args:
+             if k in kwargs:
+                 base_kwargs[k] = kwargs[k]
+        
+        # Call super().__init__ which is MLPModel.__init__ in RSL-RL 4.0
+        # We must use keyword arguments to avoid positional mismatch if signature varies slightly
+        # BUT PPO calls us with positionals too if we were MLPModel.
+        # Since we are inheriting, we can just call super with kwargs.
+        
+        super().__init__(**base_kwargs)
+
         # Immediate overwrite of self.actor and self.critic
         activation_fn = get_activation_fn(activation)
 

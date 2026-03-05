@@ -8,6 +8,8 @@ import math
 from dataclasses import replace
 
 from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs import mdp as envs_mdp
+from mjlab.envs.mdp import dr
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.command_manager import CommandTermCfg
@@ -18,6 +20,7 @@ from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.scene import SceneCfg
+from mjlab.sensor import GridPatternCfg, ObjRef, RayCastSensorCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.velocity_vision import mdp
 from mjlab.tasks.velocity_vision.mdp import UniformVelocityCommandCfg
@@ -31,63 +34,101 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   """Create base velocity tracking task configuration."""
 
   ##
+  # Sensors
+  ##
+
+  terrain_scan = RayCastSensorCfg(
+    name="terrain_scan",
+    frame=ObjRef(type="body", name="", entity="robot"),  # Set per-robot.
+    ray_alignment="yaw",
+    pattern=GridPatternCfg(size=(0.8, 0.5), resolution=0.05),
+    max_distance=5.0,
+    exclude_parent_body=True,
+    debug_vis=True,
+    viz=RayCastSensorCfg.VizCfg(show_normals=True),
+  )
+
+  ##
   # Observations
   ##
 
-  # Policy 不再包含 base_lin_vel，让其只由 critic 访问。
-  policy_terms = {
+  # Actor 不再包含 base_lin_vel，让其只由 critic 访问。
+  actor_terms = {
+    # "base_lin_vel": ObservationTermCfg(
+    #   func=mdp.builtin_sensor,
+    #   params={"sensor_name": "robot/imu_lin_vel"},
+    #   noise=Unoise(n_min=-0.5, n_max=0.5),
+    # ),
     "base_ang_vel": ObservationTermCfg(
       func=mdp.builtin_sensor,
       params={"sensor_name": "robot/imu_ang_vel"},
       noise=Unoise(n_min=-0.05, n_max=0.05),
+      history_length=10,
+      flatten_history_dim=True,
     ),
     "projected_gravity": ObservationTermCfg(
       func=mdp.projected_gravity,
       noise=Unoise(n_min=-0.05, n_max=0.05),
+      history_length=10,
+      flatten_history_dim=True,
     ),
     "joint_pos": ObservationTermCfg(
       func=mdp.joint_pos_rel,
       noise=Unoise(n_min=-0.01, n_max=0.01),
+      history_length=10,
+      flatten_history_dim=True,
     ),
     "joint_vel": ObservationTermCfg(
       func=mdp.joint_vel_rel,
       noise=Unoise(n_min=-0.015, n_max=0.015),
+      history_length=10,
+      flatten_history_dim=True,
     ),
-    "actions": ObservationTermCfg(func=mdp.last_action),
+    "actions": ObservationTermCfg(
+      func=mdp.last_action,
+      history_length=10,
+      flatten_history_dim=True
+    ),
     "command": ObservationTermCfg(
       func=mdp.generated_commands,
       params={"command_name": "twist"},
+      history_length=10,
+      flatten_history_dim=True
     ),
   }
   # 为 joint_pos 增加延迟
-  policy_terms["joint_pos"].delay_min_lag = 1
-  policy_terms["joint_pos"].delay_max_lag = 3
-  policy_terms["joint_pos"].delay_per_env = True
-  policy_terms["joint_pos"].delay_hold_prob = 0.7      # 70% 的概率保持当前延迟不变
-  policy_terms["joint_pos"].delay_update_period = 50   # 每 50 步尝试更新一次延迟
-  policy_terms["joint_pos"].delay_per_env_phase = True # 每个 env 的刷新相位不同
+  actor_terms["joint_pos"].delay_min_lag = 1
+  actor_terms["joint_pos"].delay_max_lag = 3
+  actor_terms["joint_pos"].delay_per_env = True
+  actor_terms["joint_pos"].delay_hold_prob = 0.7      # 70% 的概率保持当前延迟不变
+  actor_terms["joint_pos"].delay_update_period = 50   # 每 50 步尝试更新一次延迟
+  actor_terms["joint_pos"].delay_per_env_phase = True # 每个 env 的刷新相位不同
 
   # 为 joint_vel 增加延迟
-  policy_terms["joint_vel"].delay_min_lag = 1
-  policy_terms["joint_vel"].delay_max_lag = 3
-  policy_terms["joint_vel"].delay_per_env = True
-  policy_terms["joint_vel"].delay_hold_prob = 0.7
-  policy_terms["joint_vel"].delay_update_period = 50
-  policy_terms["joint_vel"].delay_per_env_phase = True
+  actor_terms["joint_vel"].delay_min_lag = 1
+  actor_terms["joint_vel"].delay_max_lag = 3
+  actor_terms["joint_vel"].delay_per_env = True
+  actor_terms["joint_vel"].delay_hold_prob = 0.7
+  actor_terms["joint_vel"].delay_update_period = 50
+  actor_terms["joint_vel"].delay_per_env_phase = True
   '''
-  如果是单独添加历史，就在这里处理：policy_terms["joint_pos"].history_length = 3
-    policy_terms["joint_pos"].flatten_history_dim = True
-    policy_terms["joint_vel"].history_length = 3
-    policy_terms["joint_vel"].flatten_history_dim = True
-    为什么不在上面直接加？因为 critic_terms = 复用了policy_terms,如果直接加critic也会有历史
+  如果是单独添加历史，就在这里处理：actor_terms["joint_pos"].history_length = 3
+    actor_terms["joint_pos"].flatten_history_dim = True
+    actor_terms["joint_vel"].history_length = 3
+    actor_terms["joint_vel"].flatten_history_dim = True
+    为什么不在上面直接加？因为 critic_terms = 复用了actor_terms,如果直接加critic也会有历史
   '''
   critic_terms = {
-    **policy_terms,
-    # 将 base_lin_vel 单独保留在 critic，用于价值估计。
+    **actor_terms,
     "base_lin_vel": ObservationTermCfg(
       func=mdp.builtin_sensor,
       params={"sensor_name": "robot/imu_lin_vel"},
       noise=Unoise(n_min=-0.5, n_max=0.5),
+    ),
+    "height_scan": ObservationTermCfg(
+      func=envs_mdp.height_scan,
+      params={"sensor_name": "terrain_scan"},
+      scale=1 / terrain_scan.max_distance,
     ),
     "foot_height": ObservationTermCfg(
       func=mdp.foot_height,
@@ -108,8 +149,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   observations = {
-    "policy": ObservationGroupCfg(
-      terms=policy_terms,
+    "actor": ObservationGroupCfg(
+      terms=actor_terms,
       concatenate_terms=True,
       enable_corruption=True,
     ),
@@ -120,18 +161,14 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
   }
 
-  # 应用历史帧数设定：
-  # 注：为了实现"除了深度图(1帧)其他都是10帧"，必须把这里的全局 override 设为 None，取消强制覆盖！
-  observations["policy"].history_length = None
-  observations["policy"].flatten_history_dim = True
-  # 紧接着遍历当时已有的 policy 组(也就是所有的本体观测)，单独把它们全部刷成 10 帧
-  for term in observations["policy"].terms.values():
-      term.history_length = 10
-      term.flatten_history_dim = True
-  
-  # Critic 现在取消全局历史，特权信息和scan只需要最新的一帧
-  observations["critic"].history_length = 0
-  observations["critic"].flatten_history_dim = False
+  # Apply history to the entire policy observation group:
+  # stack current + past 4 frames (total 5) for all policy terms, flatten history dims for MLP inputs.
+  # Checkpoint expects 240 dims which corresponds to 48 dims * 5 frames.
+  # Vision uses mixed history length
+  observations["actor"].history_length = None # 10 for prop, 1 for vision
+  observations["actor"].flatten_history_dim = True
+  observations["critic"].history_length = 0 # 5
+  observations["critic"].flatten_history_dim = True
 
   ##
   # Actions
@@ -214,19 +251,17 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_friction": EventTermCfg(
       mode="startup",
-      func=mdp.randomize_field,
-      domain_randomization=True,
+      func=dr.geom_friction,
       params={
         "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # Set per-robot.
         "operation": "abs",
-        "field": "geom_friction",
-        "ranges": (0.3, 1.0),
+        "ranges": (0.3, 1.2),
         "shared_random": True,  # All foot geoms share the same friction.
       },
     ),
     "encoder_bias": EventTermCfg(
       mode="startup",
-      func=mdp.randomize_encoder_bias,
+      func=dr.encoder_bias,
       params={
         "asset_cfg": SceneEntityCfg("robot"),
         "bias_range": (-0.015, 0.015),
@@ -234,12 +269,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "base_com": EventTermCfg(
       mode="startup",
-      func=mdp.randomize_field,
-      domain_randomization=True,
+      func=dr.body_com_offset,
       params={
         "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
         "operation": "add",
-        "field": "body_ipos",
         "ranges": {
           0: (-0.025, 0.025),
           1: (-0.025, 0.025),
@@ -266,7 +299,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "progress": RewardTermCfg(
       func=mdp.progress_reward,
-      weight=0.01,
+      weight=0.0,
       params={
         "command_name": "twist",
         "threshold": 0.1,
@@ -377,12 +410,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "calf_collision": RewardTermCfg(
       func=mdp.self_collision_cost,
       weight=0.0,  # Override per-robot
-      params={"sensor_name": "", "threshold": 1.0},  # Set per-robot (e.g. calf_ground_contact)
+      params={"sensor_name": "", "force_threshold": 1.0},  # Set per-robot (e.g. calf_ground_contact)
     ),
     "thigh_collision": RewardTermCfg(
       func=mdp.self_collision_cost,
       weight=0.0,  # Override per-robot
-      params={"sensor_name": "", "threshold": 1.0},  # Set per-robot (e.g. thigh_ground_contact)
+      params={"sensor_name": "", "force_threshold": 1.0},  # Set per-robot (e.g. thigh_ground_contact)
     ),
     "energy_save":RewardTermCfg(
       func=mdp.energy_saving,
@@ -499,6 +532,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         terrain_generator=replace(ROUGH_TERRAINS_CFG),
         max_init_terrain_level=5,
       ),
+      sensors=(terrain_scan,),
       num_envs=1,
       extent=2.0,
     ),

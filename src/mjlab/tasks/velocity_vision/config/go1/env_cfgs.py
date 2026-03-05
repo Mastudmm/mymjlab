@@ -6,6 +6,7 @@ from mjlab.asset_zoo.robots import (
 )
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
+from mjlab.envs.mdp import dr
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
@@ -122,8 +123,8 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   # Height Scan Sensor (Privileged, Ground Truth)
   # 1.6m x 1.6m area with 0.1m resolution -> 16x16 = 256 points
-  height_scan = RayCastSensorCfg(
-      name="height_scan",
+  terrain_scan = RayCastSensorCfg(
+      name="terrain_scan",
       frame=ObjRef(type="body", name="trunk", entity="robot"),
       pattern=GridPatternCfg(size=(0.8, 0.8), resolution=0.05, direction=(0.0, 0.0, -1.0)),
       ray_alignment="yaw", # Scan should be gravity aligned but follow robot yaw
@@ -152,7 +153,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     nonfootleg_ground_cfg,
     *foot_ray_sensors, 
     base_ray_sensor,
-    height_scan,
+    terrain_scan,
     depth_camera,
   )
 
@@ -172,49 +173,42 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     "asset_cfg"
   ].site_names = site_names
 
-  cfg.observations["policy"].terms["depth"] = ObservationTermCfg(
+  cfg.observations["actor"].terms["depth"] = ObservationTermCfg(
     func=mdp.ray_cast_distance,
     params={"sensor_cfg": SceneEntityCfg("depth_camera")},
     scale=1.0 / 4.0,
     history_length=1,
     flatten_history_dim=True,
   )
-  cfg.observations["critic"].terms["scan"] = ObservationTermCfg(
-    func=mdp.ray_cast_distance,
-    params={"sensor_cfg": SceneEntityCfg("height_scan")},
-    scale=1.0 / 3.0,  # Max distance 3.0 # 对测距最大3.0米进行归一化
-  )
+  cfg.observations["critic"].terms["height_scan"].scale = 1.0 / 3.0
 
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = geom_names
   cfg.events["base_com"].params["asset_cfg"].body_names = ("trunk",)
 
-  # Added Domain Randomization: Mass, Damping, Friction Loss
-  cfg.events["body_mass"] = EventTermCfg(
-      func=mdp.randomize_field,
+    # Added Domain Randomization: Mass, Damping, Friction Loss
+    # Now physically accurate: pseudo_inertia smoothly scales both mass and moment of inertia
+  cfg.events["body_inertia_mass"] = EventTermCfg(
+      func=dr.pseudo_inertia,
       mode="startup",
       params={
           "asset_cfg": SceneEntityCfg("robot", body_names="trunk"),
-          "field": "body_mass",
-          "operation": "scale",
-          "ranges": (0.8, 1.2), # Mass +/- 20%
+          "alpha_range": (-0.2, 0.2), # Log-scale
       },
   )
   cfg.events["dof_friction"] = EventTermCfg(
-      func=mdp.randomize_field,
+      func=dr.dof_frictionloss,
       mode="startup",
       params={
           "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
-          "field": "dof_frictionloss",
           "operation": "add",
           "ranges": (0.0, 0.2), # Add random friction loss
       },
   )
   cfg.events["dof_damping"] = EventTermCfg(
-      func=mdp.randomize_field,
+      func=dr.dof_damping,
       mode="startup",
       params={
           "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
-          "field": "dof_damping",
           "operation": "scale",
           "ranges": (0.8, 1.2), # Damping +/- 20%
       },
@@ -262,11 +256,11 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.rewards["air_time"].weight = 0.475
   # Override base placeholder reward: bind sensor + weight.
   cfg.rewards["calf_collision"].params["sensor_name"] = calf_ground_cfg.name
-  cfg.rewards["calf_collision"].params["threshold"] = 2.0  # Allow grazing contacts < 15N
-  cfg.rewards["calf_collision"].weight = -1.0  # tweak within [-1.0, -3.0]
+  cfg.rewards["calf_collision"].params["force_threshold"] = 0.2  # Allow grazing contacts < 15N
+  cfg.rewards["calf_collision"].weight = -0.5  # tweak within [-1.0, -3.0]
   cfg.rewards["thigh_collision"].params["sensor_name"] = thigh_ground_cfg.name
-  cfg.rewards["thigh_collision"].params["threshold"] = 2.0
-  cfg.rewards["thigh_collision"].weight = -0.75  # tweak within [-1.0, -3.0]
+  cfg.rewards["thigh_collision"].params["force_threshold"] = 0.2
+  cfg.rewards["thigh_collision"].weight = -1.2 # tweak within [-1.0, -3.0]
   cfg.rewards["stumble"].params["sensor_names"] = [
     calf_ground_cfg.name,   
     thigh_ground_cfg.name,
@@ -291,7 +285,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     # Effectively infinite episode length.
     cfg.episode_length_s = int(1e9)
 
-    cfg.observations["policy"].enable_corruption = False
+    cfg.observations["actor"].enable_corruption = False
     cfg.events.pop("push_robot", None)
 
     if cfg.scene.terrain is not None:
