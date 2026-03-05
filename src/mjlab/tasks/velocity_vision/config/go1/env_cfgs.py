@@ -122,14 +122,16 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   )
 
   # Height Scan Sensor (Privileged, Ground Truth)
+  """ 这里重新创建了两个传感器，覆盖了前面的配置"""
   # 1.6m x 1.6m area with 0.1m resolution -> 16x16 = 256 points
+  # Using True default debug_vis from base config to align with velocity task
   terrain_scan = RayCastSensorCfg(
       name="terrain_scan",
       frame=ObjRef(type="body", name="trunk", entity="robot"),
       pattern=GridPatternCfg(size=(0.8, 0.8), resolution=0.05, direction=(0.0, 0.0, -1.0)),
       ray_alignment="yaw", # Scan should be gravity aligned but follow robot yaw
       max_distance=3.0,
-      debug_vis=False,
+      debug_vis=True, # Explicitly enable to match base config style
       include_geom_groups=(0,),
   )
 
@@ -141,7 +143,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       pattern=PinholeCameraPatternCfg(width=80, height=50, fovy=86.0),
       ray_alignment="base", # Camera moves with head
       max_distance=4.0,
-      debug_vis=False,
+      debug_vis=True, # Explicitly enable to match base config style
       include_geom_groups=(0, 1), # See terrain and robot itself
   )
 

@@ -125,11 +125,6 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"sensor_name": "robot/imu_lin_vel"},
       noise=Unoise(n_min=-0.5, n_max=0.5),
     ),
-    "height_scan": ObservationTermCfg(
-      func=envs_mdp.height_scan,
-      params={"sensor_name": "terrain_scan"},
-      scale=1 / terrain_scan.max_distance,
-    ),
     "foot_height": ObservationTermCfg(
       func=mdp.foot_height,
       params={"asset_cfg": SceneEntityCfg("robot", site_names=())},  # Set per-robot.
@@ -145,6 +140,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "foot_contact_forces": ObservationTermCfg(
       func=mdp.foot_contact_forces,
       params={"sensor_name": "feet_ground_contact"},
+    ),
+    # Move height_scan to the end to match MLP slicing expectations
+    "height_scan": ObservationTermCfg(
+      func=envs_mdp.height_scan,
+      params={"sensor_name": "terrain_scan"},
+      scale=1 / terrain_scan.max_distance,
     ),
   }
 
