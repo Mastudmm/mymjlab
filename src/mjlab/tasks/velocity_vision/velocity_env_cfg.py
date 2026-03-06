@@ -484,6 +484,16 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         ],
       },
     ),
+    "stuck_penalty": RewardTermCfg(
+      func=mdp.stuck_penalty,
+      weight=-0.1, 
+      params={
+          "command_name": "twist",
+          "velocity_threshold": 0.5,
+          "stuck_threshold": 0.2,
+          "alpha": 0.05, 
+      },
+    ),
   }
 
 

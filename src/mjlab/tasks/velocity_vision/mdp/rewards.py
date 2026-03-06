@@ -1308,3 +1308,58 @@ class gait_force_async:
     
     return torch.exp(-total_error / std)
 
+
+class stuck_penalty:
+  """Penalize robot for getting stuck (low average velocity in command direction).
+
+  Maintains an exponential moving average (EMA) of the velocity projected onto the command direction.
+  If the commanded velocity is high but the EMA velocity is low (indicating stuck or oscillating behavior),
+  a penalty is applied.
+  
+  Logic:
+  - Calculate execution velocity projected onto command direction.
+  - Update rolling average: avg = (1-alpha)*avg + alpha*curr.
+  - If |command| > velocity_threshold AND avg_vel < stuck_threshold: Return 1.0 (to be weighted negatively).
+  """
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self.alpha = cfg.params.get("alpha", 0.05) 
+    self.velocity_threshold = cfg.params.get("velocity_threshold", 0.5)
+    self.stuck_threshold = cfg.params.get("stuck_threshold", 0.25)
+    self.avg_vel = torch.zeros(env.num_envs, device=env.device)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ) -> torch.Tensor:
+    # Reset logic
+    reset_env_ids = (env.episode_length_buf == 0).nonzero(as_tuple=False).flatten()
+    if len(reset_env_ids) > 0:
+        self.avg_vel[reset_env_ids] = 0.0
+
+    asset: Entity = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    assert command is not None
+    
+    # 1. Calculate projected velocity (scalar)
+    cmd_lin = command[:, :2] # xy
+    cmd_mag = torch.norm(cmd_lin, dim=1) + 1e-5
+    cmd_dir = cmd_lin / cmd_mag.unsqueeze(1)
+    
+    actual_lin = asset.data.root_link_lin_vel_b[:, :2]
+    vel_proj = torch.sum(actual_lin * cmd_dir, dim=1)
+    
+    # 2. Update EMA (Exponential Moving Average) and Detach to prevent graph growth
+    # Note: We detach to avoid backprop through time memory issues.
+    new_avg = (1.0 - self.alpha) * self.avg_vel + self.alpha * vel_proj
+    self.avg_vel = new_avg.detach()
+    
+    # 3. Check Condition
+    # Command must be significant > velocity_threshold
+    active_command = cmd_mag > self.velocity_threshold
+    # Average velocity is low < stuck_threshold
+    is_stuck = self.avg_vel < self.stuck_threshold
+    
+    return (active_command & is_stuck).float()
+
