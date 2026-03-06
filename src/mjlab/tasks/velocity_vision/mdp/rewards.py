@@ -1322,15 +1322,15 @@ class stuck_penalty:
   - If |command| > velocity_threshold AND avg_vel < stuck_threshold: Return 1.0 (to be weighted negatively).
   """
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
-    self.alpha = cfg.params.get("alpha", 0.05) 
-    self.velocity_threshold = cfg.params.get("velocity_threshold", 0.5)
-    self.stuck_threshold = cfg.params.get("stuck_threshold", 0.25)
     self.avg_vel = torch.zeros(env.num_envs, device=env.device)
 
   def __call__(
     self,
     env: ManagerBasedRlEnv,
     command_name: str,
+    velocity_threshold: float = 0.5,
+    stuck_threshold: float = 0.25,
+    alpha: float = 0.05,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
   ) -> torch.Tensor:
     # Reset logic
@@ -1350,16 +1350,16 @@ class stuck_penalty:
     actual_lin = asset.data.root_link_lin_vel_b[:, :2]
     vel_proj = torch.sum(actual_lin * cmd_dir, dim=1)
     
-    # 2. Update EMA (Exponential Moving Average) and Detach to prevent graph growth
-    # Note: We detach to avoid backprop through time memory issues.
-    new_avg = (1.0 - self.alpha) * self.avg_vel + self.alpha * vel_proj
+    # 2. Update EMA (Exponential Moving Average) and Detach
+    # Using the alpha passed in arguments
+    new_avg = (1.0 - alpha) * self.avg_vel + alpha * vel_proj
     self.avg_vel = new_avg.detach()
     
     # 3. Check Condition
     # Command must be significant > velocity_threshold
-    active_command = cmd_mag > self.velocity_threshold
+    active_command = cmd_mag > velocity_threshold
     # Average velocity is low < stuck_threshold
-    is_stuck = self.avg_vel < self.stuck_threshold
+    is_stuck = self.avg_vel < stuck_threshold
     
     return (active_command & is_stuck).float()
 
