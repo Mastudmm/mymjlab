@@ -56,7 +56,7 @@
     <link rel="search" title="Search" href="../../../search.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-    <meta name="docbuild:last-update" content="Mar 06, 2026"/>
+    <meta name="docbuild:last-update" content="Mar 07, 2026"/>
   </head>
   
   
@@ -216,6 +216,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../source/training/distributed_training.html">Distributed Training</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/training/cloud.html">Cloud Training</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/debugging/nan_guard.html">NaN Guard</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/debugging/export_scene.html">Export Scene</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">API Reference</span></p>
 <ul class="nav bd-sidenav">
@@ -523,11 +524,11 @@ document.write(`
 
 <div class="viewcode-block" id="ObservationManager.__init__">
 <a class="viewcode-back" href="../../../source/api/managers.html#mjlab.managers.ObservationManager.__init__">[docs]</a>
-  <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">cfg</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ObservationGroupCfg</span><span class="p">],</span> <span class="n">env</span><span class="p">):</span> <span class="c1">#cfg: dict[str, ObservationGroupCfg]是注解，意思是参数 cfg 预计是一个“组名 ，组级观测配置”的字典</span>
+  <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">cfg</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ObservationGroupCfg</span><span class="p">],</span> <span class="n">env</span><span class="p">):</span>
     <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span> <span class="o">=</span> <span class="n">deepcopy</span><span class="p">(</span><span class="n">cfg</span><span class="p">)</span>
     <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">env</span><span class="o">=</span><span class="n">env</span><span class="p">)</span>
 
-    <span class="bp">self</span><span class="o">.</span><span class="n">_group_obs_dim</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]]]</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">()</span> <span class="c1">#是一个字典（mapping），它的键是字符串（group 名称），值要么是一个表示形状的 tuple（比如 (3,4)），要么是一个由若干此类 tuple 组成的 list（比如 [(3,),(6,),(4,)]）。初始被赋为空字典 dict()。</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">_group_obs_dim</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]]]</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">()</span>
 
     <span class="k">for</span> <span class="n">group_name</span><span class="p">,</span> <span class="n">group_term_dims</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_group_obs_term_dim</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
       <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_group_obs_concatenate</span><span class="p">[</span><span class="n">group_name</span><span class="p">]:</span>
@@ -579,14 +580,14 @@ document.write(`
       <span class="n">msg</span> <span class="o">+=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span>
     <span class="k">return</span> <span class="n">msg</span>
 
-  <span class="k">def</span><span class="w"> </span><span class="nf">get_active_iterable_terms</span><span class="p">(</span><span class="c1">#该函数只会在调试和View.py展示的时候使用</span>
+  <span class="k">def</span><span class="w"> </span><span class="nf">get_active_iterable_terms</span><span class="p">(</span>
     <span class="bp">self</span><span class="p">,</span> <span class="n">env_idx</span><span class="p">:</span> <span class="nb">int</span>
   <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">float</span><span class="p">]]]:</span>
     <span class="n">terms</span> <span class="o">=</span> <span class="p">[]</span>
 
     <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_obs_buffer</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-      <span class="bp">self</span><span class="o">.</span><span class="n">compute</span><span class="p">()</span> <span class="c1">#填充观测缓存</span>
-    <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">_obs_buffer</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>  <span class="c1">#断言检查 断言的核心作用是在开发阶段充当程序的内部检查点，用于捕获那些在程序逻辑正确的情况下本不应发生的错误 如果结果为 False（即条件不成立），程序会立即抛出 AssertionError异常并终止</span>
+      <span class="bp">self</span><span class="o">.</span><span class="n">compute</span><span class="p">()</span>
+    <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">_obs_buffer</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
     <span class="n">obs_buffer</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_obs_buffer</span>
 
     <span class="k">for</span> <span class="n">group_name</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">group_obs_dim</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
@@ -630,7 +631,7 @@ document.write(`
   <span class="k">def</span><span class="w"> </span><span class="nf">group_obs_concatenate</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">bool</span><span class="p">]:</span>
     <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_group_obs_concatenate</span>
 
-  <span class="c1"># Methods. 以下函数会在训练中使用</span>
+  <span class="c1"># Methods.</span>
 
   <span class="k">def</span><span class="w"> </span><span class="nf">get_term_cfg</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">group_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">term_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ObservationTermCfg</span><span class="p">:</span>
     <span class="k">if</span> <span class="n">group_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_group_obs_term_names</span><span class="p">:</span>
@@ -723,8 +724,8 @@ document.write(`
     <span class="bp">self</span><span class="o">.</span><span class="n">_obs_buffer</span> <span class="o">=</span> <span class="n">obs_buffer</span>
     <span class="k">return</span> <span class="n">obs_buffer</span>
 
-  <span class="k">def</span><span class="w"> </span><span class="nf">compute_group</span><span class="p">(</span> <span class="c1">#group（组）比如 “proprio”（自身感知）、“terrain”（地形）、“vision”（视觉）。 term（项）例如vel joint_pos等</span>
-    <span class="bp">self</span><span class="p">,</span> <span class="n">group_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">update_history</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>   <span class="c1">#该函数输入的是group_name: 要计算的观测组名（如 &quot;proprio&quot;），函数处理的是group内的数据</span>
+  <span class="k">def</span><span class="w"> </span><span class="nf">compute_group</span><span class="p">(</span>
+    <span class="bp">self</span><span class="p">,</span> <span class="n">group_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">update_history</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
   <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
     <span class="n">group_cfg</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="p">[</span><span class="n">group_name</span><span class="p">]</span>
     <span class="n">group_term_names</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_group_obs_term_names</span><span class="p">[</span><span class="n">group_name</span><span class="p">]</span>
@@ -733,8 +734,8 @@ document.write(`
       <span class="n">group_term_names</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_group_obs_term_cfgs</span><span class="p">[</span><span class="n">group_name</span><span class="p">],</span> <span class="n">strict</span><span class="o">=</span><span class="kc">False</span>
     <span class="p">)</span>
     <span class="k">for</span> <span class="n">term_name</span><span class="p">,</span> <span class="n">term_cfg</span> <span class="ow">in</span> <span class="n">obs_terms</span><span class="p">:</span>
-      <span class="n">obs</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">=</span> <span class="n">term_cfg</span><span class="o">.</span><span class="n">func</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_env</span><span class="p">,</span> <span class="o">**</span><span class="n">term_cfg</span><span class="o">.</span><span class="n">params</span><span class="p">)</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span><span class="c1"># obs 是当前 term 的原始观测张量</span>
-      <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">term_cfg</span><span class="o">.</span><span class="n">noise</span><span class="p">,</span> <span class="n">noise_cfg</span><span class="o">.</span><span class="n">NoiseCfg</span><span class="p">):</span> <span class="c1"># 如果 term_cfg.noise 是 noise_cfg.NoiseCfg 的实例 -&gt;噪声注入</span>
+      <span class="n">obs</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">=</span> <span class="n">term_cfg</span><span class="o">.</span><span class="n">func</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_env</span><span class="p">,</span> <span class="o">**</span><span class="n">term_cfg</span><span class="o">.</span><span class="n">params</span><span class="p">)</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+      <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">term_cfg</span><span class="o">.</span><span class="n">noise</span><span class="p">,</span> <span class="n">noise_cfg</span><span class="o">.</span><span class="n">NoiseCfg</span><span class="p">):</span>
         <span class="n">obs</span> <span class="o">=</span> <span class="n">term_cfg</span><span class="o">.</span><span class="n">noise</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">obs</span><span class="p">)</span>
       <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">term_cfg</span><span class="o">.</span><span class="n">noise</span><span class="p">,</span> <span class="n">noise_cfg</span><span class="o">.</span><span class="n">NoiseModelCfg</span><span class="p">):</span>
         <span class="n">obs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_group_obs_class_instances</span><span class="p">[</span><span class="n">term_name</span><span class="p">](</span><span class="n">obs</span><span class="p">)</span>
@@ -756,13 +757,12 @@ document.write(`
         <span class="n">delay_buffer</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">obs</span><span class="p">)</span>
         <span class="n">obs</span> <span class="o">=</span> <span class="n">delay_buffer</span><span class="o">.</span><span class="n">compute</span><span class="p">()</span>
       <span class="k">if</span> <span class="n">term_cfg</span><span class="o">.</span><span class="n">history_length</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
-        <span class="n">circular_buffer</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_group_obs_term_history_buffer</span><span class="p">[</span><span class="n">group_name</span><span class="p">][</span><span class="n">term_name</span><span class="p">]</span> <span class="c1">#双层字典，dict[str, dict[str, CircularBuffer]]，把[group_name][term_name]输进去返回一个CircularBuffer类的实例</span>
+        <span class="n">circular_buffer</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_group_obs_term_history_buffer</span><span class="p">[</span><span class="n">group_name</span><span class="p">][</span><span class="n">term_name</span><span class="p">]</span>
         <span class="k">if</span> <span class="n">update_history</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">circular_buffer</span><span class="o">.</span><span class="n">is_initialized</span><span class="p">:</span>
-          <span class="n">circular_buffer</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">obs</span><span class="p">)</span> <span class="c1">#环形缓冲器</span>
+          <span class="n">circular_buffer</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">obs</span><span class="p">)</span>
 
         <span class="k">if</span> <span class="n">term_cfg</span><span class="o">.</span><span class="n">flatten_history_dim</span><span class="p">:</span>
-          <span class="n">group_obs</span><span class="p">[</span><span class="n">term_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">circular_buffer</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_env</span><span class="o">.</span><span class="n">num_envs</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="c1">#circular_buffer.buffer是一个属性 @property,他返回的是一个tensor，因此可以对tensor使用.reshape()函数</span>
-          <span class="c1">#返回“按时间从老到新”的外部视图</span>
+          <span class="n">group_obs</span><span class="p">[</span><span class="n">term_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">circular_buffer</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_env</span><span class="o">.</span><span class="n">num_envs</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
         <span class="k">else</span><span class="p">:</span>
           <span class="n">group_obs</span><span class="p">[</span><span class="n">term_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">circular_buffer</span><span class="o">.</span><span class="n">buffer</span>
       <span class="k">else</span><span class="p">:</span>
@@ -939,7 +939,7 @@ By The mjlab Developers
   
   <div class="footer-item">
     <p class="last-updated">
-  Last updated on Mar 06, 2026.
+  Last updated on Mar 07, 2026.
   <br/>
 </p>
   </div>
