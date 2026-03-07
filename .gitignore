@@ -13,6 +13,9 @@ artifacts/
 .venv/
 render_robots.py
 benchmark_results/
+Mastreadme.md
+cfgexplanation.md
+
 
 # Documentation outputs.
 **/_build/*

@@ -33,7 +33,7 @@ _DEFAULT_PLANE_MATERIAL = spec_cfg.MaterialCfg(
   texrepeat=(4.0, 4.0),
   reflectance=0.2,
   texture="groundplane",
-  geom_names_expr=("terrain$",),
+  geom_names_expr=("^terrain",),
 )
 
 
