@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "mjlab"
-version = "1.1.1"
+version = "1.2.0"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 readme = { file = "README.md", content-type = "text/markdown" }
@@ -36,7 +36,7 @@ dependencies = [
   "tyro>=1.0.1",
   "torch>=2.7.0",
   "torchrunx>=0.3.4",
-  "warp-lang>=1.12.0.dev",
+  "warp-lang>=1.12.0",
   "mujoco-warp>=3.5.0",
   "mujoco>=3.5.0",
   "trimesh>=4.8.3",
@@ -44,7 +44,7 @@ dependencies = [
   "mediapy>=1.2.6",
   "imageio-ffmpeg",
   "tensordict",
-  "rsl-rl-lib==4.0.1",
+  "rsl-rl-lib==5.0.1",
   "tensorboard>=2.20.0",
   "onnxscript>=0.5.4",
   "wandb>=0.22.3",
@@ -60,6 +60,7 @@ play = "mjlab.scripts.play:main"
 demo = "mjlab.scripts.demo:main"
 list_envs = "mjlab.scripts.list_envs:main"
 viz-nan = "mjlab.scripts.nan_viz:main"
+export-scene = "mjlab.scripts.export_scene:main"
 
 [dependency-groups]
 dev = [

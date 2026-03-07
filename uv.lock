@@ -1727,7 +1727,7 @@ wheels = [
 
 [[package]]
 name = "mjlab"
-version = "1.1.1"
+version = "1.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "imageio-ffmpeg" },
@@ -1800,7 +1800,7 @@ requires-dist = [
     { name = "mujoco-warp", git = "https://gitcode.com/gh_mirrors/mu/mujoco_warp?rev=ebdadbf2df521dd5b47463436a8f4b96e6c34977" },
     { name = "onnxscript", specifier = ">=0.5.4" },
     { name = "prettytable" },
-    { name = "rsl-rl-lib", specifier = "==4.0.1" },
+    { name = "rsl-rl-lib", specifier = "==5.0.1" },
     { name = "tensorboard", specifier = ">=2.20.0" },
     { name = "tensordict" },
     { name = "torch", specifier = ">=2.7.0" },
@@ -1814,8 +1814,8 @@ requires-dist = [
     { name = "tyro", specifier = ">=1.0.1" },
     { name = "viser", specifier = ">=1.0.24" },
     { name = "wandb", specifier = ">=0.22.3" },
-    { name = "warp-lang", marker = "sys_platform != 'darwin'", specifier = ">=1.12.0.dev0", index = "https://pypi.nvidia.com/" },
-    { name = "warp-lang", marker = "sys_platform == 'darwin'", specifier = ">=1.12.0.dev0" },
+    { name = "warp-lang", marker = "sys_platform != 'darwin'", specifier = ">=1.12.0", index = "https://pypi.nvidia.com/" },
+    { name = "warp-lang", marker = "sys_platform == 'darwin'", specifier = ">=1.12.0" },
 ]
 provides-extras = ["cu128", "cpu"]
 

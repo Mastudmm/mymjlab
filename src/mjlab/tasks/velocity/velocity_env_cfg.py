@@ -15,6 +15,7 @@ from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.command_manager import CommandTermCfg
 from mjlab.managers.curriculum_manager import CurriculumTermCfg
 from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.metrics_manager import MetricsTermCfg
 from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
@@ -148,6 +149,16 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   observations["actor"].flatten_history_dim = True
   observations["critic"].history_length = 5
   observations["critic"].flatten_history_dim = True
+
+  ##
+  # Metrics
+  ##
+
+  metrics = {
+    "mean_action_acc": MetricsTermCfg(
+      func=mdp.mean_action_acc,
+    ),
+  }
 
   ##
   # Actions
@@ -522,6 +533,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     rewards=rewards,
     terminations=terminations,
     curriculum=curriculum,
+    metrics=metrics,
     viewer=ViewerConfig(
       origin_type=ViewerConfig.OriginType.ASSET_BODY,
       entity_name="robot",
