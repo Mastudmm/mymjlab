@@ -19,7 +19,11 @@ def unitree_go1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   """Create RL runner configuration for Unitree Go1 velocity task."""
   actor_cfg = DepthActorCriticCfg(
       class_name="mjlab.tasks.velocity_vision.rl.modules:DepthActorCritic",
-      init_noise_std=1.0,
+      distribution_cfg={
+          "class_name": "GaussianDistribution",
+          "init_std": 1.0,
+          "std_type": "scalar",
+      },
       obs_normalization=False,
       hidden_dims=(512, 256, 128),
       activation="elu",

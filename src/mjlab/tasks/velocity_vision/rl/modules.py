@@ -139,11 +139,8 @@ class DepthActorCritic(ActorCritic):
              if k in kwargs:
                  base_kwargs[k] = kwargs[k]
         
-        # Call super().__init__ which is MLPModel.__init__ in RSL-RL 4.0
-        # We must use keyword arguments to avoid positional mismatch if signature varies slightly
-        # BUT PPO calls us with positionals too if we were MLPModel.
-        # Since we are inheriting, we can just call super with kwargs.
-        
+        # super().__init__ which is MLPModel.__init__ in RSL-RL 4.0
+        # ...existing code...
         super().__init__(**base_kwargs)
 
         # Immediate overwrite of self.actor and self.critic
@@ -273,6 +270,19 @@ class DepthActorCritic(ActorCritic):
 
         # Init weights
         self._init_weights()
+
+    def load_state_dict(self, state_dict, strict=True):
+        """
+        拦截并修复被 runner.py 强行搬移过的 std 键名，
+        使自定义模型能正确加载权重。
+        """
+        # 如果 runner.py 完成了迁移，但我们的模型依然使用旧的键名结构
+        if "distribution.std_param" in state_dict and "std" in self.state_dict():
+            state_dict["std"] = state_dict.pop("distribution.std_param")
+        if "distribution.log_std_param" in state_dict and "log_std" in self.state_dict():
+            state_dict["log_std"] = state_dict.pop("distribution.log_std_param")
+            
+        return super().load_state_dict(state_dict, strict=strict)
         
     def _init_weights(self):
         # Orthogonal init
@@ -320,12 +330,14 @@ class DepthActorCritic(ActorCritic):
 
         # 3. 读取设定的最新深度的信息帧张量
         depth_vol = self.depth_shape[0] * self.depth_shape[1] * self.depth_shape[2]
-        latest_depth_frames_dim = depth_vol * self.depth_history_num
+        latest_depth_frames_dim = depth_vol * self.depth_history_num #这两行没用到吧
+
+
         depth = depth_all_frames
 
         # 把一维展平的图像重新转回张量 (Batch, Channels, Height, Width)
         cnn_in_channels = self.depth_shape[0] * self.depth_history_num
-        depth = depth.view(-1, cnn_in_channels, self.depth_shape[1], self.depth_shape[2])
+        depth = depth.view(-1, cnn_in_channels, self.depth_shape[1], self.depth_shape[2]) # 复原乘tensor卷积层 Conv2d期望输入是 4D 张量 (N, C, H, W)
         
         # Encoder: 提取图像隐特征
         visual_latent = self.visual_encoder(depth)
@@ -379,12 +391,12 @@ class DepthActorCritic(ActorCritic):
             raise RuntimeError("Distribution was not initialized after update.")
         return self.distribution.sample()
 
-    def get_actions_log_prob(self, actions):
+    def get_actions_log_prob(self, actions):  #PPO更新函数update 会调用此函数
         if self.distribution is None:
             raise RuntimeError("Distribution was not initialized.")
         return self.distribution.log_prob(actions).sum(dim=-1)
 
-    def act_inference(self, obs):
+    def act_inference(self, obs):    #play时调用
         obs = self.get_actor_obs(obs)
         obs = self.actor_obs_normalizer(obs)
         features = self._process_actor_obs(obs)
