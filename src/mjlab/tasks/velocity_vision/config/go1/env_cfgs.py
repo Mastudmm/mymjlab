@@ -9,6 +9,7 @@ from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.envs.mdp import dr
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.observation_manager import ObservationTermCfg
+from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import (
@@ -140,7 +141,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   depth_camera = RayCastSensorCfg(
       name="depth_camera",
       frame=ObjRef(type="site", name="head", entity="robot"), # Ensure robot xml has 'head' site
-      pattern=PinholeCameraPatternCfg(width=80, height=50, fovy=57.0),#86改为57
+      pattern=PinholeCameraPatternCfg(width=80, height=80, fovy=57.0),#86改为57
       ray_alignment="base", # Camera moves with head
       max_distance=4.0,
       debug_vis=True, # Explicitly enable to match base config style
@@ -276,11 +277,17 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       }
   cfg.rewards["foot_slip"].weight = -0.3
 
-  cfg.terminations["illegal_contact"] = TerminationTermCfg(
-    func=mdp.illegal_contact,
-    params={"sensor_name": nonfootleg_ground_cfg.name},
+  cfg.rewards["body_collision"] = RewardTermCfg(
+    func=mdp.self_collision_cost,
+    params={"sensor_name": nonfootleg_ground_cfg.name, "force_threshold": 1.0},
+    weight=-2.0,
   )
 
+  '''cfg.terminations["illegal_contact"] = TerminationTermCfg(
+    func=mdp.illegal_contact,
+    params={"sensor_name": nonfootleg_ground_cfg.name},
+  )'''
+  
 
   # Apply play mode overrides.
   if play:

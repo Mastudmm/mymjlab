@@ -70,7 +70,7 @@ class DepthActorCritic(ActorCritic):
         #    配置与维度计算
         # ----------------------------------------------------------------------
         # 从 kwargs 获取自定义参数
-        self.depth_shape = kwargs.pop("depth_shape", (1, 50, 80)) # 默认C, H, W(1, 50, 80)，可由外部传入
+        self.depth_shape = kwargs.pop("depth_shape", (1, 80, 80)) # 默认C, H, W(1, 80, 80)，可由外部传入
         self.depth_history_num = kwargs.pop("depth_history_num", 1) # CNN处理多帧深度图 (本例中为1帧)
         
         # history_length 用于扩大除了展平的 depth 或 scan 外，其余本体信息的大小
@@ -153,13 +153,13 @@ class DepthActorCritic(ActorCritic):
         #    输入: 深度图图像张量, 形状为 (Batch, Channels=1, Height=50, Width=80) 
         #    输出: 降维后的视觉特征, 张量形状 (Batch, visual_latent_dim=32)
         # ---------------------------
-        # 已知输入图像定死为 C=1, H=50, W=80
-        # Conv1: input (1, 50, 80) -> kernel (5x5), valid padding默认(无填充) -> (32, 46, 76)
-        # MaxPool: input (32, 46, 76) -> kernel 2, stride 2 -> (32, 23, 38)
-        # Conv2: input (32, 23, 38) -> kernel (3x3), padding 0 -> (64, 21, 36)
-        # Flatten: 64 * 21 * 36 = 48384
+        # 已知输入图像定死为 C=1, H=80, W=80
+        # Conv1: input (1, 80, 80) -> kernel (5x5), valid padding默认(无填充) -> (32, 76, 76)
+        # MaxPool: input (32, 76, 76) -> kernel 2, stride 2 -> (32, 38, 38)
+        # Conv2: input (32, 38, 38) -> kernel (3x3), padding 0 -> (64, 36, 36)
+        # Flatten: 64 * 36 * 36 = 82944
         cnn_in_channels = self.depth_shape[0] * self.depth_history_num
-        flatten_dim = 64 * 21 * 36
+        flatten_dim = 64 * 36 * 36
             
         self.visual_encoder = nn.Sequential(
             nn.Conv2d(cnn_in_channels, 32, kernel_size=5),

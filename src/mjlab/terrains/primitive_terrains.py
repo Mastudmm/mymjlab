@@ -1239,10 +1239,10 @@ class BoxSteppingStonesTerrainCfg(SubTerrainCfg):
 
         # Avoid platform.
         margin = max(avg_s_max, self.stone_size_variation * 2) / 2
-        if (platform_min - margin <= px <= platform_max + margin) and (
+        '''if (platform_min - margin <= px <= platform_max + margin) and (
           platform_min - margin <= py <= platform_max + margin
         ):
-          continue
+          continue'''
 
         # Final clip against border.
         x_min = np.clip(x_min, inner_min_x, inner_max_x)
@@ -1546,7 +1546,7 @@ class BoxNestedRingsTerrainCfg(SubTerrainCfg):
     # In beam terrain, border top was at beam_height.
 
     if self.border_width > 0.0:
-      border_h = 0.5
+      border_h = 0.05
       border_center = (
         0.5 * self.size[0],
         0.5 * self.size[1],
