@@ -141,7 +141,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   depth_camera = RayCastSensorCfg(
       name="depth_camera",
       frame=ObjRef(type="site", name="head", entity="robot"), # Ensure robot xml has 'head' site
-      pattern=PinholeCameraPatternCfg(width=80, height=80, fovy=57.0),#86改为57
+      pattern=PinholeCameraPatternCfg(width=80, height=80, fovy=86.0),#86改为57
       ray_alignment="base", # Camera moves with head
       max_distance=4.0,
       debug_vis=True, # Explicitly enable to match base config style
