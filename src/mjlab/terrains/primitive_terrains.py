@@ -72,8 +72,8 @@ class BoxPyramidStairsTerrainCfg(SubTerrainCfg):
   when holes is True."""
   step_height_range: tuple[float, float]
   """Min and max step height, in meters. Interpolated by difficulty."""
-  step_width: float
-  """Depth (run) of each step, in meters."""
+  step_width_range: tuple[float, float] = (0.25, 0.45)
+  """Min and max depth (run) of each step, in meters. Interpolated by difficulty."""
   platform_width: float = 1.0
   """Side length of the flat square platform at the top of the staircase, in meters."""
   holes: bool = False
@@ -91,15 +91,19 @@ class BoxPyramidStairsTerrainCfg(SubTerrainCfg):
     step_height = self.step_height_range[0] + difficulty * (
       self.step_height_range[1] - self.step_height_range[0]
     )
+    # Step width also interpolates with difficulty. Higher difficulty = narrower steps.
+    step_width = self.step_width_range[1] - difficulty * (
+      self.step_width_range[1] - self.step_width_range[0]
+    )
 
     # Compute number of steps in x and y direction.
     num_steps_x = int(
       (self.size[0] - 2 * self.border_width - self.platform_width)
-      / (2 * self.step_width)
+      / (2 * step_width)
     )
     num_steps_y = int(
       (self.size[1] - 2 * self.border_width - self.platform_width)
-      / (2 * self.step_width)
+      / (2 * step_width)
     )
     num_steps = max(0, int(min(num_steps_x, num_steps_y)))
 
@@ -135,14 +139,14 @@ class BoxPyramidStairsTerrainCfg(SubTerrainCfg):
         box_size = (self.platform_width, self.platform_width)
       else:
         box_size = (
-          terrain_size[0] - 2 * k * self.step_width,
-          terrain_size[1] - 2 * k * self.step_width,
+          terrain_size[0] - 2 * k * step_width,
+          terrain_size[1] - 2 * k * step_width,
         )
       box_z = terrain_center[2] + k * step_height / 2.0
-      box_offset = (k + 0.5) * self.step_width
+      box_offset = (k + 0.5) * step_width
       box_height = (k + 2) * step_height
 
-      box_dims = (box_size[0], self.step_width, box_height)
+      box_dims = (box_size[0], step_width, box_height)
 
       safe_size = (
         np.maximum(1e-6, box_dims[0] / 2.0),
@@ -177,11 +181,11 @@ class BoxPyramidStairsTerrainCfg(SubTerrainCfg):
       boxes.append(box)
 
       if self.holes:
-        box_dims = (self.step_width, box_size[1], box_height)
+        box_dims = (step_width, box_size[1], box_height)
       else:
         box_dims = (
-          self.step_width,
-          box_size[1] - 2 * self.step_width,
+          step_width,
+          box_size[1] - 2 * step_width,
           box_height,
         )
       safe_size = (
@@ -218,8 +222,8 @@ class BoxPyramidStairsTerrainCfg(SubTerrainCfg):
 
     # Generate final box for the middle of the terrain.
     box_dims = (
-      terrain_size[0] - 2 * num_steps * self.step_width,
-      terrain_size[1] - 2 * num_steps * self.step_width,
+      terrain_size[0] - 2 * num_steps * step_width,
+      terrain_size[1] - 2 * num_steps * step_width,
       (num_steps + 2) * step_height,
     )
     box_pos = (
@@ -263,15 +267,19 @@ class BoxInvertedPyramidStairsTerrainCfg(BoxPyramidStairsTerrainCfg):
     step_height = self.step_height_range[0] + difficulty * (
       self.step_height_range[1] - self.step_height_range[0]
     )
+    # Step width also interpolates with difficulty. Higher difficulty = narrower steps.
+    step_width = self.step_width_range[1] - difficulty * (
+      self.step_width_range[1] - self.step_width_range[0]
+    )
 
     # Compute number of steps in x and y direction.
     num_steps_x = int(
       (self.size[0] - 2 * self.border_width - self.platform_width)
-      / (2 * self.step_width)
+      / (2 * step_width)
     )
     num_steps_y = int(
       (self.size[1] - 2 * self.border_width - self.platform_width)
-      / (2 * self.step_width)
+      / (2 * step_width)
     )
     num_steps = max(0, int(min(num_steps_x, num_steps_y)))
     total_height = (num_steps + 1) * step_height
@@ -309,15 +317,15 @@ class BoxInvertedPyramidStairsTerrainCfg(BoxPyramidStairsTerrainCfg):
         box_size = (self.platform_width, self.platform_width)
       else:
         box_size = (
-          terrain_size[0] - 2 * k * self.step_width,
-          terrain_size[1] - 2 * k * self.step_width,
+          terrain_size[0] - 2 * k * step_width,
+          terrain_size[1] - 2 * k * step_width,
         )
 
       box_z = terrain_center[2] - total_height / 2 - (k + 1) * step_height / 2.0
-      box_offset = (k + 0.5) * self.step_width
+      box_offset = (k + 0.5) * step_width
       box_height = total_height - (k + 1) * step_height
 
-      box_dims = (box_size[0], self.step_width, box_height)
+      box_dims = (box_size[0], step_width, box_height)
       safe_size = (
         np.maximum(1e-6, box_dims[0] / 2.0),
         np.maximum(1e-6, box_dims[1] / 2.0),
@@ -351,11 +359,11 @@ class BoxInvertedPyramidStairsTerrainCfg(BoxPyramidStairsTerrainCfg):
       boxes.append(box)
 
       if self.holes:
-        box_dims = (self.step_width, box_size[1], box_height)
+        box_dims = (step_width, box_size[1], box_height)
       else:
         box_dims = (
-          self.step_width,
-          box_size[1] - 2 * self.step_width,
+          step_width,
+          box_size[1] - 2 * step_width,
           box_height,
         )
       safe_size = (
@@ -392,8 +400,8 @@ class BoxInvertedPyramidStairsTerrainCfg(BoxPyramidStairsTerrainCfg):
 
     # Generate final box for the middle of the terrain.
     box_dims = (
-      terrain_size[0] - 2 * num_steps * self.step_width,
-      terrain_size[1] - 2 * num_steps * self.step_width,
+      terrain_size[0] - 2 * num_steps * step_width,
+      terrain_size[1] - 2 * num_steps * step_width,
       step_height,
     )
     box_pos = (
