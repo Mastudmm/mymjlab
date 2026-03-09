@@ -1655,7 +1655,7 @@ class BoxNestedRingsTerrainCfg(SubTerrainCfg):
       ),  # Fill the ring hole + gap area.
       np.maximum(1e-2, current_outer_size[1] + 2 * gap),
     )
-    platform_h = 0.2
+    platform_h = 0.0
 
     platform_half_h = (platform_h + self.floor_depth) / 2
     platform_z = (platform_h - self.floor_depth) / 2
