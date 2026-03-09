@@ -140,9 +140,12 @@ def self_collision_cost(
     hit = (force_mag > force_threshold).any(dim=1)  # [B, H]
     return hit.sum(dim=-1).float()  # [B]
   assert data.found is not None
-  # return data.found.squeeze(-1) # This returns [B, N] which causes shape mismatch broadcasting [B, N] to [B, 1] buffer.
-  # Sum collisions across all sensors/geoms to return [B].
-  return torch.sum(data.found.squeeze(-1), dim=1)
+  # found shape: [B, N] where B is batch, N is number of sensors (primaries).
+  # We sum across all sensors to get total collision count per environment [B].
+  if data.found.ndim == 3: # [B, N, 1]
+    return torch.sum(data.found.squeeze(-1), dim=1)
+  else: # [B, N]
+    return torch.sum(data.found, dim=1)
 
 
 def body_angular_velocity_penalty(

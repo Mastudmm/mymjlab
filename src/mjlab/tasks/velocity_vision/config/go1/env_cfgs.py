@@ -73,6 +73,14 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     reduce="none",
     num_slots=1,
   )
+  head_ground_cfg = ContactSensorCfg(
+    name="head_ground_contact",
+    primary=ContactMatch(mode="geom", pattern="head_collision", entity="robot"),
+    secondary=ContactMatch(mode="body", pattern="terrain"),
+    fields=("found", "force"),
+    reduce="none",
+    num_slots=1,
+  )
   nonfootleg_ground_cfg = ContactSensorCfg(
     name="nonfoot_ground_touch",
     primary=ContactMatch(
@@ -80,9 +88,9 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       entity="robot",
       # Grab all collision geoms...
       pattern=r".*_collision\d*$",
-      # Except for the foot geoms.
-      # Exclude feet + calves + thighs explicitly to leave body-only contacts.
-      exclude=tuple(geom_names) + tuple(calf_geom_names) + tuple(thigh_geom_names) ,
+      # Except for the foot geoms + head.
+      # Exclude feet + calves + thighs + head explicitly to leave body-only contacts.
+      exclude=tuple(geom_names) + tuple(calf_geom_names) + tuple(thigh_geom_names) + ("head_collision",) ,
     ),
     secondary=ContactMatch(mode="body", pattern="terrain"),
     fields=("found",),
@@ -153,6 +161,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     feet_ground_cfg,
     calf_ground_cfg,
     thigh_ground_cfg,
+    head_ground_cfg,
     nonfootleg_ground_cfg,
     *foot_ray_sensors, 
     base_ray_sensor,
@@ -277,10 +286,15 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       }
   cfg.rewards["foot_slip"].weight = -0.3
 
-  cfg.rewards["body_collision"] = RewardTermCfg(
+  cfg.rewards["head_collision"] = RewardTermCfg(
     func=mdp.self_collision_cost,
-    params={"sensor_name": nonfootleg_ground_cfg.name, "force_threshold": 1.0},
-    weight=-2.0,
+    params={"sensor_name": head_ground_cfg.name, "force_threshold": 0.2},
+    weight=-1.0,
+  )
+
+  cfg.terminations["illegal_contact"] = TerminationTermCfg(
+    func=mdp.illegal_contact,
+    params={"sensor_name": nonfootleg_ground_cfg.name},
   )
 
   '''cfg.terminations["illegal_contact"] = TerminationTermCfg(
