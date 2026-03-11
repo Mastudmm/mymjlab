@@ -6,7 +6,12 @@ from mjlab.asset_zoo.robots import (
 )
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
-from mjlab.envs.mdp import dr
+import math
+import numpy as np
+
+import mjlab.envs.mdp as mdp
+import mjlab.envs.mdp.dr as dr
+from mjlab.utils.noise import UniformNoiseCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
@@ -191,7 +196,13 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     scale=1.0 / 4.0,
     history_length=1,
     flatten_history_dim=True,
+    delay_min_lag=2,
+    delay_max_lag=5,
+    delay_hold_prob=0.1,
+    delay_update_period = 2,
+    noise=UniformNoiseCfg(n_min=-0.05, n_max=0.05), # 加一些传感器噪声模拟点云抖动/像素缺失
   )
+
   cfg.observations["critic"].terms["height_scan"].scale = 1.0 / 3.0
 
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = geom_names
@@ -207,6 +218,38 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
           "alpha_range": (-0.2, 0.2), # Log-scale
       },
   )
+  
+  # ---------- Camera Domain Randomizations ----------
+  # 随机化相机安装姿态 (Pitch/Yaw 偏移)，模拟装配误差
+  # 注意：由于 depth_camera 是挂在 robot 的 "head" site 上的，
+  # 我们通过随机化 "head" site 的 site_quat 来实现相机的姿态随机化。
+  cfg.events["cam_quat"] = EventTermCfg(
+      func=dr.site_quat,
+      mode="startup",
+      params={
+          "asset_cfg": SceneEntityCfg("robot", site_names="head"),
+          "pitch_range": (-0.05, 0.05), # ≈ +/- 3度
+          "yaw_range": (-0.05, 0.05),
+      }
+  )
+  
+  # 随机化相机安装位置，模拟安装位移误差
+  cfg.events["cam_pos"] = EventTermCfg(
+      func=dr.site_pos,
+      mode="startup",
+      params={
+          "asset_cfg": SceneEntityCfg("robot", site_names="head"),
+          "ranges": {
+              0: (-0.01, 0.01), # X轴偏移 1cm
+              1: (-0.01, 0.01), # Y轴偏移 1cm
+              2: (-0.01, 0.01), # Z轴偏移 1cm
+          },
+          "operation": "add",
+      }
+  )
+
+  # 注：RayCastSensor 目前不支持动态随机化 cam_fovy (因为它在 initialize 时已生成射线)
+  # ------------------------------------------------
   cfg.events["dof_friction"] = EventTermCfg(
       func=dr.dof_frictionloss,
       mode="startup",
@@ -224,6 +267,41 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
           "operation": "scale",
           "ranges": (0.8, 1.2), # Damping +/- 20%
       },
+  )
+
+  # --- Actuator & Hardware Randomization ---
+  # PD 控制器增益波动 (Kp/Kd 真实硬件可能产生指令跟踪误差)
+  cfg.events["actuator_gains"] = EventTermCfg(
+      func=dr.pd_gains,
+      mode="startup",
+      params={
+          "asset_cfg": SceneEntityCfg("robot"),
+          "kp_range": (0.85, 1.15),
+          "kd_range": (0.85, 1.15),
+          "operation": "scale",
+      }
+  )
+
+  # 电机转子惯量 (Armature) - 模拟减速器和电机内部的惯量微小差异
+  cfg.events["joint_armature"] = EventTermCfg(
+      func=dr.joint_armature,
+      mode="startup",
+      params={
+          "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+          "ranges": (0.8, 1.2),
+          "operation": "scale",
+      }
+  )
+
+  # 力矩上限 - 模拟低电量或者电机持续发热导致的扭矩衰减
+  cfg.events["effort_limits"] = EventTermCfg(
+      func=dr.effort_limits,
+      mode="startup",
+      params={
+          "asset_cfg": SceneEntityCfg("robot"),
+          "effort_limit_range": (0.8, 1.0), # 只能衰减或保持，不能超越物理极值
+          "operation": "scale",
+      }
   )
 
   cfg.rewards["pose"].params["std_standing"] = {
