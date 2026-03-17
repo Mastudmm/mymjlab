@@ -365,7 +365,7 @@ def pseudo_inertia(
   U: :math:`J' = (UL)(UL)^\top`. The result is diagonalized via eigendecomposition to
   extract principal moments (``body_inertia``) and principal frame rotation
   (``body_iquat``), so it is exact for any perturbation magnitude.
-
+  联合随机化四个紧密相关的物理属性：body_mass（质量）、body_ipos（质心位置）、body_inertia（转动惯量）和 body_iquat（主惯量轴朝向），并确保在任意扰动幅度下都具有严格的物理一致性。随机化后会触发约束重新计算。
   The 10 parameters and their physical effects:
 
   - ``alpha``: global mass-density scale — mass and inertia scale by

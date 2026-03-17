@@ -158,7 +158,11 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       ray_alignment="base", # Camera moves with head
       max_distance=4.0,
       debug_vis=True, # Explicitly enable to match base config style
-      include_geom_groups=(0, 1), # See terrain and robot itself
+      viz=RayCastSensorCfg.VizCfg(
+          show_rays=False,
+      ),
+      include_geom_groups=(0, 3), # See terrain and robot itself
+      exclude_parent_body=True,   # 【新增】必须忽略自身的刚体（躯干/头）以防止原点遮挡 即使把头挡住，仍然有一定鲁棒性
   )
 
   # Register sensors
