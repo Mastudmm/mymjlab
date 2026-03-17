@@ -210,7 +210,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.observations["critic"].terms["height_scan"].scale = 1.0 / 3.0
 
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = geom_names
-  cfg.events["base_com"].params["asset_cfg"].body_names = ("trunk",)
+  # cfg.events["base_com"].params["asset_cfg"].body_names = ("trunk",)
 
     # Added Domain Randomization: Mass, Damping, Friction Loss
     # Now physically accurate: pseudo_inertia smoothly scales both mass and moment of inertia

@@ -71,7 +71,7 @@ def unitree_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   ].site_names = site_names
 
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = geom_names
-  cfg.events["base_com"].params["asset_cfg"].body_names = ("torso_link",)
+  # cfg.events["base_com"].params["asset_cfg"].body_names = ("torso_link",)
 
   # Remove height_scan from critic as G1 doesn't have the sensor configured yet
   if "height_scan" in cfg.observations["critic"].terms:
