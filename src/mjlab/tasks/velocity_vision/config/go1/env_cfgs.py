@@ -145,7 +145,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       pattern=GridPatternCfg(size=(0.8, 0.8), resolution=0.05, direction=(0.0, 0.0, -1.0)),
       ray_alignment="yaw", # Scan should be gravity aligned but follow robot yaw
       max_distance=3.0,
-      debug_vis=True, # Explicitly enable to match base config style
+      debug_vis=False, # Explicitly enable to match base config style
       include_geom_groups=(0,),
   )
 
@@ -194,18 +194,18 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     "asset_cfg"
   ].site_names = site_names
 
-  cfg.observations["actor"].terms["depth"] = ObservationTermCfg(
-    func=mdp.ray_cast_distance,
-    params={"sensor_cfg": SceneEntityCfg("depth_camera")},
-    scale=1.0 / 4.0,
-    history_length=1,
-    flatten_history_dim=True,
-    delay_min_lag=2,
-    delay_max_lag=5,
-    delay_hold_prob=0.1,
-    delay_update_period = 2,
-    noise=UniformNoiseCfg(n_min=-0.05, n_max=0.05), # 加一些传感器噪声模拟点云抖动/像素缺失
-  )
+  # cfg.observations["actor"].terms["depth"] = ObservationTermCfg(
+  #   func=mdp.ray_cast_distance,
+  #   params={"sensor_cfg": SceneEntityCfg("depth_camera")},
+  #   scale=1.0 / 4.0,
+  #   history_length=1,
+  #   flatten_history_dim=True,
+  #   delay_min_lag=2,
+  #   delay_max_lag=5,
+  #   delay_hold_prob=0.1,
+  #   delay_update_period = 2,
+  #   noise=UniformNoiseCfg(n_min=-0.05, n_max=0.05), # 加一些传感器噪声模拟点云抖动/像素缺失
+  # )
 
   cfg.observations["critic"].terms["height_scan"].scale = 1.0 / 3.0
 

@@ -95,6 +95,18 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       history_length=10,
       flatten_history_dim=True
     ),
+    "depth" : ObservationTermCfg(
+      func=mdp.ray_cast_distance,
+      params={"sensor_cfg": SceneEntityCfg("depth_camera")},
+      scale=1.0 / 4.0,
+      history_length=1,
+      flatten_history_dim=True,
+      delay_min_lag=2,
+      delay_max_lag=5,
+      delay_hold_prob=0.1,
+      delay_update_period = 2,
+      noise=Unoise(n_min=-0.05, n_max=0.05), # 加一些传感器噪声模拟点云抖动/像素缺失
+  )
   }
   # 为 joint_pos 增加延迟
   actor_terms["joint_pos"].delay_min_lag = 1
@@ -119,7 +131,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     为什么不在上面直接加？因为 critic_terms = 复用了actor_terms,如果直接加critic也会有历史
   '''
   critic_terms = {
-    **actor_terms,
+    "base_ang_vel": actor_terms["base_ang_vel"],
+    "projected_gravity": actor_terms["projected_gravity"],
+    "joint_pos": actor_terms["joint_pos"],
+    "joint_vel": actor_terms["joint_vel"],
+    "actions": actor_terms["actions"],
+    "command": actor_terms["command"],
     "base_lin_vel": ObservationTermCfg(
       func=mdp.builtin_sensor,
       params={"sensor_name": "robot/imu_lin_vel"},
@@ -161,7 +178,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       enable_corruption=False,
     ),
   }
-
+  
   # Apply history to the entire policy observation group:
   # stack current + past 4 frames (total 5) for all policy terms, flatten history dims for MLP inputs.
   # Checkpoint expects 240 dims which corresponds to 48 dims * 5 frames.

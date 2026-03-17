@@ -148,29 +148,29 @@ class DepthActorCritic(ActorCritic):
 
         # ---------------------------
         # A. Visual Encoder (CNN)
-        #    视觉编码器 (卷积神经网络)
-        #    作用: 将高维、带有噪声的深度图像通过卷积池化压缩为紧凑的32维隐特征
-        #    输入: 深度图图像张量, 形状为 (Batch, Channels=1, Height=50, Width=80) 
-        #    输出: 降维后的视觉特征, 张量形状 (Batch, visual_latent_dim=32)
+        #    视觉编码器 (卷积神经网络) - 时序多帧独立卷积版
+        #    作用: 将多帧带有噪声的深度图像分别送入同一个CNN提取每帧特征，随后经过MLP拼接压缩为定长的32维特征
         # ---------------------------
         # 已知输入图像定死为 C=1, H=80, W=80
-        # Conv1: input (1, 80, 80) -> kernel (5x5), valid padding默认(无填充) -> (32, 76, 76)
-        # MaxPool: input (32, 76, 76) -> kernel 2, stride 2 -> (32, 38, 38)
-        # Conv2: input (32, 38, 38) -> kernel (3x3), padding 0 -> (64, 36, 36)
-        # Flatten: 64 * 36 * 36 = 82944
-        cnn_in_channels = self.depth_shape[0] * self.depth_history_num
         flatten_dim = 64 * 36 * 36
+        
+        # 计算每一帧图像产出的向量维度，比如 n=1 就是 128; n=4 时就是 32
+        self.per_frame_latent_dim = max(1, 128 // self.depth_history_num)
             
-        self.visual_encoder = nn.Sequential(
-            nn.Conv2d(cnn_in_channels, 32, kernel_size=5),
+        self.shared_cnn = nn.Sequential(
+            nn.Conv2d(self.depth_shape[0], 32, kernel_size=5),
             nn.MaxPool2d(kernel_size=2),
             activation_fn,
             nn.Conv2d(32, 64, kernel_size=3),
             activation_fn,
             nn.Flatten(),
-            nn.Linear(flatten_dim, 128),
-            activation_fn,
-            nn.Linear(128, self.visual_latent_dim) # Compressed to 32 (压缩至最终视觉隐空间 32维)
+            nn.Linear(flatten_dim, self.per_frame_latent_dim),
+            activation_fn
+        )
+        
+        # 对全部 n 帧的独立特征进行全连接压缩
+        self.visual_mlp = nn.Sequential(
+            nn.Linear(self.per_frame_latent_dim * self.depth_history_num, self.visual_latent_dim)
         )
 
         # ---------------------------
@@ -281,12 +281,27 @@ class DepthActorCritic(ActorCritic):
             state_dict["std"] = state_dict.pop("distribution.std_param")
         if "distribution.log_std_param" in state_dict and "log_std" in self.state_dict():
             state_dict["log_std"] = state_dict.pop("distribution.log_std_param")
+
+        # 处理 visual_encoder (老名称) 到 shared_cnn + visual_mlp (新名称) 的自动兼容
+        # 适用于旧 checkpoint 加载时。如果我们在跑单帧推理 (depth_history_num = 1)，权重可直接沿用
+        if "visual_encoder.0.weight" in state_dict and "shared_cnn.0.weight" in self.state_dict():
+            print("[DepthActorCritic] 正在将老版本 checkpoint 的 visual_encoder 迁移至 shared_cnn...")
+            state_dict["shared_cnn.0.weight"] = state_dict.pop("visual_encoder.0.weight")
+            state_dict["shared_cnn.0.bias"]   = state_dict.pop("visual_encoder.0.bias")
+            state_dict["shared_cnn.3.weight"] = state_dict.pop("visual_encoder.3.weight")
+            state_dict["shared_cnn.3.bias"]   = state_dict.pop("visual_encoder.3.bias")
+            state_dict["shared_cnn.6.weight"] = state_dict.pop("visual_encoder.6.weight")
+            state_dict["shared_cnn.6.bias"]   = state_dict.pop("visual_encoder.6.bias")
+            
+            # visual_encoder 的最后一步是 Linear(128, 32)，在新代码中它就是 visual_mlp 的第一步
+            state_dict["visual_mlp.0.weight"] = state_dict.pop("visual_encoder.8.weight")
+            state_dict["visual_mlp.0.bias"]   = state_dict.pop("visual_encoder.8.bias")
             
         return super().load_state_dict(state_dict, strict=strict)
         
     def _init_weights(self):
         # Orthogonal init
-        for m in [self.actor, self.critic, self.visual_encoder, self.history_encoder]:
+        for m in [self.actor, self.critic, self.shared_cnn, self.visual_mlp, self.history_encoder]:
             if isinstance(m, nn.Sequential) or isinstance(m, nn.Linear):
                 if isinstance(m, nn.Sequential):
                     for layer in m:
@@ -335,12 +350,25 @@ class DepthActorCritic(ActorCritic):
 
         depth = depth_all_frames
 
-        # 把一维展平的图像重新转回张量 (Batch, Channels, Height, Width)
-        cnn_in_channels = self.depth_shape[0] * self.depth_history_num
-        depth = depth.view(-1, cnn_in_channels, self.depth_shape[1], self.depth_shape[2]) # 复原乘tensor卷积层 Conv2d期望输入是 4D 张量 (N, C, H, W)
+        # 把一维展平的全部深度图帧拆分为一帧一帧的张量，送回卷积层
+        B = obs.shape[0]
+        n_frames = self.depth_history_num
+        C, H, W = self.depth_shape
         
-        # Encoder: 提取图像隐特征
-        visual_latent = self.visual_encoder(depth)
+        # 展平 -> (Batch * n_frames, Channels, Height, Width)
+        # 这样网络会将 Batch 和帧数统一视为样本量来进行平行独立的 CNN 计算
+        depth = depth.view(B * n_frames, C, H, W) 
+        
+        # Shared CNN: 利用同一套权重分别提取每一帧的隐特征
+        # 输出: (B * n_frames, per_frame_latent_dim)
+        frame_features = self.shared_cnn(depth)
+        
+        # 将 n 帧的数据重新放回 Batch 的平行维度中
+        # 输出: (Batch, n_frames * per_frame_latent_dim)
+        frame_features = frame_features.view(B, n_frames * self.per_frame_latent_dim)
+        
+        # 用 MLP 压缩出给到最终网络用于结合体感状态的 32 维特征
+        visual_latent = self.visual_mlp(frame_features)
         
         '''
         # Fusion: 将机器人自身状态与提取出的周边图像隐特征拼接，送入多层感知机融合
