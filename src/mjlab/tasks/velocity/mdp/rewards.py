@@ -39,9 +39,14 @@ def track_linear_velocity(
   command = env.command_manager.get_command(command_name)
   assert command is not None, f"Command '{command_name}' not found."
   actual = asset.data.root_link_lin_vel_b
-  xy_error = torch.sum(torch.square(command[:, :2] - actual[:, :2]), dim=1)
+    # 获取重力在机体系的投影（平地时 Z投影约等于 -1.0）
+  proj_gz = asset.data.projected_gravity_b[:, 2]
+  # tilt_cos: 平地时为1.0，倾斜（如爬楼梯抬头45度）时降低到 ~0.7
+  tilt_cos = torch.clamp(-proj_gz, min=0.7, max=1.0)
+
+  xy_error = torch.sum(torch.square(command[:, :2] * tilt_cos - actual[:, :2]), dim=1)
   z_error = torch.square(actual[:, 2])
-  lin_vel_error = xy_error + z_error
+  lin_vel_error = xy_error + 0.5 * z_error
   return torch.exp(-lin_vel_error / std**2)
 
 
