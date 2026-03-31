@@ -217,7 +217,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       heading_control_stiffness=1.0,
       debug_vis=True,
       ranges=UniformVelocityCommandCfg.Ranges(
-        lin_vel_x=(-0.5, 1.5),
+        lin_vel_x=(-0.0, 1.5),
         lin_vel_y=(-0.5, 0.5),
         ang_vel_z=(-0.5, 0.5),
         heading=(-math.pi, math.pi),
@@ -541,8 +541,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       params={
         "command_name": "twist",
         "velocity_stages": [
-          {"step": 0, "lin_vel_x": (-0.5, 1.25), "ang_vel_z": (-1.25, 1.25)},
-          {"step": 600, "lin_vel_x": (-0.2, 1.5), "ang_vel_z": (-1.25, 1.25)},
+          {"step": 0, "lin_vel_x": (0.01, 1.25), "ang_vel_z": (-1.25, 1.25)},
+          {"step": 600 * 24, "lin_vel_x": (0.01, 1.5), "ang_vel_z": (-1.25, 1.25)},
           {"step": 2200 * 24, "lin_vel_x": (-0.75, 1.5), "ang_vel_z": (-1.75, 1.75)},
           {"step": 4000 * 24, "lin_vel_x": (-1.0, 2.0)}, 
         ],

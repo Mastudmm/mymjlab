@@ -228,3 +228,7 @@ ctrl space 补全建议
 
 1修改了碰撞
 2修改了obs，删掉了机体速度在policy中，增加了速度在critic中
+
+
+
+ MUJOCO_GL=egl uv run play Mjlab-Velocity-Rough-Unitree-Go1 --agent trained --checkpoint-file logs/rsl_rl/go1_velocity/2026-03-23_00-58-11/model_2999.pt --num-envs 8 --seed 44

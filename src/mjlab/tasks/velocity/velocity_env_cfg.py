@@ -54,11 +54,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   ##
 
   actor_terms = {
-    "base_lin_vel": ObservationTermCfg(
-      func=mdp.builtin_sensor,
-      params={"sensor_name": "robot/imu_lin_vel"},
-      noise=Unoise(n_min=-0.5, n_max=0.5),
-    ),
+    # "base_lin_vel": ObservationTermCfg(
+    #   func=mdp.builtin_sensor,
+    #   params={"sensor_name": "robot/imu_lin_vel"},
+    #   noise=Unoise(n_min=-0.5, n_max=0.5),
+    # ),
     "base_ang_vel": ObservationTermCfg(
       func=mdp.builtin_sensor,
       params={"sensor_name": "robot/imu_ang_vel"},
@@ -189,7 +189,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       heading_control_stiffness=1.0,
       debug_vis=True,
       ranges=UniformVelocityCommandCfg.Ranges(
-        lin_vel_x=(-0.5, 1.5),
+        lin_vel_x=(-0.15, 1.5),
         lin_vel_y=(-0.5, 0.5),
         ang_vel_z=(-0.5, 0.5),
         heading=(-math.pi, math.pi),
@@ -484,7 +484,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
     "fell_over": TerminationTermCfg(
       func=mdp.bad_orientation,
-      params={"limit_angle": math.radians(75.0)},
+      params={"limit_angle": math.radians(67.50)},
     ),
   }
 

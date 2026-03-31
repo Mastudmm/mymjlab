@@ -80,6 +80,15 @@ def unitree_go1_rough_env_cfg(
     num_slots=1,
     history_length=4,
   )
+  head_ground_cfg = ContactSensorCfg(
+    name="head_ground_contact",
+    primary=ContactMatch(mode="geom", pattern="head_collision", entity="robot"),
+    secondary=ContactMatch(mode="body", pattern="terrain"),
+    fields=("found", "force"),
+    reduce="none",
+    num_slots=1,
+    history_length=4,
+  )
   nonfoot_ground_cfg = ContactSensorCfg(
     name="nonfoot_ground_touch",
     primary=ContactMatch(
@@ -89,7 +98,7 @@ def unitree_go1_rough_env_cfg(
       pattern=r".*_collision\d*$",
       # Except for the foot geoms.
       # Exclude feet + calves + thighs explicitly to leave body-only contacts.
-      exclude=tuple(geom_names) + tuple(calf_geom_names) + tuple(thigh_geom_names) ,
+      exclude=tuple(geom_names) + tuple(calf_geom_names) + tuple(thigh_geom_names)+ ("head_collision",) ,
     ),
     secondary=ContactMatch(mode="body", pattern="terrain"),
     fields=("found", "force"),
@@ -102,6 +111,7 @@ def unitree_go1_rough_env_cfg(
     nonfoot_ground_cfg,
     calf_ground_cfg,
     thigh_ground_cfg,
+    head_ground_cfg
   )
 
   if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
@@ -275,7 +285,7 @@ def unitree_go1_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   if play:
     twist_cmd = cfg.commands["twist"]
     assert isinstance(twist_cmd, UniformVelocityCommandCfg)
-    twist_cmd.ranges.lin_vel_x = (-1.5, 2.0)
+    twist_cmd.ranges.lin_vel_x = (-0.2, 1.0)
     twist_cmd.ranges.ang_vel_z = (-0.7, 0.7)
 
   return cfg

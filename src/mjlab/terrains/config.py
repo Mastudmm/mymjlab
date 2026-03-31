@@ -14,14 +14,14 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     "pyramid_stairs": terrain_gen.BoxPyramidStairsTerrainCfg(
       proportion=0.1,
       step_height_range=(0.0, 0.4),
-      step_width=0.3,
+      step_width_range=(0.3,0.6),
       platform_width=3.0,
       border_width=1.0,
     ),
     "pyramid_stairs_inv": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
       proportion=0.9,
-      step_height_range=(0.175,0.175), #台阶高度可以在play的时候自由修改 train的时候尽量高
-      step_width=0.25,
+      step_height_range=(0.2,0.2), #台阶高度可以在play的时候自由修改 train的时候尽量高
+      step_width_range=(0.25,0.25),
       platform_width=3.0,
       border_width=1.0,
     ),  
@@ -62,16 +62,16 @@ ALL_TERRAINS_CFG = TerrainGeneratorCfg(
   sub_terrains={
     "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.0),
     "pyramid_stairs": terrain_gen.BoxPyramidStairsTerrainCfg(
-      proportion=0.1,
+      proportion=0.0,
       step_height_range=(0.0, 0.4),
-      step_width=0.3,
+      step_width_range=(0.3,0.6),
       platform_width=3.0,
       border_width=1.0,
     ),
     "pyramid_stairs_inv": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
-      proportion=0.4,
-      step_height_range=(0.0, 0.4),
-      step_width=0.3,
+      proportion=10.5,
+      step_height_range=(0.18, 0.2),
+      step_width_range=(0.24,0.3),
       platform_width=3.0,
       border_width=1.0,
     ),
@@ -126,7 +126,7 @@ ALL_TERRAINS_CFG = TerrainGeneratorCfg(
       border_width=0.25,
     ),
     "open_stairs": terrain_gen.BoxOpenStairsTerrainCfg(
-      proportion=0.1,
+      proportion=0.0,
       step_height_range=(0.01, 0.2),
       step_width_range=(0.4, 0.8),
       platform_width=1.0,
@@ -140,7 +140,7 @@ ALL_TERRAINS_CFG = TerrainGeneratorCfg(
       border_width=0.25,
     ),
     "stepping_stones": terrain_gen.BoxSteppingStonesTerrainCfg(
-      proportion=0.15,
+      proportion=0.0,
       stone_size_range=(0.3, 0.5),
       stone_distance_range=(0.0, 0.3),
       stone_height=0.2,
@@ -162,17 +162,17 @@ ALL_TERRAINS_CFG = TerrainGeneratorCfg(
       floor_depth=2.0,
     ),
     "nested_rings": terrain_gen.BoxNestedRingsTerrainCfg(
-      proportion=0.2,
-      num_rings=7,
-      ring_width_range=(0.3, 0.6),
-      gap_range=(0.01, 0.3),
+      proportion=0.5,
+      num_rings=6,
+      ring_width_range=(0.4, 0.4),
+      gap_range=(0.25, 0.25),
       height_range=(0.01, 0.02),
-      platform_width=2.0,
+      platform_width=1.25,
       border_width=0.25,
-      floor_depth=1.0,
+      floor_depth=0.2,
     ),
     "tilted_grid": terrain_gen.BoxTiltedGridTerrainCfg(
-      proportion=0.05,
+      proportion=0.0,
       grid_width=1.0,
       tilt_range_deg=20.0,
       height_range=0.1,

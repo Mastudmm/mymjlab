@@ -44,7 +44,7 @@ def track_linear_velocity(
   # tilt_cos: 平地时为1.0，倾斜（如爬楼梯抬头45度）时降低到 ~0.7
   tilt_cos = torch.clamp(-proj_gz, min=0.7, max=1.0)
 
-  xy_error = torch.sum(torch.square(command[:, :2] * tilt_cos - actual[:, :2]), dim=1)
+  xy_error = torch.sum(torch.square(command[:, :2] * tilt_cos.unsqueeze(1) - actual[:, :2]), dim=1)
   z_error = torch.square(actual[:, 2])
   lin_vel_error = xy_error + 0.5 * z_error
   return torch.exp(-lin_vel_error / std**2)

@@ -113,12 +113,19 @@ class MjlabOnPolicyRunner(OnPolicyRunner):
       loaded_dict["actor_state_dict"] = actor_state_dict
       loaded_dict["critic_state_dict"] = critic_state_dict
 
-    # Migrate rsl-rl 4.x actor keys to 5.x distribution keys.
+    # Dynamically migrate keys based on the expected keys of the current model
     actor_sd = loaded_dict.get("actor_state_dict", {})
-    if "std" in actor_sd:
+    expected = self.alg.actor.state_dict().keys() if hasattr(self.alg, "actor") else []
+    
+    if "std" in actor_sd and "distribution.std_param" in expected:
       actor_sd["distribution.std_param"] = actor_sd.pop("std")
-    if "log_std" in actor_sd:
+    elif "distribution.std_param" in actor_sd and "std" in expected:
+      actor_sd["std"] = actor_sd.pop("distribution.std_param")
+      
+    if "log_std" in actor_sd and "distribution.log_std_param" in expected:
       actor_sd["distribution.log_std_param"] = actor_sd.pop("log_std")
+    elif "distribution.log_std_param" in actor_sd and "log_std" in expected:
+      actor_sd["log_std"] = actor_sd.pop("distribution.log_std_param")
 
     load_iteration = self.alg.load(loaded_dict, load_cfg, strict)
     if load_iteration:
