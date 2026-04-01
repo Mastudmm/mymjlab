@@ -15,7 +15,7 @@ render_robots.py
 benchmark_results/
 Mastreadme.md
 cfgexplanation.md
-
+chat/
 
 # Documentation outputs.
 **/_build/*

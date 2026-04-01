@@ -1808,7 +1808,7 @@ requires-dist = [
     { name = "mujoco-warp", git = "https://gitcode.com/gh_mirrors/mu/mujoco_warp?rev=ebdadbf2df521dd5b47463436a8f4b96e6c34977" },
     { name = "onnxscript", specifier = ">=0.5.4" },
     { name = "prettytable" },
-    { name = "rsl-rl-lib", specifier = "==4.0.1" },
+    { name = "rsl-rl-lib", specifier = "==5.0.1" },
     { name = "tensorboard", specifier = ">=2.20.0" },
     { name = "tensordict" },
     { name = "torch", specifier = ">=2.7.0" },
@@ -3279,7 +3279,7 @@ wheels = [
 
 [[package]]
 name = "rsl-rl-lib"
-version = "4.0.1"
+version = "5.0.1"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 dependencies = [
     { name = "gitpython" },
@@ -3293,9 +3293,9 @@ dependencies = [
     { name = "torch", version = "2.10.0+cu128", source = { registry = "https://mirrors.nju.edu.cn/pytorch/whl/cu128/" }, marker = "(sys_platform != 'darwin' and extra == 'extra-5-mjlab-cu128') or (extra == 'extra-5-mjlab-cpu' and extra == 'extra-5-mjlab-cu128')" },
     { name = "torchvision" },
 ]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/aa/5b/5bea7c110c389f9336ebe5ad7cd9abbcbbb64d7de0d0f50c2af8fa2ce321/rsl_rl_lib-4.0.1.tar.gz", hash = "sha256:76a194e4834946716cc0e44dcd2be8b2254ac969c2452b145cd268c9cc908bf7", size = 41069, upload-time = "2026-02-09T09:15:10.927Z" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/d5/23/dae404688e571e73662b7754ab2a8bddcc48f625c338b7f55576ad528653/rsl_rl_lib-5.0.1.tar.gz", hash = "sha256:b6e1fce8f4481c6118d53c7b03b80c8070d0a1edd3df3efbec5e5e6ff7c92132", size = 58623, upload-time = "2026-03-04T08:19:49.671Z" }
 wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/31/db/8fa8832e6e02e5c4dc8321eb1596d5968b86a214fca03af361c94b8b045f/rsl_rl_lib-4.0.1-py3-none-any.whl", hash = "sha256:e840c8587acaad4ba3ab34fc7b07a203b34dd44a831ea9dc5de1769bfc14b148", size = 53803, upload-time = "2026-02-09T09:15:09.705Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/ad/25/293a8ffd929d40accab30057b962084601133bd8a6779c156c2f58eb93bc/rsl_rl_lib-5.0.1-py3-none-any.whl", hash = "sha256:2f71a4f753537faf7826d0b74815160e37c409b39ab80a4581524b7ef7bd8539", size = 84202, upload-time = "2026-03-04T08:19:48.044Z" },
 ]
 
 [[package]]
@@ -4635,10 +4635,10 @@ dependencies = [
     { name = "numpy", version = "2.4.2", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-5-mjlab-cpu' and extra == 'extra-5-mjlab-cu128')" },
 ]
 wheels = [
-    { url = "https://pypi.nvidia.cn/warp-lang/warp_lang-1.13.0.dev20260305-py3-none-macosx_11_0_arm64.whl", hash = "sha256:ab6b4dd26c353564926f68977d10d832910a04f11fdab5e6f5f1a556fe4397a1" },
-    { url = "https://pypi.nvidia.cn/warp-lang/warp_lang-1.13.0.dev20260305-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:4ed44b6d4111ce8710d2e3f5731e6b8d2d103b60b0a21ee1635a1c938c97825e" },
-    { url = "https://pypi.nvidia.cn/warp-lang/warp_lang-1.13.0.dev20260305-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:12e7a02704af3c4a67c714c2aca41dd11c889f278370aef2a4d5e982e42128fa" },
-    { url = "https://pypi.nvidia.cn/warp-lang/warp_lang-1.13.0.dev20260305-py3-none-win_amd64.whl", hash = "sha256:ce5a7f2704f87a4a354c7d63fb9075fb6a26455a7cb09f4ec37a92a3e44af3db" },
+    { url = "https://pypi.nvidia.com/warp-lang/warp_lang-1.13.0.dev20260305-py3-none-macosx_11_0_arm64.whl", hash = "sha256:ab6b4dd26c353564926f68977d10d832910a04f11fdab5e6f5f1a556fe4397a1" },
+    { url = "https://pypi.nvidia.com/warp-lang/warp_lang-1.13.0.dev20260305-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:4ed44b6d4111ce8710d2e3f5731e6b8d2d103b60b0a21ee1635a1c938c97825e" },
+    { url = "https://pypi.nvidia.com/warp-lang/warp_lang-1.13.0.dev20260305-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:12e7a02704af3c4a67c714c2aca41dd11c889f278370aef2a4d5e982e42128fa" },
+    { url = "https://pypi.nvidia.com/warp-lang/warp_lang-1.13.0.dev20260305-py3-none-win_amd64.whl", hash = "sha256:ce5a7f2704f87a4a354c7d63fb9075fb6a26455a7cb09f4ec37a92a3e44af3db" },
 ]
 
 [[package]]
