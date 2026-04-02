@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 
+from mjlab.asset_zoo.robots.unitree_go1.go1_constants import GO1_AMP_JOINT_POS_OFFSET
 from mjlab.rl import (
   RslRlModelCfg,
   RslRlOnPolicyRunnerCfg,
@@ -32,6 +33,8 @@ class RslRlAmpOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
   amp_preflight_strict: bool = True
   amp_preflight_max_files: int = 8
   amp_expected_obs_dim: int = 36
+  amp_joint_pos_mode: str = "absolute"
+  amp_joint_pos_offset: list[float] = field(default_factory=lambda: list(GO1_AMP_JOINT_POS_OFFSET))
 
 
 def unitree_go1_amp_runner_cfg() -> RslRlAmpOnPolicyRunnerCfg:

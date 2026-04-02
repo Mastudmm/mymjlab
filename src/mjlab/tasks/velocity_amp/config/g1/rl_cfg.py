@@ -31,6 +31,8 @@ class RslRlAmpOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
   amp_preflight_strict: bool = True
   amp_preflight_max_files: int = 8
   amp_expected_obs_dim: int = 36
+  amp_joint_pos_mode: str = "relative"
+  amp_joint_pos_offset: list[float] | None = None
 
 
 def unitree_g1_amp_runner_cfg() -> RslRlAmpOnPolicyRunnerCfg:

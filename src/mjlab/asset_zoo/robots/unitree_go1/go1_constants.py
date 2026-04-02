@@ -165,6 +165,28 @@ for a in GO1_ARTICULATION.actuators:
     GO1_ACTION_SCALE[n] = 0.25 * e / s
 
 
+# Joint position default offset in MuJoCo joint order used by AMP observations:
+# [FR_hip, FR_thigh, FR_calf, FL_hip, FL_thigh, FL_calf,
+#  RR_hip, RR_thigh, RR_calf, RL_hip, RL_thigh, RL_calf]
+#
+# This is useful when expert trajectories provide absolute joint angles (e.g. from URDF/Gazebo)
+# and need conversion to the relative joint representation used by AMP obs.
+GO1_AMP_JOINT_POS_OFFSET: tuple[float, ...] = (
+  0.1,
+  0.9,
+  -1.8,
+  -0.1,
+  0.9,
+  -1.8,
+  0.1,
+  0.9,
+  -1.8,
+  -0.1,
+  0.9,
+  -1.8,
+)
+
+
 if __name__ == "__main__":
   import mujoco.viewer as viewer
 
