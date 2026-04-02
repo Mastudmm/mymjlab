@@ -7,20 +7,18 @@ from mjlab.rl import (
   RslRlPpoAlgorithmCfg,
 )
 
-@dataclass
-class ActorRslRlModelCfg(RslRlModelCfg):
-    stochastic: bool = True
-    init_noise_std: float = 1.0
-    noise_std_type: str = "scalar"
-
 def unitree_g1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   """Create RL runner configuration for Unitree G1 velocity task."""
   return RslRlOnPolicyRunnerCfg(
-    actor=ActorRslRlModelCfg(
+    actor=RslRlModelCfg(
       hidden_dims=(512, 256, 128),
       activation="elu",
       obs_normalization=True,
-      distribution_cfg=None,
+      distribution_cfg={
+        "class_name": "GaussianDistribution",
+        "init_std": 1.0,
+        "std_type": "scalar",
+      },
     ),
     critic=RslRlModelCfg(
       hidden_dims=(512, 256, 128),

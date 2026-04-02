@@ -130,8 +130,11 @@ class DepthActorCritic(ActorCritic):
             "output_dim": num_actions,
             "hidden_dims": actor_hidden_dims,  # Just to pass validation
             "activation": activation,
-            "stochastic": True,
-            "init_noise_std": init_noise_std,
+            "distribution_cfg": {
+                "class_name": "GaussianDistribution",
+                "init_std": init_noise_std,
+                "std_type": "scalar",
+            },
         }
         
         # Filter kwargs for base class

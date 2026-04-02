@@ -124,6 +124,7 @@ url = "https://py.mujoco.org"
 explicit = true
 
 [tool.uv.sources]
+rsl-rl-lib = { path = "src/rsl_rl", editable = true }
 warp-lang = { index = "nvidia", marker = "sys_platform != 'darwin'" }
 torch = [
   { index = "pytorch-cu128", extra = "cu128", marker = "sys_platform != 'darwin'" },
