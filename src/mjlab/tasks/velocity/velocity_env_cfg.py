@@ -183,6 +183,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       resampling_time_range=(15.0, 18.0),
       rel_standing_envs=0.1,
       rel_heading_envs=1.0, #给一个期望的朝向角（heading），不要求前进/横移速度；通过朝向控制把机体转到目标朝向
+      rel_cardinal_heading_envs=0.5, # 50% 从 0/90/180/270 度离散采样，其余保持均匀采样
       rel_pure_x_envs=0.8, # 10% 的概率只产生 X 方向速度 (vy=0)
       rel_pure_y_envs=0.1, # 10% 的概率只产生 Y 方向速度 (vx=0)
       heading_command=True,
