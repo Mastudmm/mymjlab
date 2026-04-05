@@ -231,4 +231,4 @@ ctrl space 补全建议
 
 
 
- MUJOCO_GL=egl uv run play Mjlab-Velocity-Rough-Unitree-Go1 --agent trained --checkpoint-file logs/rsl_rl/go1_velocity/2026-03-23_00-58-11/model_2999.pt --num-envs 8 --seed 44
+ MUJOCO_GL=egl uv run play Mjlab-VelocityAmp-Rough-Unitree-Go1 --agent trained --checkpoint-file ./src/mjlab/scripts/logs/rsl_rl/go1_velocity_amp/2026-03-23_00-58-11/model_2999.pt --num-envs 8 --seed 44
