@@ -421,6 +421,18 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot"),
       },
     ),
+    "feet_swing_height_variance": RewardTermCfg(
+      func=mdp.feet_swing_height_variance_penalty,
+      weight=-0.01, # Penalty for asymmetric swing heights (anti-limp).
+      params={
+        "sensor_name": "feet_ground_contact",
+        "command_name": "twist",
+        "command_threshold": 0.015,
+        "min_air_feet": 2,
+        "max_height_abs": 0.35,
+        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+      },
+    ),
     "action_mirror": RewardTermCfg(
       func=mdp.action_mirror,
       weight=-0.2, # Penalize asymmetry in action magnitude (Trot Diagonal Lock)

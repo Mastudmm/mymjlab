@@ -369,10 +369,10 @@ class feet_swing_height:
     cost = torch.sum(torch.square(error) * penalty_weight * first_contact.float(), dim=1)
     cost *= is_moving.float()
 
-    # Upright Mask: Don't punish if fallen
-    proj_grav_z = asset.data.projected_gravity_b[:, 2]
-    upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
-    cost *= upright_scale
+    # # Upright Mask: Don't punish if fallen
+    # proj_grav_z = asset.data.projected_gravity_b[:, 2]
+    # upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
+    # cost *= upright_scale
 
     # Logging
     num_landings = torch.sum(first_contact.float())
@@ -736,9 +736,9 @@ def feet_clearance_body(
       cost *= is_moving.float()
 
   # 4. Upright mask: do not penalize if the robot has fallen
-  proj_grav_z = asset.data.projected_gravity_b[:, 2]
-  upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
-  cost *= upright_scale
+  # proj_grav_z = asset.data.projected_gravity_b[:, 2]
+  # upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
+  # cost *= upright_scale
   
   return cost
 
@@ -1053,16 +1053,75 @@ def feet_air_time_variance_penalty(
   total_variance = torch.var(torch.clamp(last_air_time, max=0.5), dim=1) + \
                    torch.var(torch.clamp(last_contact_time, max=0.5), dim=1)
   
-  # Upright mask (using asset_cfg to find robot)
-  try:
-    asset: Entity = env.scene[asset_cfg.name]
-    proj_grav_z = asset.data.projected_gravity_b[:, 2]
-    # Scale: 1.0 when upright (-1), goes to 0 when tilted > ~45 deg
-    upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
-  except KeyError:
-    upright_scale = torch.ones_like(total_variance)
+  # NOTE:
+  # Do NOT apply upright scaling here. This term is used to suppress asymmetry,
+  # and soft scaling can be exploited by intentionally leaning to reduce penalty.
+  # Fall handling is delegated to termination.
+  return total_variance
 
-  return total_variance * upright_scale 
+
+def feet_swing_height_variance_penalty(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  command_name: str | None = None,
+  command_threshold: float = 0.05,
+  min_air_feet: int = 2,
+  max_height_abs: float = 0.35,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize variance of swing height among currently airborne feet.
+
+  该函数与 ``feet_air_time_variance_penalty`` 职责分离：
+  - air-time variance: 只管时间不一致；
+  - swing-height variance: 只管抬腿高度不一致（防跛脚）。
+  """
+  contact_sensor: ContactSensor = env.scene[sensor_name]
+  asset: Entity = env.scene[asset_cfg.name]
+
+  found = contact_sensor.data.found
+  if found is None:
+    return torch.zeros(env.num_envs, device=env.device)
+  if found.dim() == 3:
+    found = found.squeeze(-1)
+
+  in_air = ~(found > 0.5)
+  in_air_f = in_air.float()
+
+  # Body-frame foot height magnitude.
+  foot_pos_w = asset.data.site_pos_w[:, asset_cfg.site_ids, :]
+  root_pos_w = asset.data.root_link_pos_w
+  root_quat_w = asset.data.root_link_quat_w
+
+  batch, nfeet, _ = foot_pos_w.shape
+  rel_pos_w = foot_pos_w - root_pos_w.unsqueeze(1)
+  rel_pos_w_flat = rel_pos_w.reshape(-1, 3)
+  root_quat_expanded = root_quat_w.repeat_interleave(nfeet, dim=0)
+  foot_pos_b_flat = quat_apply_inverse(root_quat_expanded, rel_pos_w_flat)
+  foot_pos_b = foot_pos_b_flat.reshape(batch, nfeet, 3)
+  swing_height = torch.clamp(torch.abs(foot_pos_b[..., 2]), max=max_height_abs)
+
+  in_air_count = torch.sum(in_air_f, dim=1)
+  mean_height = torch.sum(swing_height * in_air_f, dim=1) / torch.clamp(in_air_count, min=1.0)
+  height_var = torch.sum(torch.square(swing_height - mean_height.unsqueeze(1)) * in_air_f, dim=1) / torch.clamp(
+    in_air_count, min=1.0
+  )
+
+  total_variance = torch.where(
+    in_air_count >= float(min_air_feet),
+    height_var,
+    torch.zeros_like(height_var),
+  )
+
+  if command_name is not None:
+    command = env.command_manager.get_command(command_name)
+    if command is not None:
+      linear_norm = torch.norm(command[:, :2], dim=1)
+      angular_norm = torch.abs(command[:, 2])
+      is_moving = (linear_norm + angular_norm) > command_threshold
+      total_variance *= is_moving.float()
+
+  env.extras["log"]["Metrics/swing_height_var_mean"] = torch.mean(total_variance)
+  return total_variance
 
 
 class progress_reward:
