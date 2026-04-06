@@ -1060,68 +1060,115 @@ def feet_air_time_variance_penalty(
   return total_variance
 
 
-def feet_swing_height_variance_penalty(
-  env: ManagerBasedRlEnv,
-  sensor_name: str,
-  command_name: str | None = None,
-  command_threshold: float = 0.05,
-  min_air_feet: int = 2,
-  max_height_abs: float = 0.35,
-  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-) -> torch.Tensor:
-  """Penalize variance of swing height among currently airborne feet.
+class feet_swing_height_variance_penalty:
+  """Penalize swing-height asymmetry with phase-decoupled temporal tracking.
 
-  该函数与 ``feet_air_time_variance_penalty`` 职责分离：
-  - air-time variance: 只管时间不一致；
-  - swing-height variance: 只管抬腿高度不一致（防跛脚）。
+  设计要点：
+  1) 摆动高度是时间序列而非瞬时值，故按“完整摆动周期”统计峰值；
+  2) 使用落地事件更新每条腿的摆动峰值 EMA，支持 trot 对角腿不同步摆动；
+  3) 在 EMA 空间上做方差惩罚，约束跨时间的一致性，而非同一时刻硬对齐。
   """
-  contact_sensor: ContactSensor = env.scene[sensor_name]
-  asset: Entity = env.scene[asset_cfg.name]
 
-  found = contact_sensor.data.found
-  if found is None:
-    return torch.zeros(env.num_envs, device=env.device)
-  if found.dim() == 3:
-    found = found.squeeze(-1)
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self.device = env.device
+    self.step_dt = env.step_dt
 
-  in_air = ~(found > 0.5)
-  in_air_f = in_air.float()
+    asset_cfg: SceneEntityCfg = cfg.params["asset_cfg"]
+    site_names = asset_cfg.site_names
+    if site_names is None:
+      raise ValueError("feet_swing_height_variance_penalty requires asset_cfg.site_names.")
 
-  # Body-frame foot height magnitude.
-  foot_pos_w = asset.data.site_pos_w[:, asset_cfg.site_ids, :]
-  root_pos_w = asset.data.root_link_pos_w
-  root_quat_w = asset.data.root_link_quat_w
+    if isinstance(site_names, str):
+      site_names = [site_names]
+    else:
+      site_names = list(site_names)
 
-  batch, nfeet, _ = foot_pos_w.shape
-  rel_pos_w = foot_pos_w - root_pos_w.unsqueeze(1)
-  rel_pos_w_flat = rel_pos_w.reshape(-1, 3)
-  root_quat_expanded = root_quat_w.repeat_interleave(nfeet, dim=0)
-  foot_pos_b_flat = quat_apply_inverse(root_quat_expanded, rel_pos_w_flat)
-  foot_pos_b = foot_pos_b_flat.reshape(batch, nfeet, 3)
-  swing_height = torch.clamp(torch.abs(foot_pos_b[..., 2]), max=max_height_abs)
+    self.n_feet = len(site_names)
+    self.liftoff_heights = torch.zeros((env.num_envs, self.n_feet), device=self.device, dtype=torch.float32)
+    self.peak_heights = torch.zeros((env.num_envs, self.n_feet), device=self.device, dtype=torch.float32)
+    self.ema_peak_heights = torch.zeros((env.num_envs, self.n_feet), device=self.device, dtype=torch.float32)
 
-  in_air_count = torch.sum(in_air_f, dim=1)
-  mean_height = torch.sum(swing_height * in_air_f, dim=1) / torch.clamp(in_air_count, min=1.0)
-  height_var = torch.sum(torch.square(swing_height - mean_height.unsqueeze(1)) * in_air_f, dim=1) / torch.clamp(
-    in_air_count, min=1.0
-  )
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    command_name: str | None = None,
+    command_threshold: float = 0.05,
+    min_air_feet: int = 2,
+    max_height_abs: float = 0.35,
+    ema_alpha: float = 0.2,
+    min_updates_required: int = 2,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ) -> torch.Tensor:
+    contact_sensor: ContactSensor = env.scene[sensor_name]
+    asset: Entity = env.scene[asset_cfg.name]
 
-  total_variance = torch.where(
-    in_air_count >= float(min_air_feet),
-    height_var,
-    torch.zeros_like(height_var),
-  )
+    found = contact_sensor.data.found
+    if found is None:
+      return torch.zeros(env.num_envs, device=env.device)
+    if found.dim() == 3:
+      found = found.squeeze(-1)
 
-  if command_name is not None:
-    command = env.command_manager.get_command(command_name)
-    if command is not None:
-      linear_norm = torch.norm(command[:, :2], dim=1)
-      angular_norm = torch.abs(command[:, 2])
-      is_moving = (linear_norm + angular_norm) > command_threshold
-      total_variance *= is_moving.float()
+    in_contact = found > 0.5
+    in_air = ~in_contact
 
-  env.extras["log"]["Metrics/swing_height_var_mean"] = torch.mean(total_variance)
-  return total_variance
+    # Body-frame foot z
+    foot_pos_w = asset.data.site_pos_w[:, asset_cfg.site_ids, :]
+    root_pos_w = asset.data.root_link_pos_w
+    root_quat_w = asset.data.root_link_quat_w
+
+    batch, nfeet, _ = foot_pos_w.shape
+    rel_pos_w = foot_pos_w - root_pos_w.unsqueeze(1)
+    rel_pos_w_flat = rel_pos_w.reshape(-1, 3)
+    root_quat_expanded = root_quat_w.repeat_interleave(nfeet, dim=0)
+    foot_pos_b_flat = quat_apply_inverse(root_quat_expanded, rel_pos_w_flat)
+    foot_pos_b = foot_pos_b_flat.reshape(batch, nfeet, 3)
+    foot_z_body = foot_pos_b[..., 2]
+
+    # Liftoff reference and running swing peak
+    self.liftoff_heights = torch.where(in_contact, foot_z_body, self.liftoff_heights)
+    swing_height = torch.clamp(torch.abs(foot_z_body - self.liftoff_heights), max=max_height_abs)
+    self.peak_heights = torch.where(in_air, torch.maximum(self.peak_heights, swing_height), self.peak_heights)
+
+    # Update EMA only at landing (phase-decoupled across legs)
+    first_contact = contact_sensor.compute_first_contact(dt=self.step_dt)
+    landed_peak = torch.where(first_contact, self.peak_heights, torch.zeros_like(self.peak_heights))
+
+    alpha = float(ema_alpha)
+    if not (0.0 < alpha <= 1.0):
+      raise ValueError("ema_alpha must be in (0, 1].")
+
+    self.ema_peak_heights = torch.where(
+      first_contact,
+      (1.0 - alpha) * self.ema_peak_heights + alpha * landed_peak,
+      self.ema_peak_heights,
+    )
+
+    # Reset local peak after landing
+    self.peak_heights = torch.where(first_contact, torch.zeros_like(self.peak_heights), self.peak_heights)
+
+    # Variance in EMA space (across legs), gated by enough updates this step
+    update_count = torch.sum(first_contact.float(), dim=1)
+    enough_updates = update_count >= float(min_updates_required)
+    ema_var = torch.var(self.ema_peak_heights, dim=1, unbiased=False)
+
+    # Additional guard: if当前在空中腿太少，不施加本项
+    in_air_count = torch.sum(in_air.float(), dim=1)
+    enough_air = in_air_count >= float(min_air_feet)
+
+    total_variance = torch.where(enough_updates & enough_air, ema_var, torch.zeros_like(ema_var))
+
+    if command_name is not None:
+      command = env.command_manager.get_command(command_name)
+      if command is not None:
+        linear_norm = torch.norm(command[:, :2], dim=1)
+        angular_norm = torch.abs(command[:, 2])
+        is_moving = (linear_norm + angular_norm) > command_threshold
+        total_variance *= is_moving.float()
+
+    env.extras["log"]["Metrics/swing_height_var_mean"] = torch.mean(total_variance)
+    env.extras["log"]["Metrics/swing_height_ema_mean"] = torch.mean(self.ema_peak_heights)
+    return total_variance
 
 
 class progress_reward:

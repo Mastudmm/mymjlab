@@ -430,6 +430,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "command_threshold": 0.015,
         "min_air_feet": 2,
         "max_height_abs": 0.35,
+        "ema_alpha": 0.2,
+        "min_updates_required": 1,
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
       },
     ),
