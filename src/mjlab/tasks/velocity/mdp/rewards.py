@@ -369,10 +369,10 @@ class feet_swing_height:
     cost = torch.sum(torch.square(error) * penalty_weight * first_contact.float(), dim=1)
     cost *= is_moving.float()
 
-    # Upright Mask: Don't punish if fallen
-    proj_grav_z = asset.data.projected_gravity_b[:, 2]
-    upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
-    cost *= upright_scale
+    # # Upright Mask: Don't punish if fallen
+    # proj_grav_z = asset.data.projected_gravity_b[:, 2]
+    # upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
+    # cost *= upright_scale
 
     # Logging
     num_landings = torch.sum(first_contact.float())
@@ -736,9 +736,9 @@ def feet_clearance_body(
       cost *= is_moving.float()
 
   # 4. Upright mask: do not penalize if the robot has fallen
-  proj_grav_z = asset.data.projected_gravity_b[:, 2]
-  upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
-  cost *= upright_scale
+  # proj_grav_z = asset.data.projected_gravity_b[:, 2]
+  # upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
+  # cost *= upright_scale
   
   return cost
 
@@ -1053,16 +1053,122 @@ def feet_air_time_variance_penalty(
   total_variance = torch.var(torch.clamp(last_air_time, max=0.5), dim=1) + \
                    torch.var(torch.clamp(last_contact_time, max=0.5), dim=1)
   
-  # Upright mask (using asset_cfg to find robot)
-  try:
-    asset: Entity = env.scene[asset_cfg.name]
-    proj_grav_z = asset.data.projected_gravity_b[:, 2]
-    # Scale: 1.0 when upright (-1), goes to 0 when tilted > ~45 deg
-    upright_scale = torch.clamp(-proj_grav_z, min=0.0, max=0.7) / 0.7
-  except KeyError:
-    upright_scale = torch.ones_like(total_variance)
+  # NOTE:
+  # Do NOT apply upright scaling here. This term is used to suppress asymmetry,
+  # and soft scaling can be exploited by intentionally leaning to reduce penalty.
+  # Fall handling is delegated to termination.
+  return total_variance
 
-  return total_variance * upright_scale 
+
+class feet_swing_height_variance_penalty:
+  """Penalize swing-height asymmetry with phase-decoupled temporal tracking.
+
+  设计要点：
+  1) 摆动高度是时间序列而非瞬时值，故按“完整摆动周期”统计峰值；
+  2) 使用落地事件更新每条腿的摆动峰值 EMA，支持 trot 对角腿不同步摆动；
+  3) 在 EMA 空间上做方差惩罚，约束跨时间的一致性，而非同一时刻硬对齐。
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self.device = env.device
+    self.step_dt = env.step_dt
+
+    asset_cfg: SceneEntityCfg = cfg.params["asset_cfg"]
+    site_names = asset_cfg.site_names
+    if site_names is None:
+      raise ValueError("feet_swing_height_variance_penalty requires asset_cfg.site_names.")
+
+    if isinstance(site_names, str):
+      site_names = [site_names]
+    else:
+      site_names = list(site_names)
+
+    self.n_feet = len(site_names)
+    self.liftoff_heights = torch.zeros((env.num_envs, self.n_feet), device=self.device, dtype=torch.float32)
+    self.peak_heights = torch.zeros((env.num_envs, self.n_feet), device=self.device, dtype=torch.float32)
+    self.ema_peak_heights = torch.zeros((env.num_envs, self.n_feet), device=self.device, dtype=torch.float32)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    command_name: str | None = None,
+    command_threshold: float = 0.05,
+    min_air_feet: int = 2,
+    max_height_abs: float = 0.35,
+    ema_alpha: float = 0.2,
+    min_updates_required: int = 2,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ) -> torch.Tensor:
+    contact_sensor: ContactSensor = env.scene[sensor_name]
+    asset: Entity = env.scene[asset_cfg.name]
+
+    found = contact_sensor.data.found
+    if found is None:
+      return torch.zeros(env.num_envs, device=env.device)
+    if found.dim() == 3:
+      found = found.squeeze(-1)
+
+    in_contact = found > 0.5
+    in_air = ~in_contact
+
+    # Body-frame foot z
+    foot_pos_w = asset.data.site_pos_w[:, asset_cfg.site_ids, :]
+    root_pos_w = asset.data.root_link_pos_w
+    root_quat_w = asset.data.root_link_quat_w
+
+    batch, nfeet, _ = foot_pos_w.shape
+    rel_pos_w = foot_pos_w - root_pos_w.unsqueeze(1)
+    rel_pos_w_flat = rel_pos_w.reshape(-1, 3)
+    root_quat_expanded = root_quat_w.repeat_interleave(nfeet, dim=0)
+    foot_pos_b_flat = quat_apply_inverse(root_quat_expanded, rel_pos_w_flat)
+    foot_pos_b = foot_pos_b_flat.reshape(batch, nfeet, 3)
+    foot_z_body = foot_pos_b[..., 2]
+
+    # Liftoff reference and running swing peak
+    self.liftoff_heights = torch.where(in_contact, foot_z_body, self.liftoff_heights)
+    swing_height = torch.clamp(torch.abs(foot_z_body - self.liftoff_heights), max=max_height_abs)
+    self.peak_heights = torch.where(in_air, torch.maximum(self.peak_heights, swing_height), self.peak_heights)
+
+    # Update EMA only at landing (phase-decoupled across legs)
+    first_contact = contact_sensor.compute_first_contact(dt=self.step_dt)
+    landed_peak = torch.where(first_contact, self.peak_heights, torch.zeros_like(self.peak_heights))
+
+    alpha = float(ema_alpha)
+    if not (0.0 < alpha <= 1.0):
+      raise ValueError("ema_alpha must be in (0, 1].")
+
+    self.ema_peak_heights = torch.where(
+      first_contact,
+      (1.0 - alpha) * self.ema_peak_heights + alpha * landed_peak,
+      self.ema_peak_heights,
+    )
+
+    # Reset local peak after landing
+    self.peak_heights = torch.where(first_contact, torch.zeros_like(self.peak_heights), self.peak_heights)
+
+    # Variance in EMA space (across legs), gated by enough updates this step
+    update_count = torch.sum(first_contact.float(), dim=1)
+    enough_updates = update_count >= float(min_updates_required)
+    ema_var = torch.var(self.ema_peak_heights, dim=1, unbiased=False)
+
+    # Additional guard: if当前在空中腿太少，不施加本项
+    in_air_count = torch.sum(in_air.float(), dim=1)
+    enough_air = in_air_count >= float(min_air_feet)
+
+    total_variance = torch.where(enough_updates & enough_air, ema_var, torch.zeros_like(ema_var))
+
+    if command_name is not None:
+      command = env.command_manager.get_command(command_name)
+      if command is not None:
+        linear_norm = torch.norm(command[:, :2], dim=1)
+        angular_norm = torch.abs(command[:, 2])
+        is_moving = (linear_norm + angular_norm) > command_threshold
+        total_variance *= is_moving.float()
+
+    env.extras["log"]["Metrics/swing_height_var_mean"] = torch.mean(total_variance)
+    env.extras["log"]["Metrics/swing_height_ema_mean"] = torch.mean(self.ema_peak_heights)
+    return total_variance
 
 
 class progress_reward:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import math
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -97,6 +98,20 @@ class UniformVelocityCommand(CommandTerm):
       assert self.cfg.ranges.heading is not None
       # 在重采样时采样目标朝向（世界坐标系）
       self.heading_target[env_ids] = r.uniform_(*self.cfg.ranges.heading)
+      # 以概率 rel_cardinal_heading_envs 将部分 env 的 heading_target
+      # 覆盖为离散主方向（0/90/180/270 度）
+      if self.cfg.rel_cardinal_heading_envs > 0.0:
+        cardinal_mask = torch.rand(len(env_ids), device=self.device) < self.cfg.rel_cardinal_heading_envs
+        #掩码，确定谁被抽到 TorF
+        num_cardinal = int(cardinal_mask.sum().item())
+        if num_cardinal > 0:
+          cardinal_values = torch.tensor(
+            self.cfg.cardinal_heading_values,
+            dtype=self.heading_target.dtype,
+            device=self.device,
+          )
+          choice_idx = torch.randint(0, cardinal_values.numel(), (num_cardinal,), device=self.device)
+          self.heading_target[env_ids[cardinal_mask]] = cardinal_values[choice_idx]
       # 以概率 rel_heading_envs 决定每个 env 是否为 heading 环境
       self.is_heading_env[env_ids] = r.uniform_(0.0, 1.0) <= self.cfg.rel_heading_envs
     # 以概率 rel_standing_envs 决定是否将该 env 设为站立（命令置零）
@@ -296,6 +311,11 @@ class UniformVelocityCommandCfg(CommandTermCfg):
   heading_control_stiffness: float = 1.0
   rel_standing_envs: float = 0.0
   rel_heading_envs: float = 1.0
+  # heading_command 开启时，heading_target 采样中离散主方向（cardinal）所占概率
+  # 例如 0.5 表示 50% 采样 cardinal_heading_values，50% 按 ranges.heading 均匀采样。
+  rel_cardinal_heading_envs: float = 0.0
+  # 默认主方向：0°, 90°, 180°, 270°（弧度）
+  cardinal_heading_values: tuple[float, ...] = (0.0, math.pi / 2.0, math.pi, -math.pi / 2.0)
   rel_pure_x_envs: float = 0.0
   rel_pure_y_envs: float = 0.0
   init_velocity_prob: float = 0.0
@@ -325,3 +345,7 @@ class UniformVelocityCommandCfg(CommandTermCfg):
         "The velocity command has heading commands active (heading_command=True) but "
         "the `ranges.heading` parameter is set to None."
       )
+    if not (0.0 <= self.rel_cardinal_heading_envs <= 1.0):
+      raise ValueError("rel_cardinal_heading_envs must be in [0, 1].")
+    if len(self.cardinal_heading_values) == 0:
+      raise ValueError("cardinal_heading_values must not be empty.")

@@ -78,6 +78,83 @@ class BoxPyramidStairsTerrainCfg(SubTerrainCfg):
   """Side length of the flat square platform at the top of the staircase, in meters."""
   holes: bool = False
   """If True, steps form a cross pattern with empty gaps in the corners."""
+  stair_lip_enabled: bool = True
+  """Whether to add a protruding rectangular lip on each step edge."""
+  stair_lip_outward: float = 0.015
+  """Lip extension outward from step edge (meters)."""
+  stair_lip_downward: float = 0.035
+  """Lip extension downward from step top plane (meters)."""
+
+  def _append_step_lips(
+    self,
+    body,
+    boxes,
+    box_colors,
+    rgba: tuple[float, float, float, float],
+    terrain_center: tuple[float, float, float] | list[float],
+    terrain_size: tuple[float, float],
+    step_index: int,
+    step_width: float,
+    top_span_x: float,
+    side_span_y: float,
+    step_top_z: float,
+    protrude_to_center: bool = False,
+  ) -> None:
+    """Add 4 protruding rectangular lips on the current stair ring edges.
+
+    Geometry definition (as requested):
+    - outward extension: 1.5 cm (configurable)
+    - downward extension: 3.5 cm (configurable)
+    """
+    if not self.stair_lip_enabled or self.holes:
+      return
+
+    lip_out = float(np.maximum(1e-6, self.stair_lip_outward))
+    lip_down = float(np.maximum(1e-6, self.stair_lip_downward))
+
+    # Corner handling:
+    # - outward mode: extend top/bottom strips by lip_out to fill corner cubes
+    #   (no corner hole), keep left/right full span.
+    # - inward mode: keep top/bottom at inner span, trim left/right by lip_out
+    #   to remove corner overlap.
+    if protrude_to_center:
+      half_x = float(np.maximum(1e-6, top_span_x / 2.0))
+      half_y = float(np.maximum(1e-6, side_span_y / 2.0 - lip_out))
+    else:
+      half_x = float(np.maximum(1e-6, top_span_x / 2.0 + lip_out))
+      half_y = float(np.maximum(1e-6, side_span_y / 2.0))
+    lip_half_out = lip_out / 2.0
+    lip_half_down = lip_down / 2.0
+
+    # Riser top edge for current step ring (inner edge of ring k).
+    edge_offset = (step_index + 1) * step_width
+    top_y = terrain_center[1] + terrain_size[1] / 2.0 - edge_offset
+    bottom_y = terrain_center[1] - terrain_size[1] / 2.0 + edge_offset
+    right_x = terrain_center[0] + terrain_size[0] / 2.0 - edge_offset
+    left_x = terrain_center[0] - terrain_size[0] / 2.0 + edge_offset
+
+    if protrude_to_center:
+      top_dir, bottom_dir, right_dir, left_dir = -1.0, +1.0, -1.0, +1.0
+    else:
+      top_dir, bottom_dir, right_dir, left_dir = +1.0, -1.0, +1.0, -1.0
+
+    lip_z = step_top_z - lip_half_down
+
+    lip_specs = [
+      ((terrain_center[0], top_y + top_dir * lip_half_out, lip_z), (half_x, lip_half_out, lip_half_down)),
+      ((terrain_center[0], bottom_y + bottom_dir * lip_half_out, lip_z), (half_x, lip_half_out, lip_half_down)),
+      ((right_x + right_dir * lip_half_out, terrain_center[1], lip_z), (lip_half_out, half_y, lip_half_down)),
+      ((left_x + left_dir * lip_half_out, terrain_center[1], lip_z), (lip_half_out, half_y, lip_half_down)),
+    ]
+
+    for pos, size in lip_specs:
+      lip = body.add_geom(
+        type=mujoco.mjtGeom.mjGEOM_BOX,
+        size=size,
+        pos=pos,
+      )
+      boxes.append(lip)
+      box_colors.append(darken_rgba(rgba, 0.8))
 
   def function(
     self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
@@ -142,12 +219,13 @@ class BoxPyramidStairsTerrainCfg(SubTerrainCfg):
           terrain_size[0] - 2 * k * step_width,
           terrain_size[1] - 2 * k * step_width,
         )
+
       box_z = terrain_center[2] + k * step_height / 2.0
       box_offset = (k + 0.5) * step_width
       box_height = (k + 2) * step_height
+      step_top_z = box_z + box_height / 2.0
 
       box_dims = (box_size[0], step_width, box_height)
-
       safe_size = (
         np.maximum(1e-6, box_dims[0] / 2.0),
         np.maximum(1e-6, box_dims[1] / 2.0),
@@ -219,6 +297,29 @@ class BoxPyramidStairsTerrainCfg(SubTerrainCfg):
         pos=box_pos,
       )
       boxes.append(box)
+
+      if self.holes:
+        top_span_x = box_size[0]
+        side_span_y = box_size[1]
+      else:
+        # Use inner-edge spans for lip strips; this avoids corner overlap
+        # between top/bottom and left/right lip boxes.
+        top_span_x = box_size[0] - 2 * step_width
+        side_span_y = box_size[1] - 2 * step_width
+      self._append_step_lips(
+        body=body,
+        boxes=boxes,
+        box_colors=box_colors,
+        rgba=rgba,
+        terrain_center=terrain_center,
+        terrain_size=terrain_size,
+        step_index=k,
+        step_width=step_width,
+        top_span_x=top_span_x,
+        side_span_y=side_span_y,
+        step_top_z=step_top_z,
+        protrude_to_center=False,
+      )
 
     # Generate final box for the middle of the terrain.
     box_dims = (
@@ -324,6 +425,7 @@ class BoxInvertedPyramidStairsTerrainCfg(BoxPyramidStairsTerrainCfg):
       box_z = terrain_center[2] - total_height / 2 - (k + 1) * step_height / 2.0
       box_offset = (k + 0.5) * step_width
       box_height = total_height - (k + 1) * step_height
+      step_top_z = box_z + box_height / 2.0
 
       box_dims = (box_size[0], step_width, box_height)
       safe_size = (
@@ -397,6 +499,29 @@ class BoxInvertedPyramidStairsTerrainCfg(BoxPyramidStairsTerrainCfg):
         pos=box_pos,
       )
       boxes.append(box)
+
+      if self.holes:
+        top_span_x = box_size[0]
+        side_span_y = box_size[1]
+      else:
+        # Use inner-edge spans for lip strips; this avoids corner overlap
+        # between top/bottom and left/right lip boxes.
+        top_span_x = box_size[0] - 2 * step_width
+        side_span_y = box_size[1] - 2 * step_width
+      self._append_step_lips(
+        body=body,
+        boxes=boxes,
+        box_colors=box_colors,
+        rgba=rgba,
+        terrain_center=terrain_center,
+        terrain_size=terrain_size,
+        step_index=k,
+        step_width=step_width,
+        top_span_x=top_span_x,
+        side_span_y=side_span_y,
+        step_top_z=step_top_z,
+        protrude_to_center=True,
+      )
 
     # Generate final box for the middle of the terrain.
     box_dims = (

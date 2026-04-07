@@ -197,7 +197,7 @@ def unitree_go1_rough_env_cfg(
   if "foot_swing_height" in cfg.rewards:
       cfg.rewards["foot_swing_height"].params["height_sensor_name"] = None
 
-  for reward_name in ["foot_clearance", "foot_swing_height", "foot_slip"]:
+  for reward_name in ["foot_clearance", "foot_swing_height", "foot_slip", "feet_swing_height_variance"]:
     cfg.rewards[reward_name].params["asset_cfg"].site_names = site_names
 
   cfg.rewards["body_ang_vel"].weight = 0.0
