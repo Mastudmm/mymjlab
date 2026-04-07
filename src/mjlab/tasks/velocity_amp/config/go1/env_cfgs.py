@@ -17,6 +17,7 @@ from mjlab.tasks.velocity_amp import mdp
 from mjlab.tasks.velocity_amp.mdp import UniformVelocityCommandCfg
 from mjlab.envs.mdp import dr
 from mjlab.tasks.velocity_amp.velocity_env_cfg import make_velocity_env_cfg
+from mjlab.managers.reward_manager import RewardTermCfg
 
 TerrainType = Literal["rough", "obstacles"]
 
@@ -98,7 +99,7 @@ def unitree_go1_rough_env_cfg(
       pattern=r".*_collision\d*$",
       # Except for the foot geoms.
       # Exclude feet + calves + thighs explicitly to leave body-only contacts.
-      exclude=tuple(geom_names) + tuple(calf_geom_names) + tuple(thigh_geom_names)+ ("head_collision",) ,
+      exclude=tuple(geom_names) + tuple(calf_geom_names) + tuple(thigh_geom_names),
     ),
     secondary=ContactMatch(mode="body", pattern="terrain"),
     fields=("found", "force"),
@@ -130,7 +131,7 @@ def unitree_go1_rough_env_cfg(
   ].site_names = site_names
 
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = geom_names
-  cfg.events["base_com"].params["asset_cfg"].body_names = ("trunk",)
+  # cfg.events["base_com"].params["asset_cfg"].body_names = ("trunk",)
 
   # Added Domain Randomization: Mass, Damping, Friction Loss
   # Now physically accurate: pseudo_inertia smoothly scales both mass and moment of inertia
@@ -162,14 +163,48 @@ def unitree_go1_rough_env_cfg(
           "ranges": (0.8, 1.2), # Damping +/- 20%
       },
   )
+    # --- Actuator & Hardware Randomization ---
+  # PD 控制器增益波动 (Kp/Kd 真实硬件可能产生指令跟踪误差)
+  cfg.events["actuator_gains"] = EventTermCfg(
+      func=dr.pd_gains,
+      mode="startup",
+      params={
+          "asset_cfg": SceneEntityCfg("robot"),
+          "kp_range": (0.85, 1.15),
+          "kd_range": (0.85, 1.15),
+          "operation": "scale",
+      }
+  )
+
+  # 电机转子惯量 (Armature) - 模拟减速器和电机内部的惯量微小差异
+  cfg.events["joint_armature"] = EventTermCfg(
+      func=dr.joint_armature,
+      mode="startup",
+      params={
+          "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+          "ranges": (0.8, 1.2),
+          "operation": "scale",
+      }
+  )
+
+  # 力矩上限 - 模拟低电量或者电机持续发热导致的扭矩衰减
+  cfg.events["effort_limits"] = EventTermCfg(
+      func=dr.effort_limits,
+      mode="startup",
+      params={
+          "asset_cfg": SceneEntityCfg("robot"),
+          "effort_limit_range": (0.9, 1.0), # 只能衰减或保持，不能超越物理极值
+          "operation": "scale",
+      }
+  )
 
   cfg.rewards["pose"].params["std_standing"] = {
     r".*(FR|FL|RR|RL)_(hip|thigh)_joint.*": 0.05,
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.1,
   }
   cfg.rewards["pose"].params["std_walking"] = {
-    r".*(FR|FL|RR|RL)_hip_joint.*": 0.315,
-    r".*(FR|FL|RR|RL)_thigh_joint.*": 0.325,  
+    r".*(FR|FL|RR|RL)_hip_joint.*": 0.305,
+    r".*(FR|FL|RR|RL)_thigh_joint.*": 0.305,  
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.625,
   }
   cfg.rewards["pose"].params["std_running"] = {
@@ -206,10 +241,10 @@ def unitree_go1_rough_env_cfg(
   # Override base placeholder reward: bind sensor + weight.
   cfg.rewards["calf_collision"].params["sensor_name"] = calf_ground_cfg.name
   #cfg.rewards["calf_collision"].params["threshold"] = 2.0  # Allow grazing contacts < 15N
-  cfg.rewards["calf_collision"].params["force_threshold"] = 2.0 
-  cfg.rewards["calf_collision"].weight = -1.0  # tweak within [-1.0, -3.0]
+  cfg.rewards["calf_collision"].params["force_threshold"] = 0.35
+  cfg.rewards["calf_collision"].weight = -0.5  # tweak within [-1.0, -3.0]
   cfg.rewards["thigh_collision"].params["sensor_name"] = thigh_ground_cfg.name
-  cfg.rewards["thigh_collision"].params["force_threshold"] = 2.0
+  cfg.rewards["thigh_collision"].params["force_threshold"] = 0.5
   #cfg.rewards["thigh_collision"].params["threshold"] = 2.0
   cfg.rewards["thigh_collision"].weight = -0.75  # tweak within [-1.0, -3.0]
   cfg.rewards["stumble"].params["sensor_names"] = [
@@ -221,8 +256,12 @@ def unitree_go1_rough_env_cfg(
   cfg.rewards["stumble"].params={
         "sensor_names": ["feet_ground_contact"],
       }
-  cfg.rewards["foot_slip"].weight = -0.3
-
+  cfg.rewards["foot_slip"].weight = -0.25
+  # cfg.rewards["head_collision"] = RewardTermCfg(
+  #   func=mdp.self_collision_cost,
+  #   params={"sensor_name": head_ground_cfg.name, "force_threshold": 1.0},
+  #   weight=-1.0,
+  # )
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
     func=mdp.illegal_contact,
     params={

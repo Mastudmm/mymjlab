@@ -190,6 +190,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       resampling_time_range=(15.0, 18.0),
       rel_standing_envs=0.1,
       rel_heading_envs=1.0, #给一个期望的朝向角（heading），不要求前进/横移速度；通过朝向控制把机体转到目标朝向
+      rel_cardinal_heading_envs=0.5, # 50% 从 0/90/180/270 度离散采样，其余保持均匀采样
       rel_pure_x_envs=0.8, # 10% 的概率只产生 X 方向速度 (vy=0)
       rel_pure_y_envs=0.1, # 10% 的概率只产生 Y 方向速度 (vx=0)
       heading_command=True,
@@ -226,8 +227,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.reset_joints_by_offset,
       mode="reset",
       params={
-        "position_range": (0.0, 0.0),
-        "velocity_range": (0.0, 0.0),
+        "position_range": (-0.025, 0.025),
+        "velocity_range": (-0.025, 0.025),
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
       },
     ),
@@ -264,19 +265,19 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "bias_range": (-0.015, 0.015),
       },
     ),
-    "base_com": EventTermCfg(
-      mode="startup",
-      func=dr.body_com_offset,
-      params={
-        "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
-        "operation": "add",
-        "ranges": {
-          0: (-0.025, 0.025),
-          1: (-0.025, 0.025),
-          2: (-0.03, 0.03),
-        },
-      },
-    ),
+    # "base_com": EventTermCfg(
+    #   mode="startup",
+    #   func=dr.body_com_offset,
+    #   params={
+    #     "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+    #     "operation": "add",
+    #     "ranges": {
+    #       0: (-0.025, 0.025),
+    #       1: (-0.025, 0.025),
+    #       2: (-0.03, 0.03),
+    #     },
+    #   },
+    # ),
   }
 
   ##
@@ -287,7 +288,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "track_linear_velocity": RewardTermCfg(
       func=mdp.track_linear_velocity,
       weight=4.0,
-      params={"command_name": "twist", "std": math.sqrt(0.09)},
+      params={"command_name": "twist", "std": math.sqrt(0.16)},
     ),
     "track_angular_velocity": RewardTermCfg(
       func=mdp.track_angular_velocity,
@@ -312,7 +313,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "pose": RewardTermCfg( #保持关节角度，threshold代表在行走或者是跑动的时候限制将被放宽
       func=mdp.variable_posture,
-      weight=0.75,
+      weight=0.85,
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
         "command_name": "twist",
@@ -335,7 +336,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "dof_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-1.0),
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.1),
-    "j_vel_l2": RewardTermCfg(func=mdp.joint_vel_l2, weight=-0.0013),
+    "j_vel_l2": RewardTermCfg(func=mdp.joint_vel_l2, weight=-0.001),
     
     "base_height": RewardTermCfg(
       func=mdp.track_base_height,
@@ -356,7 +357,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     
     "foot_slip": RewardTermCfg(
       func=mdp.feet_slip,
-      weight=-0.45,
+      weight=-0.25,
       params={
         "sensor_name": "feet_ground_contact",
         "command_name": "twist",
@@ -419,8 +420,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "command_name": "twist",
         "velocity_stages": [
           {"step": 0, "lin_vel_x": (-0.5, 1.25), "ang_vel_z": (-1.25, 1.25)},
-          {"step": 600* 24, "lin_vel_x": (-0.2, 1.5), "ang_vel_z": (-1.25, 1.25)},
-          {"step": 2200 * 24, "lin_vel_x": (-0.75, 1.5), "ang_vel_z": (-1.75, 1.75)},
+          {"step": 1000* 24, "lin_vel_x": (-1.0, 1.5), "ang_vel_z": (-1.5, 1.5)},
+          {"step": 3000 * 24, "lin_vel_x": (-0.75, 1.5), "ang_vel_z": (-1.75, 1.75)},
           {"step": 4000 * 24, "lin_vel_x": (-1.0, 2.0)}, 
         ],
       },
