@@ -102,6 +102,7 @@ class UniformVelocityCommand(CommandTerm):
       # 覆盖为离散主方向（0/90/180/270 度）
       if self.cfg.rel_cardinal_heading_envs > 0.0:
         cardinal_mask = torch.rand(len(env_ids), device=self.device) < self.cfg.rel_cardinal_heading_envs
+        #掩码，确定谁被抽到 TorF
         num_cardinal = int(cardinal_mask.sum().item())
         if num_cardinal > 0:
           cardinal_values = torch.tensor(

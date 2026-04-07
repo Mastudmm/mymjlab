@@ -4,6 +4,8 @@ import mjlab.terrains as terrain_gen
 from mjlab.terrains.terrain_entity import TerrainEntity, TerrainEntityCfg
 from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
 
+
+
 ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     size=(8.0, 8.0),#每个小地形的大小
     border_width=20.0,
@@ -17,13 +19,19 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
       step_width_range=(0.3,0.6),
       platform_width=3.0,
       border_width=1.0,
+      stair_lip_enabled=True,
+      stair_lip_outward=0.03,
+      stair_lip_downward=0.04,
     ),
     "pyramid_stairs_inv": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
       proportion=0.9,
-      step_height_range=(0.2,0.2), #台阶高度可以在play的时候自由修改 train的时候尽量高
-      step_width_range=(0.25,0.25),
+      step_height_range=(0.01,0.05), #台阶高度可以在play的时候自由修改 train的时候尽量高
+      step_width_range=(0.26,0.26),
       platform_width=3.0,
       border_width=1.0,
+      stair_lip_enabled=True,
+      stair_lip_outward=0.03,
+      stair_lip_downward=0.04,
     ),  
     "hf_pyramid_slope": terrain_gen.HfPyramidSlopedTerrainCfg(
       proportion=0.0,
@@ -67,6 +75,9 @@ ALL_TERRAINS_CFG = TerrainGeneratorCfg(
       step_width_range=(0.3,0.6),
       platform_width=3.0,
       border_width=1.0,
+      stair_lip_enabled=True,
+      stair_lip_outward=0.03,
+      stair_lip_downward=0.04,
     ),
     "pyramid_stairs_inv": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
       proportion=10.5,
@@ -74,6 +85,9 @@ ALL_TERRAINS_CFG = TerrainGeneratorCfg(
       step_width_range=(0.24,0.3),
       platform_width=3.0,
       border_width=1.0,
+      stair_lip_enabled=True,
+      stair_lip_outward=0.03,
+      stair_lip_downward=0.04,
     ),
     "hf_pyramid_slope": terrain_gen.HfPyramidSlopedTerrainCfg(
       proportion=0.0,

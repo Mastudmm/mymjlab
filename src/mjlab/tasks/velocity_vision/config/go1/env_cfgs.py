@@ -154,7 +154,7 @@ def unitree_go1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   depth_camera = RayCastSensorCfg(
       name="depth_camera",
       frame=ObjRef(type="site", name="head", entity="robot"), # Ensure robot xml has 'head' site
-      pattern=PinholeCameraPatternCfg(width=80, height=50, fovy=45.3),#86改为57
+      pattern=PinholeCameraPatternCfg(width=80, height=80, fovy=86),#86改为57   45.3
       ## pattern=PinholeCameraPatternCfg(width=86, height=50, fovy=58.0), # 模拟D435i: 垂直 fovy=58.0，宽86高50(比列1.72)自动推出水平 fovx 约等于 87.2度
       ray_alignment="base", # Camera moves with head
       max_distance=4.0,
