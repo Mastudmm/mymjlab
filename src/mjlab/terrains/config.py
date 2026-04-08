@@ -12,7 +12,7 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     num_rows=10,
     num_cols=20,
     sub_terrains={
-    "flat": terrain_gen.BoxFlatTerrainCfg(proportion=110.0),
+    "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.0),
     "pyramid_stairs": terrain_gen.BoxPyramidStairsTerrainCfg(
       proportion=0.1,
       step_height_range=(0.0, 0.4),
@@ -25,12 +25,12 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     ),
     "pyramid_stairs_inv": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
       proportion=0.9,
-      step_height_range=(0.15,0.15), #台阶高度可以在play的时候自由修改 train的时候尽量高
-      step_width_range=(0.25,0.25),
+      step_height_range=(0.17,0.17), #台阶高度可以在play的时候自由修改 train的时候尽量高
+      step_width_range=(0.26,0.26),
       platform_width=3.0,
       border_width=1.0,
       stair_lip_enabled=True,
-      stair_lip_outward=0.03,
+      stair_lip_outward=0.015,
       stair_lip_downward=0.04,
     ),  
     "hf_pyramid_slope": terrain_gen.HfPyramidSlopedTerrainCfg(

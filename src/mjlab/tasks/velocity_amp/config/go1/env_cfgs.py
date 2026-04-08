@@ -262,13 +262,13 @@ def unitree_go1_rough_env_cfg(
   #   params={"sensor_name": head_ground_cfg.name, "force_threshold": 1.0},
   #   weight=-1.0,
   # )
-  cfg.terminations["illegal_contact"] = TerminationTermCfg(
-    func=mdp.illegal_contact,
-    params={
-      "sensor_name": nonfoot_ground_cfg.name,
-      "force_threshold": 10.0,  # Required by recent history-based contact API updates
-    },
-  )
+  # cfg.terminations["illegal_contact"] = TerminationTermCfg(
+  #   func=mdp.illegal_contact,
+  #   params={
+  #     "sensor_name": nonfoot_ground_cfg.name,
+  #     "force_threshold": 10.0,  # Required by recent history-based contact API updates
+  #   },
+  # )
 
 
   # Apply play mode overrides.
