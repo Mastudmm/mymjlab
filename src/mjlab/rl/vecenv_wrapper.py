@@ -105,25 +105,39 @@ class RslRlVecEnvWrapper(VecEnv):
   def close(self) -> None:
     return self.env.close()
 
-  def get_amp_obs_for_expert_trans(self) -> torch.Tensor:
-    """Return AMP observation as [joint_pos_rel(12), joint_vel_rel(12), foot_pos_b(12)]."""
+  def get_amp_obs_for_expert_trans(
+    self, env_ids: torch.Tensor | None = None
+  ) -> torch.Tensor:
+    """Return AMP observation as [joint_pos_rel(12), joint_vel_rel(12), foot_pos_b(12)].
+
+    If ``env_ids`` is provided, only those environments are processed.
+    """
     asset = self.unwrapped.scene["robot"]
+
+    if env_ids is None:
+      env_ids = torch.arange(self.num_envs, device=self.device)
 
     joint_ids = self._get_amp_joint_ids(asset)
     site_ids = self._get_amp_site_ids(asset)
 
-    joint_pos_rel = asset.data.joint_pos[:, joint_ids] - asset.data.default_joint_pos[:, joint_ids]
-    joint_vel_rel = asset.data.joint_vel[:, joint_ids] - asset.data.default_joint_vel[:, joint_ids]
+    joint_pos_rel = (
+      asset.data.joint_pos[env_ids][:, joint_ids]
+      - asset.data.default_joint_pos[env_ids][:, joint_ids]
+    )
+    joint_vel_rel = (
+      asset.data.joint_vel[env_ids][:, joint_ids]
+      - asset.data.default_joint_vel[env_ids][:, joint_ids]
+    )
 
-    feet_pos_w = asset.data.site_pos_w[:, site_ids, :]
-    root_pos_w = asset.data.root_link_pos_w.unsqueeze(1)
+    feet_pos_w = asset.data.site_pos_w[env_ids][:, site_ids, :]
+    root_pos_w = asset.data.root_link_pos_w[env_ids].unsqueeze(1)
     feet_pos_root_w = feet_pos_w - root_pos_w
 
-    root_quat = asset.data.root_link_quat_w
+    root_quat = asset.data.root_link_quat_w[env_ids]
     feet_pos_b = quat_apply_inverse(
       root_quat.unsqueeze(1).expand(-1, feet_pos_root_w.shape[1], -1).reshape(-1, 4),
       feet_pos_root_w.reshape(-1, 3),
-    ).reshape(self.num_envs, len(site_ids), 3)
+    ).reshape(env_ids.shape[0], len(site_ids), 3)
 
     return torch.cat([joint_pos_rel, joint_vel_rel, feet_pos_b.flatten(start_dim=1)], dim=-1)
 
