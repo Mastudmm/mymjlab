@@ -99,6 +99,7 @@ class BoxPyramidStairsTerrainCfg(SubTerrainCfg):
     side_span_y: float,
     step_top_z: float,
     protrude_to_center: bool = False,
+    use_inner_edge: bool = True,
   ) -> None:
     """Add 4 protruding rectangular lips on the current stair ring edges.
 
@@ -126,8 +127,10 @@ class BoxPyramidStairsTerrainCfg(SubTerrainCfg):
     lip_half_out = lip_out / 2.0
     lip_half_down = lip_down / 2.0
 
-    # Riser top edge for current step ring (inner edge of ring k).
-    edge_offset = (step_index + 1) * step_width
+    # Anchor edge for current step ring.
+    # - inner edge: between ring k and k+1
+    # - outer edge: exposed outer boundary of ring k
+    edge_offset = (step_index + 1) * step_width if use_inner_edge else step_index * step_width
     top_y = terrain_center[1] + terrain_size[1] / 2.0 - edge_offset
     bottom_y = terrain_center[1] - terrain_size[1] / 2.0 + edge_offset
     right_x = terrain_center[0] + terrain_size[0] / 2.0 - edge_offset
@@ -319,6 +322,7 @@ class BoxPyramidStairsTerrainCfg(SubTerrainCfg):
         side_span_y=side_span_y,
         step_top_z=step_top_z,
         protrude_to_center=False,
+        use_inner_edge=False,
       )
 
     # Generate final box for the middle of the terrain.
@@ -521,6 +525,7 @@ class BoxInvertedPyramidStairsTerrainCfg(BoxPyramidStairsTerrainCfg):
         side_span_y=side_span_y,
         step_top_z=step_top_z,
         protrude_to_center=True,
+        use_inner_edge=True,
       )
 
     # Generate final box for the middle of the terrain.
