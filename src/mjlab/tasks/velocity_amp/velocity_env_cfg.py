@@ -202,6 +202,25 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         ang_vel_z=(-1.0, 1.0),
         heading=(-math.pi, math.pi),
       ),
+      # 可选：按地形类型覆写命令范围（地形名需与 terrain_generator.sub_terrains 的 key 一致）。
+      # 例如台阶地形降低速度、平地提高速度。
+      terrain_command_ranges={
+        "pyramid_stairs": UniformVelocityCommandCfg.Ranges(
+          lin_vel_x=(0.1, 0.5),
+          lin_vel_y=(-0.2, 0.2),
+          ang_vel_z=(-0.8, 0.8),
+        ),
+        "pyramid_stairs_inv": UniformVelocityCommandCfg.Ranges(
+          lin_vel_x=(0.1, 0.45),
+          lin_vel_y=(-0.2, 0.2),
+          ang_vel_z=(-0.8, 0.8),
+        ),
+        "flat": UniformVelocityCommandCfg.Ranges(
+          lin_vel_x=(0.6, 1.6),
+          lin_vel_y=(-0.5, 0.5),
+          ang_vel_z=(-1.2, 1.2),
+        ),
+      },
     )
   }
 
@@ -424,7 +443,43 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
           {"step": 3000 * 24, "lin_vel_x": (-0.75, 1.5), "ang_vel_z": (-1.75, 1.75)},
           {"step": 4000 * 24, "lin_vel_x": (-1.0, 2.0)}, 
         ],
+        # 可选：按地形类型单独配置 command curriculum（与 terrain_command_ranges 配合使用）。
+        # 若某地形不在 terrain_command_ranges 中，这里会自动以全局 ranges 为初值创建。
+        "terrain_velocity_stages": [
+          {
+            "terrain_name": "pyramid_stairs",
+            "stages": [
+              {"step": 0, "lin_vel_x": (0.05, 0.35), "lin_vel_y": (-0.15, 0.15), "ang_vel_z": (-0.7, 0.7)},
+              {"step": 2000 * 24, "lin_vel_x": (0.1, 0.5), "lin_vel_y": (-0.2, 0.2), "ang_vel_z": (-0.8, 0.8)},
+            ],
+          },
+          {
+            "terrain_name": "pyramid_stairs_inv",
+            "stages": [
+              {"step": 0, "lin_vel_x": (0.05, 0.3), "lin_vel_y": (-0.15, 0.15), "ang_vel_z": (-0.7, 0.7)},
+              {"step": 2500 * 24, "lin_vel_x": (0.1, 0.45), "lin_vel_y": (-0.2, 0.2), "ang_vel_z": (-0.8, 0.8)},
+            ],
+          },
+          {
+            "terrain_name": "flat",
+            "stages": [
+              {"step": 0, "lin_vel_x": (0.5, 1.2), "lin_vel_y": (-0.4, 0.4), "ang_vel_z": (-1.0, 1.0)},
+              {"step": 2500 * 24, "lin_vel_x": (0.8, 1.8), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.2, 1.2)},
+            ],
+          },
+        ],
       },
+    ),
+    "track_lin_vel_tighten": CurriculumTermCfg(
+        func=mdp.reward_weight,
+        params={
+            "reward_name": "track_linear_velocity",
+            "stages": [
+                {"step": 0, "params": {"std": 0.5}},
+                {"step": 20000, "params": {"std": 0.3}},
+                {"step": 50000, "params": {"std": 0.1}},
+            ],
+        },
     ),
   }
 

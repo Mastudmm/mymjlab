@@ -36,6 +36,19 @@ class UniformVelocityCommand(CommandTerm):
 
     self.robot: Entity = env.scene[cfg.entity_name]
 
+    # 课程地形下，每个列（terrain_types）映射到一个地形名称。
+    # 用于在命令重采样时按地形类型应用不同速度范围。
+    self._terrain_name_per_col: list[str] | None = None
+    terrain = getattr(env.scene, "terrain", None)
+    terrain_generator_cfg = None if terrain is None else terrain.cfg.terrain_generator
+    if terrain_generator_cfg is not None and bool(getattr(terrain_generator_cfg, "curriculum", False)):
+      self._terrain_name_per_col = self._resolve_curriculum_column_terrain_names(terrain_generator_cfg)
+    elif self.cfg.terrain_command_ranges:
+      print(
+        "[UniformVelocityCommand] terrain_command_ranges is set but terrain curriculum mapping is unavailable "
+        "(requires terrain_type='generator' and terrain_generator.curriculum=True)."
+      )
+
     # 命令缓冲区（每个 env 的命令，机器人基座坐标系）：[线速度_x, 线速度_y, 角速度_z]
     # 说明：第三个分量（角速度_z）有两种可能来源：
     #  1) 在 `_resample_command` 中随机采样得到的 vel_yaw（默认/备选值）
@@ -49,6 +62,13 @@ class UniformVelocityCommand(CommandTerm):
     # 计算替代的角速度。
     self.heading_target = torch.zeros(self.num_envs, device=self.device)
     self.heading_error = torch.zeros(self.num_envs, device=self.device)
+    # 每个 env 当前有效角速度范围（用于 heading 控制时按 env 裁剪）。
+    self._ang_vel_min = torch.full(
+      (self.num_envs,), float(self.cfg.ranges.ang_vel_z[0]), device=self.device
+    )
+    self._ang_vel_max = torch.full(
+      (self.num_envs,), float(self.cfg.ranges.ang_vel_z[1]), device=self.device
+    )
 
     # 标记哪些 env 在最近一次重采样时被选为使用 heading 控制（布尔掩码）。
     # 选择在 `_resample_command` 中以概率 `cfg.rel_heading_envs` 进行。
@@ -84,11 +104,26 @@ class UniformVelocityCommand(CommandTerm):
     )
 
   def _resample_command(self, env_ids: torch.Tensor) -> None:
-    r = torch.empty(len(env_ids), device=self.device)
-    self.vel_command_b[env_ids, 0] = r.uniform_(*self.cfg.ranges.lin_vel_x)
-    self.vel_command_b[env_ids, 1] = r.uniform_(*self.cfg.ranges.lin_vel_y)
+    # 1) 先按全局范围采样（默认命令范围）
+    self._sample_velocity_range(env_ids, self.cfg.ranges)
 
-    self.vel_command_b[env_ids, 2] = r.uniform_(*self.cfg.ranges.ang_vel_z)
+    # 2) 若配置了地形专属范围，则按 env 所在地形覆盖重采样
+    #    仅在 terrain generator curriculum 下可可靠按“地形类型”区分。
+    if self.cfg.terrain_command_ranges and self._terrain_name_per_col is not None:
+      terrain = self._env.scene.terrain
+      assert terrain is not None
+      terrain_types = terrain.terrain_types[env_ids]
+
+      for terrain_name, terrain_ranges in self.cfg.terrain_command_ranges.items():
+        mask = torch.zeros(len(env_ids), dtype=torch.bool, device=self.device)
+        for col, col_name in enumerate(self._terrain_name_per_col):
+          if col_name == terrain_name:
+            mask |= terrain_types == col
+        matched_env_ids = env_ids[mask]
+        if len(matched_env_ids) > 0:
+          self._sample_velocity_range(matched_env_ids, terrain_ranges)
+
+    r = torch.empty(len(env_ids), device=self.device)
     # ---- 关于 heading 的选择与 ang_vel_z 的交互 ----
     # 这里先对 ang_vel_z 进行采样（作为默认角速度）。若启用了 heading_command，
     # 在重采样阶段会为被重采样的 env 随机采样 heading_target，并以概率
@@ -150,6 +185,40 @@ class UniformVelocityCommand(CommandTerm):
       )
       self.robot.write_root_state_to_sim(root_state, init_vel_env_ids)
 
+  def _sample_velocity_range(
+    self,
+    env_ids: torch.Tensor,
+    ranges: "UniformVelocityCommandCfg.Ranges",
+  ) -> None:
+    """Sample vx, vy, wz commands for selected envs from the provided range config."""
+    if len(env_ids) == 0:
+      return
+    r = torch.empty(len(env_ids), device=self.device)
+    self.vel_command_b[env_ids, 0] = r.uniform_(*ranges.lin_vel_x)
+    self.vel_command_b[env_ids, 1] = r.uniform_(*ranges.lin_vel_y)
+    self.vel_command_b[env_ids, 2] = r.uniform_(*ranges.ang_vel_z)
+    self._ang_vel_min[env_ids] = float(ranges.ang_vel_z[0])
+    self._ang_vel_max[env_ids] = float(ranges.ang_vel_z[1])
+
+  def _resolve_curriculum_column_terrain_names(self, terrain_generator_cfg) -> list[str]:
+    """Build column->terrain_name mapping using the same allocation logic as TerrainGenerator curriculum mode."""
+    sub_terrain_names = list(terrain_generator_cfg.sub_terrains.keys())
+    proportions = np.array(
+      [sub_cfg.proportion for sub_cfg in terrain_generator_cfg.sub_terrains.values()],
+      dtype=np.float64,
+    )
+    if proportions.sum() <= 0.0:
+      raise ValueError("Terrain proportions sum to zero; cannot resolve curriculum terrain columns.")
+    proportions = proportions / proportions.sum()
+    cumulative = np.cumsum(proportions)
+
+    num_cols = int(terrain_generator_cfg.num_cols)
+    terrain_name_per_col: list[str] = []
+    for col in range(num_cols):
+      sub_index = int(np.min(np.where(col / num_cols + 0.001 < cumulative)[0]))
+      terrain_name_per_col.append(sub_terrain_names[sub_index])
+    return terrain_name_per_col
+
   def _update_command(self) -> None:
 
     # 若启用了 heading_control，则对在最近一次重采样中被选中的 env 计算
@@ -157,10 +226,11 @@ class UniformVelocityCommand(CommandTerm):
     if self.cfg.heading_command:
       self.heading_error = wrap_to_pi(self.heading_target - self.robot.data.heading_w)
       env_ids = self.is_heading_env.nonzero(as_tuple=False).flatten()
+      heading_wz = self.cfg.heading_control_stiffness * self.heading_error[env_ids]
       self.vel_command_b[env_ids, 2] = torch.clip(
-        self.cfg.heading_control_stiffness * self.heading_error[env_ids],
-        min=self.cfg.ranges.ang_vel_z[0],
-        max=self.cfg.ranges.ang_vel_z[1],
+        heading_wz,
+        min=self._ang_vel_min[env_ids],
+        max=self._ang_vel_max[env_ids],
       )
     # 对被选为站立的 env，将所有命令分量置零（优先级高）
     standing_env_ids = self.is_standing_env.nonzero(as_tuple=False).flatten()
@@ -328,6 +398,9 @@ class UniformVelocityCommandCfg(CommandTermCfg):
     heading: tuple[float, float] | None = None
 
   ranges: Ranges
+  # 按地形类型覆写命令范围（仅在 terrain_generator.curriculum=True 且 terrain_type='generator' 时生效）。
+  # key 为地形名称（例如 "flat"、"pyramid_stairs_inv"），value 为该地形采样范围。
+  terrain_command_ranges: dict[str, Ranges] = field(default_factory=dict)
 
   @dataclass
   class VizCfg:
