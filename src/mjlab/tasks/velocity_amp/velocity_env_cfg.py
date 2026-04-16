@@ -478,10 +478,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       },
     ),
     "track_lin_vel_tighten": CurriculumTermCfg(
-        func=mdp.reward_weight,
+    func=mdp.reward_params,
         params={
             "reward_name": "track_linear_velocity",
-            "stages": [
+      "param_stages": [
                 {"step": 0, "params": {"std": math.sqrt(0.16)}},
                 {"step": 1000 * 24, "params": {"std": math.sqrt(0.15)}},
                 {"step": 1400 * 24, "params": {"std": math.sqrt(0.14)}},
@@ -496,7 +496,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         func=mdp.reward_weight,
         params={
             "reward_name": "calf_collision",
-            "stages": [
+      "weight_stages": [
                 {"step": 0* 24, "weight": -0.3},
                 {"step": 1000* 24, "weight": -0.25},
                 {"step": 2000* 24, "weight": -0.15},
