@@ -492,6 +492,17 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
             ],
         },
     ),
+    "calf_collision_curriculum": CurriculumTermCfg(
+        func=mdp.reward_weight,
+        params={
+            "reward_name": "calf_collision",
+            "stages": [
+                {"step": 0* 24, "weight": -0.3},
+                {"step": 1000* 24, "weight": -0.25},
+                {"step": 2000* 24, "weight": -0.15},
+            ],
+        },
+    ),
   }
 
   ##
