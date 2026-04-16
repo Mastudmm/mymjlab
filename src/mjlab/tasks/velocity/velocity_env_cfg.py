@@ -545,22 +545,29 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
           {
             "terrain_name": "pyramid_stairs",
             "stages": [
-              {"step": 0, "lin_vel_x": (0.05, 0.35), "lin_vel_y": (-0.15, 0.15), "ang_vel_z": (-0.7, 0.7)},
-              {"step": 2000 * 24, "lin_vel_x": (0.1, 0.5), "lin_vel_y": (-0.2, 0.2), "ang_vel_z": (-0.8, 0.8)},
+              {"step": 0, "lin_vel_x": (-0.5, 0.5), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.5, 1.5)},
+              {"step": 400 * 24, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-1.5, 1.5)},
+              {"step": 1000 * 24, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.72, 1.72)},
+              {"step": 1500 * 24, "lin_vel_x": (-0.5, 0.75), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.82, 1.82)},
+              {"step": 2000 * 24, "lin_vel_x": (-0.5, 0.6), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.82, 1.82)},
+            
             ],
           },
           {
             "terrain_name": "pyramid_stairs_inv",
             "stages": [
-              {"step": 0, "lin_vel_x": (0.05, 0.3), "lin_vel_y": (-0.15, 0.15), "ang_vel_z": (-0.7, 0.7)},
-              {"step": 2500 * 24, "lin_vel_x": (0.1, 0.45), "lin_vel_y": (-0.2, 0.2), "ang_vel_z": (-0.8, 0.8)},
+              {"step": 0, "lin_vel_x": (-0.5, 0.5), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.5, 1.5)},
+              {"step": 400 * 24, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-1.5, 1.5)},
+              {"step": 1000 * 24, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.72, 1.72)},
+              {"step": 1500 * 24, "lin_vel_x": (-0.5, 0.75), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.82, 1.82)},
+              {"step": 2000 * 24, "lin_vel_x": (-0.5, 0.6), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.82, 1.82)},
             ],
           },
           {
-            "terrain_name": "flat",
+            "terrain_name": "random_rough",
             "stages": [
-              {"step": 0, "lin_vel_x": (0.5, 1.2), "lin_vel_y": (-0.4, 0.4), "ang_vel_z": (-1.0, 1.0)},
-              {"step": 2500 * 24, "lin_vel_x": (0.8, 1.8), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.2, 1.2)},
+              {"step": 0, "lin_vel_x": (-0.5, 0.5), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-1.5, 1.5)},
+              {"step": 600 * 24, "lin_vel_x": (-1.0, 1.5), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.25, 1.25)},
             ],
           },
         ],
