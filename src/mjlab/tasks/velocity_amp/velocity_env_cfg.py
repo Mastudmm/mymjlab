@@ -478,10 +478,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       },
     ),
     "track_lin_vel_tighten": CurriculumTermCfg(
-    func=mdp.reward_params,
+    func=mdp.reward_curriculum,
         params={
             "reward_name": "track_linear_velocity",
-      "param_stages": [
+            "stages": [
                 {"step": 0, "params": {"std": math.sqrt(0.16)}},
                 {"step": 1000 * 24, "params": {"std": math.sqrt(0.15)}},
                 {"step": 1400 * 24, "params": {"std": math.sqrt(0.14)}},
@@ -493,16 +493,27 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         },
     ),
     "calf_collision_curriculum": CurriculumTermCfg(
-        func=mdp.reward_weight,
+    func=mdp.reward_curriculum,
         params={
             "reward_name": "calf_collision",
-      "weight_stages": [
+            "stages": [
                 {"step": 0* 24, "weight": -0.3},
                 {"step": 1000* 24, "weight": -0.25},
                 {"step": 2000* 24, "weight": -0.15},
             ],
         },
     ),
+  "fell_over_curriculum": CurriculumTermCfg(
+    func=mdp.termination_curriculum,
+    params={
+      "termination_name": "fell_over",
+      "stages": [
+        {"step": 0, "params": {"limit_angle": math.radians(60.0)}},
+        {"step": 1200 * 24, "params": {"limit_angle": math.radians(65.0)}},
+        {"step": 2400 * 24, "params": {"limit_angle": math.radians(67.5)}},
+      ],
+    },
+  ),
   }
 
   ##
