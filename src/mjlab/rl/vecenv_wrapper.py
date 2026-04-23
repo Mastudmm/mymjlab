@@ -8,6 +8,9 @@ from mjlab.utils.spaces import Space
 
 
 class RslRlVecEnvWrapper(VecEnv):
+  # AMP observation layout registry.
+  # Key = observation dimension expected by AMP runner/discriminator.
+  # Value = builder method that assembles the corresponding feature order.
   _AMP_OBS_REGISTRY: dict[int, str] = {
     36: "_build_amp_obs_36",
     43: "_build_amp_obs_43",
@@ -31,7 +34,9 @@ class RslRlVecEnvWrapper(VecEnv):
     self.reset_env_ids = torch.empty(0, dtype=torch.long, device=self.device)
     self._amp_joint_ids: torch.Tensor | None = None
     self._amp_site_ids: torch.Tensor | None = None
-    # Keep legacy 36D AMP obs by default for backward compatibility.
+  # Keep legacy 36D AMP obs by default for backward compatibility.
+  # Actual value is overridden by runner config (amp_expected_obs_dim)
+  # via set_amp_obs_dim() before AMP data loading starts.
     self.amp_obs_dim: int = 36
 
     # Reset at the start since rsl_rl does not call reset.
@@ -123,6 +128,8 @@ class RslRlVecEnvWrapper(VecEnv):
 
     If ``env_ids`` is provided, only those environments are processed.
     """
+    # Robot state source in simulator.
+    # All tensors below are read directly from the latest physics state.
     asset = self.unwrapped.scene["robot"]
 
     if env_ids is None:
@@ -131,15 +138,20 @@ class RslRlVecEnvWrapper(VecEnv):
     joint_ids = self._get_amp_joint_ids(asset)
     site_ids = self._get_amp_site_ids(asset)
 
+    # 1) Joint position feature (12D): relative to robot default posture.
+    #    This is the same semantic convention used by legacy AMP settings.
     joint_pos_rel = (
       asset.data.joint_pos[env_ids][:, joint_ids]
       - asset.data.default_joint_pos[env_ids][:, joint_ids]
     )
+    # 2) Joint velocity feature (12D): relative to default joint velocity.
     joint_vel_rel = (
       asset.data.joint_vel[env_ids][:, joint_ids]
       - asset.data.default_joint_vel[env_ids][:, joint_ids]
     )
 
+    # 3) Foot position feature (12D): convert world-frame site positions
+    #    into base/body frame to match expert data layout "foot_xyz_base".
     feet_pos_w = asset.data.site_pos_w[env_ids][:, site_ids, :]
     root_pos_w = asset.data.root_link_pos_w[env_ids].unsqueeze(1)
     feet_pos_root_w = feet_pos_w - root_pos_w
@@ -154,9 +166,13 @@ class RslRlVecEnvWrapper(VecEnv):
       [joint_pos_rel, joint_vel_rel, feet_pos_b.flatten(start_dim=1)],
       dim=-1,
     )
+    # Dispatch to layout-specific builder (36D legacy or 43D extended).
     return self._build_amp_obs(env_ids=env_ids, base_obs=base_obs, asset=asset)
 
   def set_amp_obs_dim(self, obs_dim: int) -> None:
+    # Runtime registration API used by AMP runner.
+    # This keeps env-side AMP observation layout strictly aligned with
+    # loader/discriminator expected dimension from config.
     obs_dim = int(obs_dim)
     if obs_dim not in self._AMP_OBS_REGISTRY:
       raise ValueError(
@@ -173,46 +189,34 @@ class RslRlVecEnvWrapper(VecEnv):
     return getattr(self, method_name)(env_ids=env_ids, base_obs=base_obs, asset=asset)
 
   def _build_amp_obs_36(self, env_ids: torch.Tensor, base_obs: torch.Tensor, asset) -> torch.Tensor:
+    # Legacy layout used by existing checkpoints/datasets:
+    # [joint_pos_rel(12), joint_vel_rel(12), foot_pos_b(12)]
     return base_obs
 
   def _build_amp_obs_43(self, env_ids: torch.Tensor, base_obs: torch.Tensor, asset) -> torch.Tensor:
-    # Use simulator-side, up-to-date body velocities directly in body frame.
+    # Extended layout appends 7 root-level features to legacy 36D.
+    # 4) Root linear velocity in body frame (3D).
     root_lin_vel_b = asset.data.root_link_lin_vel_b[env_ids]
+    # 5) Root angular velocity in body frame (3D).
     root_ang_vel_b = asset.data.root_link_ang_vel_b[env_ids]
 
-    # Estimate local terrain height from ray-cast hits under/around the base.
+    # 6) Root height term root_z (1D).
+    #    Use spawn-ground-relative height to align with expert data collected
+    #    around a fixed nominal base height: root_z = root_pos_z - env_origin_z.
+    #    Here env_origin_z is the terrain height offset assigned at env spawn.
+    #    Fallback to absolute root z only when env origins are unavailable.
     root_pos_z = asset.data.root_link_pos_w[env_ids, 2]
-    local_ground_z: torch.Tensor | None = None
-    try:
-      terrain_scan = self.unwrapped.scene["terrain_scan"]
-      hit_z = terrain_scan.data.hit_pos_w[env_ids, :, 2]
-      distances = terrain_scan.data.distances[env_ids, :]
-      valid_mask = distances >= 0
-      if bool(valid_mask.any()):
-        hit_z_masked = hit_z.masked_fill(~valid_mask, float("nan"))
-        local_ground_z = torch.nanmedian(hit_z_masked, dim=1).values
-    except Exception:
-      local_ground_z = None
 
-    if local_ground_z is not None and bool(torch.isfinite(local_ground_z).any()):
-      if hasattr(self.unwrapped.scene, "env_origins") and self.unwrapped.scene.env_origins is not None:
-        fallback_ground_z = self.unwrapped.scene.env_origins[env_ids, 2]
-      else:
-        fallback_ground_z = torch.zeros_like(root_pos_z)
-      local_ground_z = torch.where(
-        torch.isfinite(local_ground_z),
-        local_ground_z,
-        fallback_ground_z,
-      )
-      root_z = (root_pos_z - local_ground_z).unsqueeze(-1)
-    elif hasattr(self.unwrapped.scene, "env_origins") and self.unwrapped.scene.env_origins is not None:
+    if hasattr(self.unwrapped.scene, "env_origins") and self.unwrapped.scene.env_origins is not None:
       root_z = (root_pos_z - self.unwrapped.scene.env_origins[env_ids, 2]).unsqueeze(-1)
     else:
       root_z = root_pos_z.unsqueeze(-1)
 
     return torch.cat(
       [
+        # 36D base part.
         base_obs,
+        # +7D extended root-related part.
         root_lin_vel_b,
         root_ang_vel_b,
         root_z,

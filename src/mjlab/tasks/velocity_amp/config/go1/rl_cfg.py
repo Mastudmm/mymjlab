@@ -32,6 +32,18 @@ class RslRlAmpOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
   amp_preflight_check: bool = True
   amp_preflight_strict: bool = True
   amp_preflight_max_files: int = 8
+  # AMP observation layout selector.
+  #
+  # 36D (legacy, default for old datasets/checkpoints):
+  #   [0:12]   joint_pos_rel      (FR,FL,RR,RL each [hip,thigh,calf])
+  #   [12:24]  joint_vel_rel      (same joint order as above)
+  #   [24:36]  foot_pos_b_xyz     (FR,FL,RR,RL each [x,y,z], in body/base frame)
+  #
+  # 43D (extended):
+  #   [0:36]   same as legacy 36D
+  #   [36:39]  root_lin_vel_b     ([vx, vy, vz] in body/base frame)
+  #   [39:42]  root_ang_vel_b     ([wx, wy, wz] in body/base frame)
+  #   [42:43]  root_z             (root height term, see vecenv_wrapper implementation)
   amp_expected_obs_dim: int = 43
   amp_joint_pos_mode: str = "absolute"
   amp_joint_pos_offset: list[float] = field(default_factory=lambda: list(GO1_AMP_JOINT_POS_OFFSET))
