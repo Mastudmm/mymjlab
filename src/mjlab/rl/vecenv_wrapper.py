@@ -8,6 +8,11 @@ from mjlab.utils.spaces import Space
 
 
 class RslRlVecEnvWrapper(VecEnv):
+  _AMP_OBS_REGISTRY: dict[int, str] = {
+    36: "_build_amp_obs_36",
+    43: "_build_amp_obs_43",
+  }
+
   def __init__(
     self,
     env: ManagerBasedRlEnv,
@@ -26,6 +31,8 @@ class RslRlVecEnvWrapper(VecEnv):
     self.reset_env_ids = torch.empty(0, dtype=torch.long, device=self.device)
     self._amp_joint_ids: torch.Tensor | None = None
     self._amp_site_ids: torch.Tensor | None = None
+    # Keep legacy 36D AMP obs by default for backward compatibility.
+    self.amp_obs_dim: int = 36
 
     # Reset at the start since rsl_rl does not call reset.
     self.env.reset()
@@ -108,7 +115,11 @@ class RslRlVecEnvWrapper(VecEnv):
   def get_amp_obs_for_expert_trans(
     self, env_ids: torch.Tensor | None = None
   ) -> torch.Tensor:
-    """Return AMP observation as [joint_pos_rel(12), joint_vel_rel(12), foot_pos_b(12)].
+    """Return AMP observation with configurable layout.
+
+    Supported layouts:
+    - 36D: [joint_pos_rel(12), joint_vel_rel(12), foot_pos_b(12)]
+    - 43D: 36D + [root_lin_vel_b(3), root_ang_vel_b(3), root_z(1)]
 
     If ``env_ids`` is provided, only those environments are processed.
     """
@@ -139,7 +150,75 @@ class RslRlVecEnvWrapper(VecEnv):
       feet_pos_root_w.reshape(-1, 3),
     ).reshape(env_ids.shape[0], len(site_ids), 3)
 
-    return torch.cat([joint_pos_rel, joint_vel_rel, feet_pos_b.flatten(start_dim=1)], dim=-1)
+    base_obs = torch.cat(
+      [joint_pos_rel, joint_vel_rel, feet_pos_b.flatten(start_dim=1)],
+      dim=-1,
+    )
+    return self._build_amp_obs(env_ids=env_ids, base_obs=base_obs, asset=asset)
+
+  def set_amp_obs_dim(self, obs_dim: int) -> None:
+    obs_dim = int(obs_dim)
+    if obs_dim not in self._AMP_OBS_REGISTRY:
+      raise ValueError(
+        f"Unsupported AMP obs dim {obs_dim}. Supported: {sorted(self._AMP_OBS_REGISTRY.keys())}."
+      )
+    self.amp_obs_dim = obs_dim
+
+  def _build_amp_obs(self, env_ids: torch.Tensor, base_obs: torch.Tensor, asset) -> torch.Tensor:
+    method_name = self._AMP_OBS_REGISTRY.get(int(self.amp_obs_dim))
+    if method_name is None:
+      raise ValueError(
+        f"Unsupported AMP obs dim {self.amp_obs_dim}. Supported: {sorted(self._AMP_OBS_REGISTRY.keys())}."
+      )
+    return getattr(self, method_name)(env_ids=env_ids, base_obs=base_obs, asset=asset)
+
+  def _build_amp_obs_36(self, env_ids: torch.Tensor, base_obs: torch.Tensor, asset) -> torch.Tensor:
+    return base_obs
+
+  def _build_amp_obs_43(self, env_ids: torch.Tensor, base_obs: torch.Tensor, asset) -> torch.Tensor:
+    # Use simulator-side, up-to-date body velocities directly in body frame.
+    root_lin_vel_b = asset.data.root_link_lin_vel_b[env_ids]
+    root_ang_vel_b = asset.data.root_link_ang_vel_b[env_ids]
+
+    # Estimate local terrain height from ray-cast hits under/around the base.
+    root_pos_z = asset.data.root_link_pos_w[env_ids, 2]
+    local_ground_z: torch.Tensor | None = None
+    try:
+      terrain_scan = self.unwrapped.scene["terrain_scan"]
+      hit_z = terrain_scan.data.hit_pos_w[env_ids, :, 2]
+      distances = terrain_scan.data.distances[env_ids, :]
+      valid_mask = distances >= 0
+      if bool(valid_mask.any()):
+        hit_z_masked = hit_z.masked_fill(~valid_mask, float("nan"))
+        local_ground_z = torch.nanmedian(hit_z_masked, dim=1).values
+    except Exception:
+      local_ground_z = None
+
+    if local_ground_z is not None and bool(torch.isfinite(local_ground_z).any()):
+      if hasattr(self.unwrapped.scene, "env_origins") and self.unwrapped.scene.env_origins is not None:
+        fallback_ground_z = self.unwrapped.scene.env_origins[env_ids, 2]
+      else:
+        fallback_ground_z = torch.zeros_like(root_pos_z)
+      local_ground_z = torch.where(
+        torch.isfinite(local_ground_z),
+        local_ground_z,
+        fallback_ground_z,
+      )
+      root_z = (root_pos_z - local_ground_z).unsqueeze(-1)
+    elif hasattr(self.unwrapped.scene, "env_origins") and self.unwrapped.scene.env_origins is not None:
+      root_z = (root_pos_z - self.unwrapped.scene.env_origins[env_ids, 2]).unsqueeze(-1)
+    else:
+      root_z = root_pos_z.unsqueeze(-1)
+
+    return torch.cat(
+      [
+        base_obs,
+        root_lin_vel_b,
+        root_ang_vel_b,
+        root_z,
+      ],
+      dim=-1,
+    )
 
   # Private methods.
 
