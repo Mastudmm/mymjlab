@@ -13,6 +13,7 @@ class RslRlVecEnvWrapper(VecEnv):
   # Value = builder method that assembles the corresponding feature order.
   _AMP_OBS_REGISTRY: dict[int, str] = {
     36: "_build_amp_obs_36",
+    37: "_build_amp_obs_37",
     43: "_build_amp_obs_43",
   }
 
@@ -124,6 +125,7 @@ class RslRlVecEnvWrapper(VecEnv):
 
     Supported layouts:
     - 36D: [joint_pos_rel(12), joint_vel_rel(12), foot_pos_b(12)]
+    - 37D: 36D + [root_z(1)]
     - 43D: 36D + [root_lin_vel_b(3), root_ang_vel_b(3), root_z(1)]
 
     If ``env_ids`` is provided, only those environments are processed.
@@ -166,7 +168,7 @@ class RslRlVecEnvWrapper(VecEnv):
       [joint_pos_rel, joint_vel_rel, feet_pos_b.flatten(start_dim=1)],
       dim=-1,
     )
-    # Dispatch to layout-specific builder (36D legacy or 43D extended).
+    # Dispatch to layout-specific builder (36D legacy, 37D root_z-only, or 43D extended).
     return self._build_amp_obs(env_ids=env_ids, base_obs=base_obs, asset=asset)
 
   def set_amp_obs_dim(self, obs_dim: int) -> None:
@@ -192,6 +194,17 @@ class RslRlVecEnvWrapper(VecEnv):
     # Legacy layout used by existing checkpoints/datasets:
     # [joint_pos_rel(12), joint_vel_rel(12), foot_pos_b(12)]
     return base_obs
+
+  def _build_amp_obs_37(self, env_ids: torch.Tensor, base_obs: torch.Tensor, asset) -> torch.Tensor:
+    # 37D layout = legacy 36D + root_z(1), where root_z is spawn-ground-relative.
+    root_pos_z = asset.data.root_link_pos_w[env_ids, 2]
+
+    if hasattr(self.unwrapped.scene, "env_origins") and self.unwrapped.scene.env_origins is not None:
+      root_z = (root_pos_z - self.unwrapped.scene.env_origins[env_ids, 2]).unsqueeze(-1)
+    else:
+      root_z = root_pos_z.unsqueeze(-1)
+
+    return torch.cat([base_obs, root_z], dim=-1)
 
   def _build_amp_obs_43(self, env_ids: torch.Tensor, base_obs: torch.Tensor, asset) -> torch.Tensor:
     # Extended layout appends 7 root-level features to legacy 36D.

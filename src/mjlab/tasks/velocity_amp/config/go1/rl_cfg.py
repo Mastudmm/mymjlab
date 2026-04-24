@@ -44,7 +44,10 @@ class RslRlAmpOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
   #   [36:39]  root_lin_vel_b     ([vx, vy, vz] in body/base frame)
   #   [39:42]  root_ang_vel_b     ([wx, wy, wz] in body/base frame)
   #   [42:43]  root_z             (root height term, see vecenv_wrapper implementation)
-  amp_expected_obs_dim: int = 43
+  # 37D (root_z-only, keeps 43D dataset compatibility by filtering out 6 dims):
+  #   [0:36]   same as legacy 36D
+  #   [36:37]  root_z
+  amp_expected_obs_dim: int = 37
   amp_joint_pos_mode: str = "absolute"
   amp_joint_pos_offset: list[float] = field(default_factory=lambda: list(GO1_AMP_JOINT_POS_OFFSET))
 
