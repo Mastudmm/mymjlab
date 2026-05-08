@@ -24,9 +24,9 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
       stair_lip_downward=0.04,
     ),
     "pyramid_stairs_inv": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
-      proportion=0.9,
-      step_height_range=(0.12,0.17), #台阶高度可以在play的时候自由修改 train的时候尽量高
-      step_width_range=(0.26,0.26),
+      proportion=0.7,
+      step_height_range=(0.19,0.19), #台阶高度可以在play的时候自由修改 train的时候尽量高
+      step_width_range=(0.27,0.27),
       platform_width=3.0,
       border_width=1.0,
       stair_lip_enabled=True,
@@ -48,7 +48,7 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     ),
     "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
       proportion=0.0,
-      noise_range=(0.02, 0.15),
+      noise_range=(0.02, 0.1),
       noise_step=0.02,
       border_width=0.25,
     ),
