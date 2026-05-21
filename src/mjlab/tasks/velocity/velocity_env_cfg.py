@@ -26,7 +26,7 @@ from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.terrains import TerrainEntityCfg
-from mjlab.terrains.config import ROUGH_TERRAINS_CFG
+from mjlab.terrains.config import ROUGH_TERRAINS_CFG,ALL_TERRAINS_CFG
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
@@ -583,7 +583,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     scene=SceneCfg(
       terrain=TerrainEntityCfg(
         terrain_type="generator",
-        terrain_generator=replace(ROUGH_TERRAINS_CFG),
+        terrain_generator=replace(ALL_TERRAINS_CFG),
         max_init_terrain_level=5,
       ),
       sensors=(terrain_scan,),
