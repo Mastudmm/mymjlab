@@ -243,11 +243,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       },
     ),
     "reset_robot_joints": EventTermCfg(
-      func=mdp.reset_joints_by_offset,
+      func=mdp.reset_joints_from_motion,
       mode="reset",
       params={
-        "position_range": (-0.025, 0.025),
-        "velocity_range": (-0.025, 0.025),
+        "motion_files": ["dataset/*.json"],
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
       },
     ),
