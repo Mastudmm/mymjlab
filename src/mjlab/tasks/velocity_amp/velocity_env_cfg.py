@@ -242,6 +242,15 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "velocity_range": {},
       },
     ),
+    # "reset_robot_joints": EventTermCfg(
+    #   func=mdp.reset_joints_by_offset,
+    #   mode="reset",
+    #   params={
+    #     "position_range": (-0.025, 0.025),
+    #     "velocity_range": (-0.025, 0.025),
+    #     "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
+    #   },
+    # ),
     "reset_robot_joints": EventTermCfg(
       func=mdp.reset_joints_from_motion,
       mode="reset",
@@ -390,6 +399,16 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "sensor_name": "feet_ground_contact",
         "command_name": "twist",
         "command_threshold": 0.10,
+      },
+    ),
+    "feet_air_time": RewardTermCfg(
+      func=mdp.feet_air_time_amp,
+      weight=1.0,
+      params={
+        "sensor_name": "feet_ground_contact",
+        "target_air_time": 0.4,
+        "command_name": "twist",
+        "command_threshold": 0.5,
       },
     ),
     "calf_collision": RewardTermCfg(

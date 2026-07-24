@@ -205,6 +205,36 @@ def feet_air_time(
   return reward
 
 
+def feet_air_time_amp(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  target_air_time: float = 0.4,
+  command_name: str | None = None,
+  command_threshold: float = 0.5,
+) -> torch.Tensor:
+  """amp_go2-style feet air time reward.
+
+  Rewards ``(air_time - target)`` only at the instant a foot first touches
+  down, giving a continuous gradient that encourages longer swing (higher
+  lift + slower cadence) and penalizes short air time (scuffing / fast
+  shuffle). Unlike ``feet_air_time`` (threshold counting), this distinguishes
+  a 0.1s scuff (penalized) from a 0.5s swing (rewarded).
+  """
+  sensor: ContactSensor = env.scene[sensor_name]
+  first_contact = sensor.compute_first_contact(dt=env.step_dt)
+  last_air_time = sensor.data.last_air_time
+  assert last_air_time is not None
+  reward = torch.sum(
+    (last_air_time - target_air_time) * first_contact.float(), dim=1
+  )
+  if command_name is not None:
+    command = env.command_manager.get_command(command_name)
+    if command is not None:
+      total = torch.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])
+      reward = reward * (total > command_threshold).float()
+  return reward
+
+
 def feet_clearance(
   env: ManagerBasedRlEnv,
   target_height: float,

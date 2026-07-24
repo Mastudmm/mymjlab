@@ -39,6 +39,10 @@ class PlayConfig:
   seed: int | None = None
   no_terminations: bool = False
   """Disable all termination conditions (useful for viewing motions with dummy agents)."""
+  live_plot: bool = False
+  """Show a live matplotlib window (base vel + 12 leg joints) during play."""
+  plot_env: int = 0
+  """Environment index to plot when --live-plot is on (which dog)."""
 
   # Internal flag used by demo script.
   _demo_mode: tyro.conf.Suppress[bool] = False
@@ -172,6 +176,11 @@ def run_play(task_id: str, cfg: PlayConfig):
       video_length=cfg.video_length,
       disable_logger=True,
     )
+
+  if cfg.live_plot:
+    from mjlab.utils.wrappers.live_joint_plot import LiveJointPlot
+
+    env = LiveJointPlot(env, env_idx=cfg.plot_env)
 
   env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
   if DUMMY_MODE:
