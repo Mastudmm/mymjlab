@@ -28,7 +28,7 @@ class RslRlAmpOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
   amp_motion_files: list[str] = field(default_factory=lambda: ["dataset/*.json"])
   amp_reward_coef: float = 0.3
   amp_discr_hidden_dims: tuple[int, ...] = (1024, 512)
-  amp_task_reward_lerp: float = 0.6
+  amp_task_reward_lerp: float = 0.8
   amp_preflight_check: bool = True
   amp_preflight_strict: bool = True
   amp_preflight_max_files: int = 8
@@ -47,7 +47,7 @@ class RslRlAmpOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
   # 37D (root_z-only, keeps 43D dataset compatibility by filtering out 6 dims):
   #   [0:36]   same as legacy 36D
   #   [36:37]  root_z
-  amp_expected_obs_dim: int = 37
+  amp_expected_obs_dim: int = 43
   amp_joint_pos_mode: str = "absolute"
   amp_joint_pos_offset: list[float] = field(default_factory=lambda: list(GO1_AMP_JOINT_POS_OFFSET))
 

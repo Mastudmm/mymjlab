@@ -13,19 +13,19 @@
       "Bash(git ls-tree:*)"
     ]
   },
-  // "hooks": {
-  //   "PostToolUse": [
-  //     {
-  //       "matcher": "Write|Edit",
-  //       "hooks": [
-  //         {
-  //           "type": "command",
-  //           "command": "uv run ruff format"
-  //         }
-  //       ]
-  //     }
-  //   ]
-  // },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ""
+          }
+        ]
+      }
+    ]
+  },
   "enabledPlugins": {
     "code-simplifier@claude-plugins-official": true,
     "pr-review-toolkit@claude-plugins-official": true

@@ -315,7 +315,9 @@ def unitree_go1_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   )
   #del cfg.observations["actor"].terms["height_scan"]
   #del cfg.observations["critic"].terms["height_scan"]
-
+  # height_scan depends on the now-removed terrain_scan sensor and only                                                 
+  # exists in the critic group (actor has no such term).    
+  cfg.observations["critic"].terms.pop("height_scan", None) 
   # Disable terrain curriculum (not present in play mode since rough clears all).
   cfg.curriculum.pop("terrain_levels", None)
 
