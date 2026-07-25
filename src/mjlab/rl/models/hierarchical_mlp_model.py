@@ -100,6 +100,26 @@ class HierarchicalMLPModel(MLPModel):
       t.frame_dim for t in self._layout_terms if t.kind in ("proprio", "foot")
     )
 
+    # Precompute flat column indices for vectorized slicing (no python loop
+    # in forward). Each list is a plain python list[int] used as x[:, idx].
+    self._proprio_hist_idx: list[int] = []
+    self._terrain_idx: list[int] = []
+    self._proprio_cur_idx: list[int] = []
+    self._foot_cur_idx: list[int] = []
+    for t in self._layout_terms:
+      if t.kind == "terrain":
+        self._terrain_idx.extend(range(t.offset, t.offset + t.block_dim))
+      elif t.kind == "foot":
+        self._foot_cur_idx.extend(
+          range(t.offset + t.block_dim - t.frame_dim, t.offset + t.block_dim)
+        )
+      else:  # proprio
+        if t.hist > 1:
+          self._proprio_hist_idx.extend(range(t.offset, t.offset + t.block_dim - t.frame_dim))
+        self._proprio_cur_idx.extend(
+          range(t.offset + t.block_dim - t.frame_dim, t.offset + t.block_dim)
+        )
+
     # Phase 2: super().__init__ triggers _get_obs_dim + _get_latent_dim.
     super().__init__(obs, obs_groups, obs_set, output_dim, **kwargs)
 
@@ -187,34 +207,15 @@ class HierarchicalMLPModel(MLPModel):
     x = torch.cat([obs[g] for g in self.obs_groups], dim=-1)
     x = self.obs_normalizer(x)
 
-    proprio_history: list[torch.Tensor] = []
-    proprio_current: list[torch.Tensor] = []
-    foot_current: list[torch.Tensor] = []
-    terrain: list[torch.Tensor] = []
-    for t in self._layout_terms:
-      slab = x.narrow(1, t.offset, t.block_dim)
-      if t.hist > 1:
-        current = slab.narrow(1, t.block_dim - t.frame_dim, t.frame_dim)
-        history = slab.narrow(1, 0, t.block_dim - t.frame_dim)
-      else:
-        current = slab
-        history = None
-      if t.kind == "terrain":
-        terrain.append(slab)  # whole block (with history) -> terrain_encoder
-      elif t.kind == "foot":
-        foot_current.append(current)
-      else:  # proprio
-        proprio_current.append(current)
-        if history is not None:
-          proprio_history.append(history)
-
+    # Vectorized slicing: no python loop, minimal cat.
     parts: list[torch.Tensor] = []
-    if self.history_encoder is not None and proprio_history:
-      parts.append(self.history_encoder(torch.cat(proprio_history, dim=-1)))
-    if self.terrain_encoder is not None and terrain:
-      parts.append(self.terrain_encoder(torch.cat(terrain, dim=-1)))
-    parts.extend(proprio_current)
-    parts.extend(foot_current)
+    if self.history_encoder is not None and self._proprio_hist_idx:
+      parts.append(self.history_encoder(x[:, self._proprio_hist_idx]))
+    if self.terrain_encoder is not None and self._terrain_idx:
+      parts.append(self.terrain_encoder(x[:, self._terrain_idx]))
+    parts.append(x[:, self._proprio_cur_idx])
+    if self._foot_cur_idx:
+      parts.append(x[:, self._foot_cur_idx])
     return torch.cat(parts, dim=-1)
 
   def as_jit(self) -> nn.Module:
@@ -251,52 +252,25 @@ class _TorchHierarchicalMLPModel(nn.Module):
       else nn.Identity()
     )
 
-    offs, blocks, frames, hists, kinds = [], [], [], [], []
-    kind_map = {"proprio": 0, "terrain": 1, "foot": 2}
-    for t in model._layout_terms:
-      offs.append(t.offset)
-      blocks.append(t.block_dim)
-      frames.append(t.frame_dim)
-      hists.append(t.hist)
-      kinds.append(kind_map[t.kind])
-    # Layout as plain python lists (static constants) so torch.export / onnx
-    # tracing doesn't hit data-dependent int(tensor[i]).
-    self._offsets = offs
-    self._blocks = blocks
-    self._frames = frames
-    self._hists = hists
-    self._kinds = kinds
-    self._n_terms = len(offs)
+    # Reuse the precomputed flat column indices from the parent model
+    # (vectorized slicing, no python loop in forward).
+    self._proprio_hist_idx = model._proprio_hist_idx
+    self._terrain_idx = model._terrain_idx
+    self._proprio_cur_idx = model._proprio_cur_idx
+    self._foot_cur_idx = model._foot_cur_idx
     self._has_hist = model.history_encoder is not None
     self._has_terr = model.terrain_encoder is not None
 
   def forward(self, x: torch.Tensor) -> torch.Tensor:
     x = self.obs_normalizer(x)
-    hist_chunks, terr_chunks, proprio_curr, foot_curr = [], [], [], []
-    for i in range(self._n_terms):
-      off = self._offsets[i]
-      blk = self._blocks[i]
-      frm = self._frames[i]
-      h = self._hists[i]
-      k = self._kinds[i]
-      slab = x.narrow(1, off, blk)
-      if k == 1:  # terrain
-        terr_chunks.append(slab)
-      else:
-        current = slab.narrow(1, blk - frm, frm) if h > 1 else slab
-        if k == 2:  # foot
-          foot_curr.append(current)
-        else:  # proprio
-          proprio_curr.append(current)
-          if h > 1:
-            hist_chunks.append(slab.narrow(1, 0, blk - frm))
     parts: list[torch.Tensor] = []
-    if self._has_hist and hist_chunks:
-      parts.append(self.history_encoder(torch.cat(hist_chunks, dim=-1)))
-    if self._has_terr and terr_chunks:
-      parts.append(self.terrain_encoder(torch.cat(terr_chunks, dim=-1)))
-    parts.extend(proprio_curr)
-    parts.extend(foot_curr)
+    if self._has_hist and self._proprio_hist_idx:
+      parts.append(self.history_encoder(x[:, self._proprio_hist_idx]))
+    if self._has_terr and self._terrain_idx:
+      parts.append(self.terrain_encoder(x[:, self._terrain_idx]))
+    parts.append(x[:, self._proprio_cur_idx])
+    if self._foot_cur_idx:
+      parts.append(x[:, self._foot_cur_idx])
     latent = torch.cat(parts, dim=-1)
     return self.deterministic_output(self.mlp(latent))
 
