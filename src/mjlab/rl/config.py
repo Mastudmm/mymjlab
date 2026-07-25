@@ -33,6 +33,32 @@ class RslRlModelCfg:
 
 
 @dataclass
+class HierarchicalModelCfg(RslRlModelCfg):
+  """RslRlModelCfg + proprio history / terrain encoders.
+
+  Use with ``class_name="mjlab.rl.models.hierarchical_mlp_model:HierarchicalMLPModel"``
+  (the default here). Term layout is auto-extracted from the observation_manager,
+  so these fields only configure encoder MLP shapes and which terms are
+  terrain/foot; everything else is treated as proprio (current + history encoded).
+  """
+
+  history_encoder_dims: Tuple[int, ...] = (128, 64)
+  """Proprio-history encoder MLP dims (last entry = output dim, e.g. 64)."""
+  terrain_encoder_dims: Tuple[int, ...] = (256, 128, 64)
+  """Terrain encoder MLP dims (height_scan with its history; last = output)."""
+  terrain_term_names: Tuple[str, ...] = ("height_scan",)
+  """Terms routed through the terrain encoder (whole block incl. history)."""
+  foot_term_names: Tuple[str, ...] = (
+    "foot_height",
+    "foot_air_time",
+    "foot_contact",
+    "foot_contact_forces",
+  )
+  """Terms whose current frame is fed directly (no history encoder)."""
+  class_name: str = "mjlab.rl.models.hierarchical_mlp_model:HierarchicalMLPModel"
+
+
+@dataclass
 class RslRlPpoAlgorithmCfg:
   """Config nfor the PPO algorithm."""
 

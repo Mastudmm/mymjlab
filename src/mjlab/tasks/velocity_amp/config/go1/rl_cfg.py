@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from mjlab.asset_zoo.robots.unitree_go1.go1_constants import GO1_AMP_JOINT_POS_OFFSET
 from mjlab.rl import (
-  RslRlModelCfg,
+  HierarchicalModelCfg,
   RslRlOnPolicyRunnerCfg,
   RslRlPpoAlgorithmCfg,
 )
@@ -55,7 +55,7 @@ class RslRlAmpOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
 def unitree_go1_amp_runner_cfg() -> RslRlAmpOnPolicyRunnerCfg:
   """Create AMP runner configuration for Unitree Go1 velocity_amp task."""
   return RslRlAmpOnPolicyRunnerCfg(
-    actor=RslRlModelCfg(
+    actor=HierarchicalModelCfg(
       hidden_dims=(512, 256, 128),
       activation="elu",
       obs_normalization=False,
@@ -65,7 +65,7 @@ def unitree_go1_amp_runner_cfg() -> RslRlAmpOnPolicyRunnerCfg:
         "std_type": "scalar",
       },
     ),
-    critic=RslRlModelCfg(
+    critic=HierarchicalModelCfg(
       hidden_dims=(512, 256, 128),
       activation="elu",
       obs_normalization=False,
