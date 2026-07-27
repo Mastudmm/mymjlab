@@ -56,6 +56,16 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     viz=RayCastSensorCfg.VizCfg(show_normals=True),
   )
 
+  # Single-ray sensor pointing straight down from base for terrain-relative
+  # height. Used by AMP obs (root_z) and track_base_height reward.
+  ray_base = RayCastSensorCfg(
+    name="ray_base",
+    frame=ObjRef(type="body", name="", entity="robot"),  # Set per-robot.
+    pattern=GridPatternCfg(size=(0.0, 0.0), resolution=0.01),
+    max_distance=5.0,
+    exclude_parent_body=True,
+  )
+
   ##
   # Observations
   ##
@@ -154,7 +164,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   # Checkpoint expects 240 dims which corresponds to 48 dims * 5 frames.
   observations["actor"].history_length = 5
   observations["actor"].flatten_history_dim = True
-  observations["critic"].history_length = 5
+  observations["critic"].history_length = 3
   observations["critic"].flatten_history_dim = True
 
   ##
@@ -340,7 +350,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "pose": RewardTermCfg( #保持关节角度，threshold代表在行走或者是跑动的时候限制将被放宽
       func=mdp.variable_posture,
-      weight=0.85,
+      weight=0.0,
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
         "command_name": "twist",
@@ -362,7 +372,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"sensor_name": "robot/root_angmom"},
     ),
     "dof_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-1.0),
-    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.1),
+    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.35),
     "j_vel_l2": RewardTermCfg(func=mdp.joint_vel_l2, weight=-0.001),
     
     "base_height": RewardTermCfg(
@@ -403,12 +413,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "feet_air_time": RewardTermCfg(
       func=mdp.feet_air_time_amp,
-      weight=1.0,
+      weight=0.5,
       params={
         "sensor_name": "feet_ground_contact",
-        "target_air_time": 0.4,
+        "target_air_time": 0.25,
         "command_name": "twist",
-        "command_threshold": 0.5,
+        "command_threshold": 0.1,
       },
     ),
     "calf_collision": RewardTermCfg(
@@ -426,7 +436,19 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       weight= -0.000001,
       params={"asset_cfg":SceneEntityCfg("robot")}
     ),
-    
+    "foot_swing_height": RewardTermCfg(
+      func=mdp.feet_swing_height,
+      weight=0.0,
+      params={
+        "sensor_name": "feet_ground_contact",
+        "target_height": 0.15,
+        "command_name": "twist",
+        "command_threshold": 0.05,
+        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+        "height_sensor_name": None, # Explicitly allow override
+      },
+    ),
+
   }
 
 
@@ -470,8 +492,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
               {"step": 0, "lin_vel_x": (-0.5, 0.5), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.5, 1.5)},
               {"step": 400 * 24, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-1.5, 1.5)},
               {"step": 1000 * 24, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.72, 1.72)},
-              {"step": 1600 * 24, "lin_vel_x": (-0.5, 0.75), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.82, 1.82)},
-              {"step": 2000 * 24, "lin_vel_x": (-0.5, 0.6), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.82, 1.82)},
+              # {"step": 1600 * 24, "lin_vel_x": (-0.5, 0.75), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.82, 1.82)},
+              {"step": 2000 * 24, "lin_vel_x": (-1.0, 2.0), "lin_vel_y": (-1.25, 1.25), "ang_vel_z": (-2.0, 2.0)},
             
             ],
           },
@@ -481,15 +503,15 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
               {"step": 0, "lin_vel_x": (-0.5, 0.5), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.5, 1.5)},
               {"step": 400 * 24, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-1.5, 1.5)},
               {"step": 1000 * 24, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.72, 1.72)},
-              {"step": 1600 * 24, "lin_vel_x": (-0.5, 0.75), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.82, 1.82)},
-              {"step": 2000 * 24, "lin_vel_x": (-0.5, 0.6), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.82, 1.82)},
+              # {"step": 1600 * 24, "lin_vel_x": (-0.5, 0.75), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.82, 1.82)},
+              {"step": 2000 * 24, "lin_vel_x": (-1.0, 2.0), "lin_vel_y": (-1.25, 1.25), "ang_vel_z": (-2.0, 2.0)},
             ],
           },
           {
             "terrain_name": "random_rough",
             "stages": [
               {"step": 0, "lin_vel_x": (-0.5, 0.5), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-1.5, 1.5)},
-              {"step": 600 * 24, "lin_vel_x": (-1.0, 1.5), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.25, 1.25)},
+              {"step": 1000 * 24, "lin_vel_x": (-1.0, 1.5), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.25, 1.25)},
             ],
           },
         ],
@@ -503,10 +525,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
                 {"step": 0, "params": {"std": math.sqrt(0.16)}},
                 {"step": 1000 * 24, "params": {"std": math.sqrt(0.15)}},
                 {"step": 1400 * 24, "params": {"std": math.sqrt(0.14)}},
-                {"step": 1800 * 24, "params": {"std": math.sqrt(0.13)}},
-                {"step": 2200 * 24, "params": {"std": math.sqrt(0.12)}},
-                {"step": 2600 * 24, "params": {"std": math.sqrt(0.11)}},
-                {"step": 3000 * 24, "params": {"std": math.sqrt(0.10)}},
+                # {"step": 1800 * 24, "params": {"std": math.sqrt(0.13)}},
+                # {"step": 2200 * 24, "params": {"std": math.sqrt(0.12)}},
+                # {"step": 2600 * 24, "params": {"std": math.sqrt(0.11)}},
+                # {"step": 3000 * 24, "params": {"std": math.sqrt(0.10)}},
             ],
         },
     ),
@@ -532,6 +554,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       ],
     },
   ),
+
   }
 
   ##
@@ -545,7 +568,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         terrain_generator=replace(ROUGH_TERRAINS_CFG),
         max_init_terrain_level=5,
       ),
-      sensors=(terrain_scan,),
+      sensors=(terrain_scan, ray_base),
       num_envs=1,
       extent=2.0,
     ),
@@ -566,7 +589,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       azimuth=90.0,
     ),
     sim=SimulationCfg(
-      nconmax=35,
+      nconmax=50,
       njmax=1500,
       mujoco=MujocoCfg(
         timestep=0.005,

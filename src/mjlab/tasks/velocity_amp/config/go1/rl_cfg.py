@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from mjlab.asset_zoo.robots.unitree_go1.go1_constants import GO1_AMP_JOINT_POS_OFFSET
 from mjlab.rl import (
   HierarchicalModelCfg,
+  RslRlModelCfg,
   RslRlOnPolicyRunnerCfg,
   RslRlPpoAlgorithmCfg,
 )

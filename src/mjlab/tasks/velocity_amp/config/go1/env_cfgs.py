@@ -8,16 +8,13 @@ from mjlab.asset_zoo.robots import (
 )
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
-from mjlab.envs.mdp.actions import JointPositionActionCfg
-from mjlab.managers import TerminationTermCfg
-from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.managers.event_manager import EventTermCfg
-from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg
-from mjlab.tasks.velocity_amp import mdp
-from mjlab.tasks.velocity_amp.mdp import UniformVelocityCommandCfg
 from mjlab.envs.mdp import dr
+from mjlab.envs.mdp.actions import JointPositionActionCfg
+from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg
+from mjlab.tasks.velocity_amp.mdp import UniformVelocityCommandCfg
 from mjlab.tasks.velocity_amp.velocity_env_cfg import make_velocity_env_cfg
-from mjlab.managers.reward_manager import RewardTermCfg
 
 TerrainType = Literal["rough", "obstacles"]
 
@@ -35,7 +32,7 @@ def unitree_go1_rough_env_cfg(
 
   # Set raycast sensor frame to Go1 trunk.
   for sensor in cfg.scene.sensors or ():
-    if sensor.name == "terrain_scan":
+    if sensor.name in ("terrain_scan", "ray_base"):
       assert isinstance(sensor, RayCastSensorCfg)
       sensor.frame.name = "trunk"
 

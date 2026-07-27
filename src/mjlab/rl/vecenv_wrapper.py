@@ -1,9 +1,9 @@
 import torch
 from rsl_rl.env import VecEnv
 from tensordict import TensorDict
-from mjlab.utils.lab_api.math import quat_apply_inverse
 
 from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
+from mjlab.utils.lab_api.math import quat_apply_inverse
 from mjlab.utils.spaces import Space
 
 
@@ -213,17 +213,20 @@ class RslRlVecEnvWrapper(VecEnv):
     # 5) Root angular velocity in body frame (3D).
     root_ang_vel_b = asset.data.root_link_ang_vel_b[env_ids]
 
-    # 6) Root height term root_z (1D).
-    #    Use spawn-ground-relative height to align with expert data collected
-    #    around a fixed nominal base height: root_z = root_pos_z - env_origin_z.
-    #    Here env_origin_z is the terrain height offset assigned at env spawn.
-    #    Fallback to absolute root z only when env origins are unavailable.
+    # 6) Root height term root_z (1D), terrain-relative.
+    #    Uses ray_base sensor (real-time terrain height under base) instead of
+    #    fixed env_origin. This keeps root_z stable on stairs/slopes where the
+    #    robot climbs and env_origin (spawn point) becomes stale.
     root_pos_z = asset.data.root_link_pos_w[env_ids, 2]
-
-    if hasattr(self.unwrapped.scene, "env_origins") and self.unwrapped.scene.env_origins is not None:
-      root_z = (root_pos_z - self.unwrapped.scene.env_origins[env_ids, 2]).unsqueeze(-1)
-    else:
-      root_z = root_pos_z.unsqueeze(-1)
+    try:
+      ray_base = self.unwrapped.scene["ray_base"]
+      hit_z = ray_base.data.hit_pos_w[env_ids, 0, 2]
+      root_z = (root_pos_z - hit_z).unsqueeze(-1)
+    except (KeyError, TypeError):
+      if hasattr(self.unwrapped.scene, "env_origins") and self.unwrapped.scene.env_origins is not None:
+        root_z = (root_pos_z - self.unwrapped.scene.env_origins[env_ids, 2]).unsqueeze(-1)
+      else:
+        root_z = root_pos_z.unsqueeze(-1)
 
     return torch.cat(
       [
