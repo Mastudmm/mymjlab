@@ -28,7 +28,7 @@ class RslRlAmpOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
   amp_num_preload_transitions: int = 1_000_000
   amp_motion_files: list[str] = field(default_factory=lambda: ["dataset/*.json"])
   amp_reward_coef: float = 0.3
-  amp_discr_hidden_dims: tuple[int, ...] = (1024, 512)
+  amp_discr_hidden_dims: tuple[int, ...] = (512, 256)
   amp_task_reward_lerp: float = 0.8
   amp_preflight_check: bool = True
   amp_preflight_strict: bool = True

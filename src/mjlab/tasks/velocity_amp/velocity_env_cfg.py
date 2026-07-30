@@ -198,9 +198,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "twist": UniformVelocityCommandCfg(
       entity_name="robot",
       resampling_time_range=(15.0, 18.0),
-      rel_standing_envs=0.1,
+      rel_standing_envs=0.05,
       rel_heading_envs=1.0, #给一个期望的朝向角（heading），不要求前进/横移速度；通过朝向控制把机体转到目标朝向
-      rel_cardinal_heading_envs=0.5, # 50% 从 0/90/180/270 度离散采样，其余保持均匀采样
+      rel_cardinal_heading_envs=0.5, # 50% 从 0/90/180/270 度离散采样，其余保持均匀采样 (只影响那些已经采样的 heading_target_env)
       rel_pure_x_envs=0.8, # 10% 的概率只产生 X 方向速度 (vy=0)
       rel_pure_y_envs=0.1, # 10% 的概率只产生 Y 方向速度 (vx=0)
       heading_command=True,
@@ -216,19 +216,19 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       # 例如台阶地形降低速度、平地提高速度。
       terrain_command_ranges={
         "pyramid_stairs": UniformVelocityCommandCfg.Ranges(
-          lin_vel_x=(0.1, 0.5),
-          lin_vel_y=(-0.2, 0.2),
-          ang_vel_z=(-0.8, 0.8),
+          lin_vel_x=(-0.5, 0.5),
+          lin_vel_y=(-0.5, 0.5),
+          ang_vel_z=(-1.8, 1.8),
         ),
         "pyramid_stairs_inv": UniformVelocityCommandCfg.Ranges(
-          lin_vel_x=(0.1, 0.45),
-          lin_vel_y=(-0.2, 0.2),
-          ang_vel_z=(-0.8, 0.8),
+          lin_vel_x=(-0.5, 0.5),
+          lin_vel_y=(-0.5, 0.5),
+          ang_vel_z=(-1.8, 1.8),
         ),
         "flat": UniformVelocityCommandCfg.Ranges(
-          lin_vel_x=(0.6, 1.6),
-          lin_vel_y=(-0.5, 0.5),
-          ang_vel_z=(-1.2, 1.2),
+          lin_vel_x=(-1.0, 1.6),
+          lin_vel_y=(-0.85, 0.85),
+          ang_vel_z=(-1.52, 1.52),
         ),
       },
     )
@@ -413,7 +413,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "feet_air_time": RewardTermCfg(
       func=mdp.feet_air_time_amp,
-      weight=0.5,
+      weight=0.25,
       params={
         "sensor_name": "feet_ground_contact",
         "target_air_time": 0.25,
@@ -490,10 +490,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
             "terrain_name": "pyramid_stairs",
             "stages": [
               {"step": 0, "lin_vel_x": (-0.5, 0.5), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.5, 1.5)},
-              {"step": 400 * 24, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-1.5, 1.5)},
-              {"step": 1000 * 24, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.72, 1.72)},
+              {"step": 500 * 24, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-1.5, 1.5)},
+              {"step": 1000 * 24, "lin_vel_x": (-0.6, 0.8), "lin_vel_y": (-0.65, 0.65), "ang_vel_z": (-1.72, 1.72)},
               # {"step": 1600 * 24, "lin_vel_x": (-0.5, 0.75), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.82, 1.82)},
-              {"step": 2000 * 24, "lin_vel_x": (-1.0, 2.0), "lin_vel_y": (-1.25, 1.25), "ang_vel_z": (-2.0, 2.0)},
+              {"step": 2000 * 24, "lin_vel_x": (-0.5, 0.6), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-2.0, 2.0)},
             
             ],
           },
@@ -501,17 +501,18 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
             "terrain_name": "pyramid_stairs_inv",
             "stages": [
               {"step": 0, "lin_vel_x": (-0.5, 0.5), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.5, 1.5)},
-              {"step": 400 * 24, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-1.5, 1.5)},
-              {"step": 1000 * 24, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.72, 1.72)},
+              {"step": 500 * 24, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-1.5, 1.5)},
+              {"step": 1000 * 24, "lin_vel_x": (-0.6, 0.8), "lin_vel_y": (-0.65, 0.65), "ang_vel_z": (-1.72, 1.72)},
               # {"step": 1600 * 24, "lin_vel_x": (-0.5, 0.75), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.82, 1.82)},
-              {"step": 2000 * 24, "lin_vel_x": (-1.0, 2.0), "lin_vel_y": (-1.25, 1.25), "ang_vel_z": (-2.0, 2.0)},
+              {"step": 1500 * 24, "lin_vel_x": (0.1, 0.5), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-2.0, 2.0)},
+              {"step": 2000 * 24, "lin_vel_x": (-0.5, 0.65), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-2.0, 2.0)},
             ],
           },
           {
             "terrain_name": "random_rough",
             "stages": [
-              {"step": 0, "lin_vel_x": (-0.5, 0.5), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-1.5, 1.5)},
-              {"step": 1000 * 24, "lin_vel_x": (-1.0, 1.5), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.25, 1.25)},
+              {"step": 0, "lin_vel_x": (-0.75, 0.75), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-1.5, 1.5)},
+              {"step": 1000 * 24, "lin_vel_x": (-1.0, 1.25), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.25, 1.25)},
             ],
           },
         ],
@@ -523,8 +524,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
             "reward_name": "track_linear_velocity",
             "stages": [
                 {"step": 0, "params": {"std": math.sqrt(0.16)}},
-                {"step": 1000 * 24, "params": {"std": math.sqrt(0.15)}},
-                {"step": 1400 * 24, "params": {"std": math.sqrt(0.14)}},
+                {"step": 1500 * 24, "params": {"std": math.sqrt(0.15)}},
+                {"step": 2000 * 24, "params": {"std": math.sqrt(0.14)}},
                 # {"step": 1800 * 24, "params": {"std": math.sqrt(0.13)}},
                 # {"step": 2200 * 24, "params": {"std": math.sqrt(0.12)}},
                 # {"step": 2600 * 24, "params": {"std": math.sqrt(0.11)}},
@@ -539,7 +540,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
             "stages": [
                 {"step": 0* 24, "weight": -0.3},
                 {"step": 1000* 24, "weight": -0.25},
-                {"step": 2000* 24, "weight": -0.15},
+                {"step": 2000* 24, "weight": -0.2},
             ],
         },
     ),

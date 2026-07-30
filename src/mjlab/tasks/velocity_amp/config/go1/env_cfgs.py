@@ -11,7 +11,9 @@ from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp import dr
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg
 from mjlab.tasks.velocity_amp.mdp import UniformVelocityCommandCfg
 from mjlab.tasks.velocity_amp.velocity_env_cfg import make_velocity_env_cfg

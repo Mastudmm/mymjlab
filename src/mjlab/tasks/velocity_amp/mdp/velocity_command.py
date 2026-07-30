@@ -107,7 +107,10 @@ class UniformVelocityCommand(CommandTerm):
     # 1) 先按全局范围采样（默认命令范围）
     self._sample_velocity_range(env_ids, self.cfg.ranges)
 
-    # 2) 若配置了地形专属范围，则按 env 所在地形覆盖重采样
+
+    # 第 2 步：如果配置了 terrain_command_ranges 并且能拿到 terrain 映射，
+    #         就针对特定地形再做一次采样，直接覆盖上一步的结果
+    #也就是 若配置了地形专属范围，则按 env 所在地形覆盖重采样
     #    仅在 terrain generator curriculum 下可可靠按“地形类型”区分。
     if self.cfg.terrain_command_ranges and self._terrain_name_per_col is not None:
       terrain = self._env.scene.terrain
