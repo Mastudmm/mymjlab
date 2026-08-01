@@ -1108,12 +1108,17 @@ class stair_climb_milestone:
   """
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self._num_envs = env.num_envs
+    self._device = env.device
     self._spawn_rel_z = torch.zeros(env.num_envs, device=env.device)
     self._half_done = torch.zeros(
       env.num_envs, device=env.device, dtype=torch.bool
     )
     self._full_done = torch.zeros_like(self._half_done)
-    self._initialized = False
+    # 标记需要重置 spawn_rel_z(reset 钩子设 True,__call__ 时 env 已更新再记录)。
+    self._need_spawn_reset = torch.ones(
+      env.num_envs, device=env.device, dtype=torch.bool
+    )
     # inv 列索引缓存（curriculum 模式下按 proportion 分配列）。
     self._inv_col_t: torch.Tensor | None = None
     terrain = getattr(env.scene, "terrain", None)
@@ -1146,6 +1151,18 @@ class stair_climb_milestone:
         inv_cols.append(col)
     return inv_cols
 
+  def reset(self, env_ids: torch.Tensor | None = None) -> None:
+    """Episode reset 钩子:清零里程碑标志,标记待重置 spawn 基准。
+
+    由 RewardManager 在 _reset_idx 中调用(此时 env_origins/robot 位置尚未
+    更新,故只标记,_spawn_rel_z 留到 __call__ 时用更新后的 rel_z 记录)。
+    """
+    if env_ids is None:
+      env_ids = torch.arange(self._num_envs, device=self._device)
+    self._half_done[env_ids] = False
+    self._full_done[env_ids] = False
+    self._need_spawn_reset[env_ids] = True
+
   def __call__(
     self,
     env: ManagerBasedRlEnv,
@@ -1165,17 +1182,11 @@ class stair_climb_milestone:
     # inv 总爬升 = -env_origin_z；clamp 防 env_origin_z>=0(非 inv) 时阈值<=0 误触发。
     total_height = torch.clamp(-env_origin_z, min=1e-3)
 
-    # reset / 首帧：重置基准高度与里程碑标志。
-    is_reset = env.episode_length_buf == 0
-    if not self._initialized:
-      is_reset = torch.ones(
-        env.num_envs, device=env.device, dtype=torch.bool
-      )
-      self._initialized = True
-    if is_reset.any():
-      self._spawn_rel_z[is_reset] = rel_z[is_reset]
-      self._half_done[is_reset] = False
-      self._full_done[is_reset] = False
+    # reset 钩子标记的 env: 重置 spawn 基准(此时 env 已更新到新 spawn)。
+    # mask(half_done/full_done) 由 reset() 钩子清零,这里只重置 spawn_rel_z。
+    if self._need_spawn_reset.any():
+      self._spawn_rel_z[self._need_spawn_reset] = rel_z[self._need_spawn_reset]
+      self._need_spawn_reset[self._need_spawn_reset] = False
 
     climb = rel_z - self._spawn_rel_z  # 净爬升(standing_height 抵消)
 
@@ -1188,16 +1199,15 @@ class stair_climb_milestone:
         is_inv = torch.isin(
           terrain.terrain_types[: env.num_envs], self._inv_col_t
         )
-    # 2) command gate: 有前进 command 且 body 速度与 command 同向(点积)。
-    #    用点积而非只看 vx，覆盖纯 vy 横向上台阶的情况。
+    # 2) command gate: 有前进 command 即可(不要求瞬时 body 速度同向)。
+    #    climb>=half 已保证真爬,瞬时 body_vel 在步态周期内波动(停顿/换步)
+    #    会让 dot>0 误杀里程碑,故只保留 command 有前进要求这一条件。
     aligned = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
     if command_name is not None:
       command = env.command_manager.get_command(command_name)
       if command is not None:
         cmd_xy = command[:, :2]
-        body_vel_b = asset.data.root_link_lin_vel_b[:, :2]
-        dot = torch.sum(body_vel_b * cmd_xy, dim=1)
-        aligned = (torch.norm(cmd_xy, dim=1) > command_threshold) & (dot > 0.0)
+        aligned = torch.norm(cmd_xy, dim=1) > command_threshold
     # 3) upright gate: 直立才给(防摔倒翻滚瞬间 root_z 异常刷里程碑)。
     upright = (-asset.data.projected_gravity_b[:, 2]) > upright_threshold
 
@@ -1212,6 +1222,18 @@ class stair_climb_milestone:
     )
     self._half_done |= half_reach
     self._full_done |= full_reach
+
+    # debug: 排查里程碑不触发的原因(训练稳定后可删)。
+    env.extras["log"]["Debug/climb_mean"] = torch.mean(climb)
+    env.extras["log"]["Debug/total_height_mean"] = torch.mean(total_height)
+    env.extras["log"]["Debug/half_threshold_mean"] = torch.mean(
+      half_fraction * total_height
+    )
+    env.extras["log"]["Debug/gate_inv_ratio"] = torch.mean(is_inv.float())
+    env.extras["log"]["Debug/gate_aligned_ratio"] = torch.mean(aligned.float())
+    env.extras["log"]["Debug/gate_upright_ratio"] = torch.mean(upright.float())
+    env.extras["log"]["Debug/half_reach_count"] = torch.sum(half_reach.float())
+    env.extras["log"]["Debug/full_reach_count"] = torch.sum(full_reach.float())
 
     return half_reach.float() * half_reward + full_reach.float() * full_reward
 
