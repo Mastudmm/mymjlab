@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypedDict, cast
 
+import numpy as np
 import torch
 
 from mjlab.entity import Entity
@@ -32,12 +33,36 @@ class RewardWeightStage(TypedDict):
   weight: float
 
 
+def _resolve_col_terrain_names(terrain_generator) -> list[str] | None:
+  """column -> terrain_name 映射（curriculum 模式按 cumulative proportion）。
+
+  与 TerrainGenerator._generate_curriculum_terrains 列分配逻辑一致，
+  用于按地形类型分组统计 terrain_levels / total_height。
+  """
+  if not bool(getattr(terrain_generator, "curriculum", False)):
+    return None
+  names = list(terrain_generator.sub_terrains.keys())
+  props = np.array(
+    [s.proportion for s in terrain_generator.sub_terrains.values()],
+    dtype=np.float64,
+  )
+  if props.sum() <= 0.0:
+    return None
+  cum = np.cumsum(props / props.sum())
+  num_cols = int(terrain_generator.num_cols)
+  col_names: list[str] = []
+  for col in range(num_cols):
+    sub_idx = int(np.min(np.where(col / num_cols + 0.001 < cum)[0]))
+    col_names.append(names[sub_idx])
+  return col_names
+
+
 def terrain_levels_vel(
   env: ManagerBasedRlEnv,
   env_ids: torch.Tensor,
   command_name: str,
   asset_cfg: SceneEntityCfg = _DEFAULT_SCENE_CFG,
-) -> torch.Tensor:
+) -> dict[str, torch.Tensor]:
   asset: Entity = env.scene[asset_cfg.name]
 
   terrain = env.scene.terrain
@@ -66,7 +91,27 @@ def terrain_levels_vel(
   # Update terrain levels.
   terrain.update_env_origins(env_ids, move_up, move_down)
 
-  return torch.mean(terrain.terrain_levels.float())
+  # 按 terrain_types 分组统计 level / total_height，定位卡住的地形。
+  # 返回 dict，curriculum manager 展开为 Curriculum/terrain_levels/{key}。
+  stats: dict[str, torch.Tensor] = {
+    "level_mean": torch.mean(terrain.terrain_levels.float())
+  }
+  col_names = _resolve_col_terrain_names(terrain_generator)
+  if col_names is not None:
+    terrain_types = terrain.terrain_types  # [num_envs] 列号
+    levels = terrain.terrain_levels.float()  # [num_envs] 难度行
+    # inv 地形 spawn 在中心最低点，env_origin_z = -total_height，
+    # 取负即台阶总爬升量；非下沉地形该值无台阶含义但不会出错。
+    total_heights = -env.scene.env_origins[:, 2]
+    for terrain_name in sorted(set(col_names)):
+      cols = [c for c, n in enumerate(col_names) if n == terrain_name]
+      col_mask = torch.zeros_like(terrain_types, dtype=torch.bool)
+      for c in cols:
+        col_mask |= terrain_types == c
+      if col_mask.any():
+        stats[f"level_{terrain_name}"] = levels[col_mask].mean()
+        stats[f"total_height_{terrain_name}"] = total_heights[col_mask].mean()
+  return stats
 
 
 def commands_vel(
