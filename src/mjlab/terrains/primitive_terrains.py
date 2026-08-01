@@ -11,7 +11,7 @@ References:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Literal, Tuple
 
 import mujoco
 import numpy as np
@@ -74,6 +74,11 @@ class BoxPyramidStairsTerrainCfg(SubTerrainCfg):
   """Min and max step height, in meters. Interpolated by difficulty."""
   step_width_range: tuple[float, float] = (0.25, 0.45)
   """Min and max depth (run) of each step, in meters. Interpolated by difficulty."""
+  step_width_mode: Literal["difficulty", "random"] = "difficulty"
+  """步阶宽度采样模式：
+  - "difficulty": 按 difficulty 线性插值(高难度=窄台阶)。
+  - "random": 在 step_width_range 内随机采样(每 patch 独立,泛化性好)。
+  """
   platform_width: float = 1.0
   """Side length of the flat square platform at the top of the staircase, in meters."""
   holes: bool = False
@@ -162,7 +167,6 @@ class BoxPyramidStairsTerrainCfg(SubTerrainCfg):
   def function(
     self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
   ) -> TerrainOutput:
-    del rng  # Unused.
     boxes = []
     box_colors = []
 
@@ -171,10 +175,13 @@ class BoxPyramidStairsTerrainCfg(SubTerrainCfg):
     step_height = self.step_height_range[0] + difficulty * (
       self.step_height_range[1] - self.step_height_range[0]
     )
-    # Step width also interpolates with difficulty. Higher difficulty = narrower steps.
-    step_width = self.step_width_range[1] - difficulty * (
-      self.step_width_range[1] - self.step_width_range[0]
-    )
+    # 步阶宽度:可选按 difficulty 插值或随机采样(每 patch 独立)。
+    if self.step_width_mode == "random":
+      step_width = float(rng.uniform(*self.step_width_range))
+    else:
+      step_width = self.step_width_range[1] - difficulty * (
+        self.step_width_range[1] - self.step_width_range[0]
+      )
 
     # Compute number of steps in x and y direction.
     num_steps_x = int(
@@ -363,7 +370,6 @@ class BoxInvertedPyramidStairsTerrainCfg(BoxPyramidStairsTerrainCfg):
   def function(
     self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
   ) -> TerrainOutput:
-    del rng  # Unused.
     boxes = []
     box_colors = []
 
@@ -372,10 +378,13 @@ class BoxInvertedPyramidStairsTerrainCfg(BoxPyramidStairsTerrainCfg):
     step_height = self.step_height_range[0] + difficulty * (
       self.step_height_range[1] - self.step_height_range[0]
     )
-    # Step width also interpolates with difficulty. Higher difficulty = narrower steps.
-    step_width = self.step_width_range[1] - difficulty * (
-      self.step_width_range[1] - self.step_width_range[0]
-    )
+    # 步阶宽度:可选按 difficulty 插值或随机采样(每 patch 独立)。
+    if self.step_width_mode == "random":
+      step_width = float(rng.uniform(*self.step_width_range))
+    else:
+      step_width = self.step_width_range[1] - difficulty * (
+        self.step_width_range[1] - self.step_width_range[0]
+      )
 
     # Compute number of steps in x and y direction.
     num_steps_x = int(

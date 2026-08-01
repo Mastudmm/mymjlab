@@ -340,6 +340,19 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "threshold": 0.1,
       },
     ),
+    "stair_climb_milestone": RewardTermCfg(
+      func=mdp.stair_climb_milestone,
+      weight=0.5,
+      params={
+        "command_name": "twist",
+        "half_reward": 2.0,
+        "full_reward": 1.0,
+        "half_fraction": 0.5,
+        "full_fraction": 0.9,
+        "command_threshold": 0.1,
+        "upright_threshold": 0.5,
+      },
+    ),
     "upright": RewardTermCfg(
       func=mdp.flat_orientation,
       weight=1.0,

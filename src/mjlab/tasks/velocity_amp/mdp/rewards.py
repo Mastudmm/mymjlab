@@ -1095,6 +1095,127 @@ def feet_air_time_variance_penalty(
   return total_variance * upright_scale 
 
 
+class stair_climb_milestone:
+  """里程碑式上台阶奖励：达到总爬升的 half/full 阈值时一次性发放。
+
+  用于打破"站着活满 episode"的保守策略（time_out 主导）。仅 inv 地形
+  生效，门控含 command 前进方向与直立姿态，防 farming。total_height
+  运行时从 env_origin_z 读取（inv spawn 在中心最低点，env_origin_z =
+  -total_height），适配任意 difficulty/level，无需查表。
+
+  与连续 delta 奖励不同：本奖励是离散里程碑（到点领一次），奖励量级
+  更大，用于突破保守收益而非提供每步梯度。
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self._spawn_rel_z = torch.zeros(env.num_envs, device=env.device)
+    self._half_done = torch.zeros(
+      env.num_envs, device=env.device, dtype=torch.bool
+    )
+    self._full_done = torch.zeros_like(self._half_done)
+    self._initialized = False
+    # inv 列索引缓存（curriculum 模式下按 proportion 分配列）。
+    self._inv_col_t: torch.Tensor | None = None
+    terrain = getattr(env.scene, "terrain", None)
+    if terrain is not None:
+      tgen_cfg = getattr(getattr(terrain, "cfg", None), "terrain_generator", None)
+      if tgen_cfg is not None:
+        inv_cols = self._resolve_inv_columns(tgen_cfg)
+        if inv_cols:
+          self._inv_col_t = torch.tensor(inv_cols, device=env.device)
+
+  def _resolve_inv_columns(self, tgen_cfg) -> list[int]:
+    """column -> terrain_name 映射，返回 pyramid_stairs_inv 的列号。
+
+    与 TerrainGenerator._generate_curriculum_terrains 列分配逻辑一致。
+    """
+    if not bool(getattr(tgen_cfg, "curriculum", False)):
+      return []
+    names = list(tgen_cfg.sub_terrains.keys())
+    props = np.array(
+      [s.proportion for s in tgen_cfg.sub_terrains.values()], dtype=np.float64
+    )
+    if props.sum() <= 0.0:
+      return []
+    cum = np.cumsum(props / props.sum())
+    num_cols = int(tgen_cfg.num_cols)
+    inv_cols: list[int] = []
+    for col in range(num_cols):
+      sub_idx = int(np.min(np.where(col / num_cols + 0.001 < cum)[0]))
+      if names[sub_idx] == "pyramid_stairs_inv":
+        inv_cols.append(col)
+    return inv_cols
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    command_name: str,
+    half_reward: float = 2.0,
+    full_reward: float = 1.0,
+    half_fraction: float = 0.5,
+    full_fraction: float = 0.9,
+    command_threshold: float = 0.1,
+    upright_threshold: float = 0.5,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    root_pos = asset.data.root_link_pos_w
+    env_origin_z = env.scene.env_origins[:, 2]
+    rel_z = root_pos[:, 2] - env_origin_z
+    # inv 总爬升 = -env_origin_z；clamp 防 env_origin_z>=0(非 inv) 时阈值<=0 误触发。
+    total_height = torch.clamp(-env_origin_z, min=1e-3)
+
+    # reset / 首帧：重置基准高度与里程碑标志。
+    is_reset = env.episode_length_buf == 0
+    if not self._initialized:
+      is_reset = torch.ones(
+        env.num_envs, device=env.device, dtype=torch.bool
+      )
+      self._initialized = True
+    if is_reset.any():
+      self._spawn_rel_z[is_reset] = rel_z[is_reset]
+      self._half_done[is_reset] = False
+      self._full_done[is_reset] = False
+
+    climb = rel_z - self._spawn_rel_z  # 净爬升(standing_height 抵消)
+
+    # --- 门控 ---
+    # 1) terrain gate: 仅 inv 列(防非 inv 地形刷高度)。
+    is_inv = torch.ones(env.num_envs, device=env.device, dtype=torch.bool)
+    if self._inv_col_t is not None:
+      terrain = env.scene.terrain
+      if terrain is not None and hasattr(terrain, "terrain_types"):
+        is_inv = torch.isin(
+          terrain.terrain_types[: env.num_envs], self._inv_col_t
+        )
+    # 2) command gate: 有前进 command 且 body 速度与 command 同向(点积)。
+    #    用点积而非只看 vx，覆盖纯 vy 横向上台阶的情况。
+    aligned = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+    if command_name is not None:
+      command = env.command_manager.get_command(command_name)
+      if command is not None:
+        cmd_xy = command[:, :2]
+        body_vel_b = asset.data.root_link_lin_vel_b[:, :2]
+        dot = torch.sum(body_vel_b * cmd_xy, dim=1)
+        aligned = (torch.norm(cmd_xy, dim=1) > command_threshold) & (dot > 0.0)
+    # 3) upright gate: 直立才给(防摔倒翻滚瞬间 root_z 异常刷里程碑)。
+    upright = (-asset.data.projected_gravity_b[:, 2]) > upright_threshold
+
+    gate = is_inv & aligned & upright  # 三者同时满足才触发
+
+    # --- 里程碑触发(gate 必须为 True，否则不置 mask，后续仍可领取) ---
+    half_reach = (
+      (climb >= half_fraction * total_height) & (~self._half_done) & gate
+    )
+    full_reach = (
+      (climb >= full_fraction * total_height) & (~self._full_done) & gate
+    )
+    self._half_done |= half_reach
+    self._full_done |= full_reach
+
+    return half_reach.float() * half_reward + full_reach.float() * full_reward
+
+
 class progress_reward:
   """Reward for making progress since the last command update.
   
