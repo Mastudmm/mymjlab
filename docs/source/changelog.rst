@@ -33,6 +33,13 @@ Version 1.6.0 (August 8, 2026)
 Added
 ^^^^^
 
+- Added the ``velocity_ame`` task package, porting the AME attention-based
+  terrain encoder to the Unitree Go1 velocity task. Registers
+  ``Mjlab-VelocityAme-Base-Unitree-Go1`` and
+  ``Mjlab-VelocityAme-Finetune-Unitree-Go1`` with a robot-centric terrain
+  point-cloud observation (``[B, H, W, 3]``), a CNN + multi-head attention
+  encoder shared between actor and critic, and a finetune phase with
+  map-scan drift domain randomization. See ``docs/ame_port/PORTING.md``.
 - Added ``GeomCfg``, exposed as the ``geoms`` field on ``EntityCfg``, a spec
   editor that matches geoms by name and patches their attributes. Supports
   ``group`` (so a geom can collide without being drawn) and all collision

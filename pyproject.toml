@@ -59,6 +59,8 @@ dependencies = [
 [project.scripts]
 train = "mjlab.scripts.train:main"
 play = "mjlab.scripts.play:main"
+ame-play = "mjlab.tasks.velocity_ame.scripts.play:main"
+ame-viz-terrain = "mjlab.tasks.velocity_ame.scripts.viz_terrain:main"
 demo = "mjlab.scripts.demo:main"
 list-envs = "mjlab.scripts.list_envs:main"
 viz-nan = "mjlab.scripts.nan_viz:main"
@@ -108,7 +110,7 @@ required-environments = [
 ]
 
 [[tool.uv.index]]
-url = "https://pypi.org/simple"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 [[tool.uv.index]]
 name = "nvidia"
@@ -117,7 +119,7 @@ explicit = true
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+url = "https://mirrors.nju.edu.cn/pytorch/whl/cu128/"
 explicit = true
 
 [[tool.uv.index]]

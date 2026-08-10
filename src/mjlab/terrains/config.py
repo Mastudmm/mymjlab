@@ -214,7 +214,7 @@ def stepping_stones(
 ) -> terrain_gen.BoxSteppingStonesTerrainCfg:
   defaults: dict[str, Any] = dict(
     stone_size_range=(0.4, 0.8),
-    stone_distance_range=(0.2, 0.5),
+    stone_distance_range=(0.2, 0.4),
     stone_height=0.2,
     stone_height_variation=0.1,
     stone_size_variation=0.2,
@@ -233,12 +233,12 @@ def narrow_beams(
 ) -> terrain_gen.BoxNarrowBeamsTerrainCfg:
   defaults: dict[str, Any] = dict(
     num_beams=12,
-    beam_width_range=(0.2, 0.8),
+    beam_width_range=(0.3, 0.8),
     beam_height=0.2,
     spacing=0.8,
     platform_width=1.0,
     border_width=0.25,
-    floor_depth=2.0,
+    floor_depth=1.0,
   )
   defaults.update(overrides)
   return terrain_gen.BoxNarrowBeamsTerrainCfg(**defaults)
@@ -330,7 +330,34 @@ STAIRS_TERRAINS_CFG = TerrainGeneratorCfg(
   },
   add_lights=True,
 )
-
+AME_TERRAINS_CFG = TerrainGeneratorCfg(
+  size=(8.0, 8.0),
+  border_width=20.0,
+  num_rows=10,
+  num_cols=20,  # 列数在开启课程之后 强制num_cols == len(subterrain)，poportion会影响机器人重生在地形的概率。
+  sub_terrains={
+    "flat": flat(proportion=0.0),
+    "pyramid_stairs": pyramid_stairs(proportion=0.05, step_height_range=(0.0, 0.2)),
+    "pyramid_stairs_inv": pyramid_stairs_inv(
+      proportion=0.1, step_height_range=(0.0, 0.2)
+    ),
+    "narrow_pyramid_stairs": pyramid_stairs(
+      proportion=0.05, step_height_range=(0.0, 0.2), step_width=0.26
+    ),
+    "narrow_pyramid_stairs_inv": pyramid_stairs_inv(
+      proportion=0.1, step_height_range=(0.0, 0.2), step_width=0.26
+    ),
+    "hf_pyramid_slope": hf_pyramid_slope(proportion=0.05, slope_range=(0.0, 0.2)),
+    "hf_pyramid_slope_inv": hf_pyramid_slope_inv(
+      proportion=0.05, slope_range=(0.0, 1.0)
+    ),
+    "nested_rings": nested_rings(proportion=0.15),
+    "wave_terrain": wave_terrain(proportion=0.1),
+    "stepping_stones": stepping_stones(proportion=0.15),
+    "narrow_beams": narrow_beams(proportion=0.2),
+  },
+  add_lights=True,
+)
 ALL_TERRAINS_CFG = TerrainGeneratorCfg(
   size=(8.0, 8.0),
   border_width=20.0,
