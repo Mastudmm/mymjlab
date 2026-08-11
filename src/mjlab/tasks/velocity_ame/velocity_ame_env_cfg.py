@@ -238,18 +238,35 @@ def make_velocity_ame_env_cfg(
 
   commands: dict[str, CommandTermCfg] = {
     "twist": UniformVelocityCommandCfg(
-      entity_name="robot",
+      entity_name="robot",  # 命令作用的 entity（机器人），用于读其位姿/速度。
+      # 每 3~8 秒重采样一次命令（lin_vel_x/y、ang_vel_z、heading）。
       resampling_time_range=(3.0, 8.0),
-      rel_standing_envs=0.1,
-      rel_heading_envs=0.3,
-      rel_forward_envs=0.2,
+      # 5% env 为站立 env：命令全 0，练原地平衡。
+      rel_standing_envs=0.05,
+      # 30% env 为 heading env（见 heading_command）：yaw 命令不用随机采样，
+      # 而是用 P 控制器跟踪目标朝向。其余 env 的 ang_vel_z 直接随机采样。
+      rel_heading_envs=0.9,
+      # 50% env 为前进 env：强制 lin_vel_x>=0.3、lin_vel_y=ang_vel_z=0，
+      # 增加直线行走覆盖（爬楼梯关键）。
+      rel_forward_envs=0.5,
+      # 启用 heading 控制模式。每个 heading env resample 时采一个目标朝向
+      # heading_target ~ uniform(ranges.heading)（世界系 yaw）；每步算偏差
+      # heading_error = wrap_to_pi(heading_target - robot.heading_w)，其中
+      # heading_w 是机器人当前世界系 yaw；yaw 角速度命令由 P 控制器给出：
+      #   ang_vel_z = clip(stiffness * heading_error, ranges.ang_vel_z)
+      # 即比例控制让机器人转向目标朝向，而非直接给随机角速度。
       heading_command=True,
+      # P 控制器增益：ang_vel_z = 0.5 * heading_error（rad/s），再 clip 到
+      # ang_vel_z 范围。值大转向激进，值小转向平缓。
       heading_control_stiffness=0.5,
-      debug_vis=True,
+      debug_vis=True,  # viewer 中画命令方向箭头。
       ranges=UniformVelocityCommandCfg.Ranges(
-        lin_vel_x=(-1.0, 1.0),
-        lin_vel_y=(-1.0, 1.0),
-        ang_vel_z=(-0.5, 0.5),
+        lin_vel_x=(-1.0, 1.0),  # body 系前向线速度命令范围 (m/s)
+        lin_vel_y=(-1.0, 1.0),  # body 系侧向线速度命令范围 (m/s)
+        # body 系 yaw 角速度命令范围 (rad/s)。非 heading env 从此随机采样；
+        # heading env 的 P 控制输出也 clip 到此范围。
+        ang_vel_z=(-1.5, 1.5),
+        # heading env 的目标朝向采样范围 (rad，世界系 yaw)。全圆周 [-π, π]。
         heading=(-math.pi, math.pi),
       ),
     )
@@ -288,8 +305,8 @@ def make_velocity_ame_env_cfg(
       interval_range_s=(1.0, 3.0),
       params={
         "velocity_range": {
-          "x": (-0.5, 0.5),
-          "y": (-0.5, 0.5),
+          "x": (-0.25, 0.25),
+          "y": (-0.25, 0.25),
           "z": (-0.4, 0.4),
           "roll": (-0.52, 0.52),
           "pitch": (-0.52, 0.52),
@@ -344,12 +361,12 @@ def make_velocity_ame_env_cfg(
   rewards = {
     "track_linear_velocity": RewardTermCfg(
       func=mdp.track_linear_velocity,
-      weight=2.0,
+      weight=3.0,
       params={"command_name": "twist", "std": math.sqrt(0.25)},
     ),
     "track_angular_velocity": RewardTermCfg(
       func=mdp.track_angular_velocity,
-      weight=2.0,
+      weight=1.0,
       params={"command_name": "twist", "std": math.sqrt(0.5)},
     ),
     "upright": RewardTermCfg(
@@ -387,7 +404,7 @@ def make_velocity_ame_env_cfg(
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.1),
     "air_time": RewardTermCfg(
       func=mdp.feet_air_time,
-      weight=0.0,  # 由机器人特化覆盖。
+      weight=0.05,  # 由机器人特化覆盖。
       params={
         "sensor_name": "feet_ground_contact",
         "threshold_min": 0.05,
@@ -398,7 +415,7 @@ def make_velocity_ame_env_cfg(
     ),
     "foot_clearance": RewardTermCfg(
       func=mdp.feet_clearance,
-      weight=-2.0,
+      weight=-1.0,
       params={
         "target_height": 0.1,
         "height_sensor_name": "foot_height_scan",
@@ -471,7 +488,7 @@ def make_velocity_ame_env_cfg(
         "velocity_stages": [
           {"step": 0, "lin_vel_x": (-1.0, 1.0), "ang_vel_z": (-0.5, 0.5)},
           {"step": 5000 * 24, "lin_vel_x": (-1.5, 2.0), "ang_vel_z": (-0.7, 0.7)},
-          {"step": 10000 * 24, "lin_vel_x": (-2.0, 3.0)},
+          {"step": 10000 * 24, "lin_vel_x": (-1.0, 2.0)},
         ],
       },
     ),

@@ -247,16 +247,66 @@ rsl-rl-lib = { path = "vendor/rsl_rl", editable = true }  # 基于 5.4.2 fork
 # base 训练（4096 envs，15000 iters）
 uv run python -m mjlab.scripts.train Mjlab-VelocityAme-Base-Unitree-Go1 \
   --env.scene.num-envs 4096
-
-# finetune（从 base checkpoint 续训，3200 iters）
-# 注意：finetune 的 resume 在其 experiment_name 目录下找 checkpoint，
-# 若 base checkpoint 在 go1_velocity_ame_base/ 下，需把该目录软链到
-# go1_velocity_ame_finetune/ 下，或调整 --log-root。
-uv run python -m mjlab.scripts.train Mjlab-VelocityAme-Finetune-Unitree-Go1 \
-  --env.scene.num-envs 4096 --agent.resume --agent.load-run go1_velocity_ame_base
 ```
 
-## 8.1 可视化程序：AME Play 与注意力可视化
+## 8.1 断点续训（resume）
+
+AME 支持断点续训：从已有 checkpoint 恢复模型权重、迭代计数
+（`current_learning_iteration`）与环境步数计数（`common_step_counter`，保留
+地形课程状态），继续增量训练。已实测 save -> load -> 续训闭环通过（见第 10 节）。
+
+**机制**：`--agent.resume True` 触发加载；`--agent.load-run`（正则，默认 `.*`
+取最新 run 目录）、`--agent.load-checkpoint`（正则，默认 `model_.*.pt` 取最新
+checkpoint）定位文件。`AmeOnPolicyRunner.load` 恢复权重与计数器后，`learn()`
+从恢复的迭代号增量训练。
+
+**关键注意点**：
+
+- `--agent.max-iterations` 是**增量**而非总目标。rsl-rl 的 `learn()` 从
+  `current_learning_iteration` 起跑 `max_iterations` 次：从 `model_10000.pt`
+  续训、`--agent.max-iterations 15000` 会训到 iter 25000 而非 15000。若想训到
+  原定 15000，需 `--agent.max-iterations 5000`。实测：从 `model_1.pt` 续训
+  `--agent.max-iterations 1`，日志显示 `Learning iteration 1/2`（start_it=1,
+  total_it=2）。
+- tyro 的 bool 参数必须显式传值：`--agent.resume True`。裸 `--agent.resume`
+  会报 `invalid choice ... Expected one of ('True', 'False')`（即便后跟
+  `--agent.load-run` 也一样报错）。
+- resume 在 `<log_root>/<experiment_name>/` 下找 checkpoint，按任务的
+  `experiment_name` 定位（base 为 `go1_velocity_ame_base`，finetune 为
+  `go1_velocity_ame_finetune`）。`get_checkpoint_path` 在该目录下用 `load-run`
+  正则匹配子目录、`load-checkpoint` 正则匹配文件名，均取字母序最新。
+
+```sh
+# 同任务断点续训（最常见）：从最新 run 的最新 checkpoint 续训 base
+uv run python -m mjlab.scripts.train Mjlab-VelocityAme-Base-Unitree-Go1 \
+  --env.scene.num-envs 4096 --agent.resume True
+
+# 指定 run 与 checkpoint（load-run/load-checkpoint 均为正则）
+uv run python -m mjlab.scripts.train Mjlab-VelocityAme-Base-Unitree-Go1 \
+  --env.scene.num-envs 4096 --agent.resume True \
+  --agent.load-run '2026-08-11_' --agent.load-checkpoint 'model_10000.pt'
+
+# 续训到原定目标：从 model_10000.pt 再训 5000 次到 iter 15000
+uv run python -m mjlab.scripts.train Mjlab-VelocityAme-Base-Unitree-Go1 \
+  --env.scene.num-envs 4096 --agent.resume True --agent.max-iterations 5000
+```
+
+**finetune 从 base checkpoint 续训**：finetune 的 `experiment_name` 是
+`go1_velocity_ame_finetune`，resume 默认在该目录下找 checkpoint，而 base
+checkpoint 在 `go1_velocity_ame_base/` 下，跨目录找不到。需把 base 的 run
+目录软链到 finetune 的 log_root 下，让 `load-run` 能匹配到：
+
+```sh
+# 1. 软链 base 的 run 目录到 finetune log_root（run 目录名按实际替换）
+ln -s "$PWD/logs/rsl_rl/go1_velocity_ame_base/2026-08-11_12-00-00" \
+  "$PWD/logs/rsl_rl/go1_velocity_ame_finetune/base_2026-08-11"
+
+# 2. finetune resume：load-run 匹配软链目录名，取其中最新 checkpoint
+uv run python -m mjlab.scripts.train Mjlab-VelocityAme-Finetune-Unitree-Go1 \
+  --env.scene.num-envs 4096 --agent.resume True --agent.load-run 'base_'
+```
+
+## 8.2 可视化程序：AME Play 与注意力可视化
 
 AME 专属 play 工具让你在 viewer 中回放训练好的策略，并可选地实时可视化
 注意力编码器正在关注的地形位置。
@@ -290,9 +340,19 @@ AME actor 的 `forward`（`_latent_from_tensors`）每步缓存两个张量：
    的世界位姿转回世界坐标才能画到 viewer：
    `world = sensor.pos_w + quat_apply(yaw_quat(sensor.quat_w), points)`
    （仅 yaw 旋转，z 不变，再加 sensor 世界位置）。
-4. 权重 min-max 归一化到 [0,1]，映射颜色（蓝 0.2,0.4,1.0 -> 红 1.0,0.2,0.2）
-   和半径（0.02 + 0.06×weight）。
+4. **颜色与大小均基于绝对权重**（非每帧 min-max 相对值），以均匀基线 `1/N`
+   为锚点，固定映射范围，跨帧/跨 iteration 可比：
+   - `scale = w_i × N`：相对均匀基线的倍数，`1.0` = 均匀（未学到聚焦），
+     `>1` = 超基线被注意。
+   - 颜色：`scale` 经固定范围 `[0, 6]` 线性映射蓝->红（`scale=1` 淡蓝、
+     `scale≥6` 满红），表示绝对注意力强度。
+   - 半径：`scale` 经 `sqrt` 阈值化映射，`scale≤1` -> 最小半径 0.01（低于
+     均匀，视觉不在场），`scale≥6` -> 最大半径 0.08。显著性粗筛。
 5. 用 `MujocoNativeDebugVisualizer.add_sphere` 画 N 个球体（DECOR 类别）。
+
+这样训练初期（attention 均匀）全场淡蓝小球，训练后期少数红大球跳出，可一眼
+判断 attention 是否从均匀演化到聚焦。min-max 相对值会丢失集中程度（均匀时也
+红蓝分明），已弃用。
 
 实测：17×11 地形网格经 CNN 下采样到 9×6 = 54 个 token，每帧画 54 个球。
 
@@ -322,12 +382,13 @@ uv run ame-play \
 - 注意力可视化只支持 **native viewer**（需图形显示）。服务器无 GUI 用 Xvfb，
   或 `--no-attention --viewer viser` 走 web viewer（viser 不支持注意力叠加）。
 - 可视化看 env 0 的注意力分布（`--num-envs >1` 时仍只画 env 0）。
-- 球体颜色：蓝=低注意力，红=高注意力；半径随权重增大。
+- 球体颜色：蓝=低/低于均匀基线，红=显著超基线；半径随绝对权重倍数增大
+  （`scale≤1` 最小、`scale≥6` 最大）。颜色与大小均基于绝对权重，跨帧可比。
 - 首步之前无注意力数据（actor 还没 forward），球体不显示。
 
 ---
 
-## 8.2 地形配置
+## 8.3 地形配置
 
 AME Go1 训练用 mjlab 原生 `ROUGH_TERRAINS_CFG`（Go1 rough 任务继承），
 AME env_cfg 不修改地形，仅复用。
@@ -482,7 +543,7 @@ uv run ame-viz-terrain --mode play
 
 | 风险/待办 | 说明 |
 |---|---|
-| checkpoint load 键迁移 | `AmeOnPolicyRunner.load` 已跳过不适用的 MLPModel 迁移；smoke test 已验证 save（`model_*.pt` 生成），load 待 finetune resume 验证 |
+| checkpoint load 键迁移 | `AmeOnPolicyRunner.load` 已跳过不适用的 MLPModel 迁移；smoke test 验证 save（`model_*.pt` 生成），断点续训已实测通过（save -> load -> `learn()` 增量续训，`current_learning_iteration` 与 `common_step_counter` 正确恢复，日志 `Learning iteration 1/2` 确认从恢复迭代号起增量），见 8.1 节 |
 | ONNX base metadata | `AmeOnPolicyRunner.save` 跳过 `get_base_metadata`（它访问 AME 不存在的 `"actor"` obs group，会抛 `KeyError`）；ONNX 文件与 attention metadata 正常生成，仅不附 base metadata |
 | 对称性未启用 | `symmetry_cfg=None`；后续需为 Go1 写四足镜像表（FR↔FL、RR↔RL 关节镜像 + base yaw 翻转 + 重力 y 取反），填 `symmetry_cfg` 即可启用 |
 | finetune reward 未调严 | AME G1 finetune 调严了多个 reward 权重；本次保持 Go1 原生，可按需调 `action_rate_l2`/`foot_clearance` 等权重 |
@@ -497,4 +558,5 @@ uv run ame-viz-terrain --mode play
 - ✅ ty 类型检查通过
 - ✅ 任务注册成功（`Mjlab-VelocityAme-Base/Finetune-Unitree-Go1`）
 - ✅ smoke test：64 envs × 2 iterations 训练通过（AME 模型构建、`terrain_points` `[B,17,11,3]` 观测、PPO 训练、checkpoint + ONNX + attention metadata 保存均正常，无警告）
-- ⚠️ 待验证：清理 venv editable 5.0.1 污染后用 uv 管理的 5.4.2 跑完整训练（当前 smoke test 用 editable 5.0.1，AME 相关 API 兼容性已验证通过）
+- ✅ 断点续训实测通过（uv 管理的 rsl-rl 5.4.2，editable 5.0.1 污染已清理）：8 envs 跑 2 iter 生成 `model_*.pt`，`--agent.resume True` 续训 1 iter，成功加载 checkpoint 并从恢复的迭代号增量训练（`Learning iteration 1/2`），见 8.1 节
+- ⚠️ 待验证：完整 15000-iter base 训练 + finetune 跨 experiment_name 软链 resume 仍未端到端跑通（断点续训机制已实测，长训练稳定性待验证）
