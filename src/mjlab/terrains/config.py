@@ -214,7 +214,7 @@ def stepping_stones(
 ) -> terrain_gen.BoxSteppingStonesTerrainCfg:
   defaults: dict[str, Any] = dict(
     stone_size_range=(0.4, 0.8),
-    stone_distance_range=(0.2, 0.4),
+    stone_distance_range=(0.0, 0.2),
     stone_height=0.2,
     stone_height_variation=0.1,
     stone_size_variation=0.2,
@@ -251,8 +251,8 @@ def nested_rings(
   defaults: dict[str, Any] = dict(
     num_rings=8,
     ring_width_range=(0.3, 0.6),
-    gap_range=(0.1, 0.4),
-    height_range=(0.1, 0.4),
+    gap_range=(0.0, 0.25),
+    height_range=(0.01, 0.2),
     platform_width=1.0,
     border_width=0.25,
     floor_depth=2.0,
@@ -349,7 +349,7 @@ AME_TERRAINS_CFG = TerrainGeneratorCfg(
     ),
     "hf_pyramid_slope": hf_pyramid_slope(proportion=0.05, slope_range=(0.0, 0.2)),
     "hf_pyramid_slope_inv": hf_pyramid_slope_inv(
-      proportion=0.05, slope_range=(0.0, 1.0)
+      proportion=0.05, slope_range=(0.0, 0.2)
     ),
     "nested_rings": nested_rings(proportion=0.15),
     "wave_terrain": wave_terrain(proportion=0.1),

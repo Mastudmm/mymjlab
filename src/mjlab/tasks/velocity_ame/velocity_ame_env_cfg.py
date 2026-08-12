@@ -42,7 +42,6 @@ from mjlab.sensor import (
 )
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.velocity import mdp
-from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.tasks.velocity_ame import mdp as ame_mdp
 from mjlab.tasks.velocity_ame.config.variants import AmePhase, resolve_task_spec
 from mjlab.terrains import TerrainEntityCfg
@@ -237,10 +236,10 @@ def make_velocity_ame_env_cfg(
   ##
 
   commands: dict[str, CommandTermCfg] = {
-    "twist": UniformVelocityCommandCfg(
+    "twist": ame_mdp.AmeVelocityCommandCfg(
       entity_name="robot",  # 命令作用的 entity（机器人），用于读其位姿/速度。
       # 每 3~8 秒重采样一次命令（lin_vel_x/y、ang_vel_z、heading）。
-      resampling_time_range=(3.0, 8.0),
+      resampling_time_range=(13.0, 15.0),
       # 5% env 为站立 env：命令全 0，练原地平衡。
       rel_standing_envs=0.05,
       # 30% env 为 heading env（见 heading_command）：yaw 命令不用随机采样，
@@ -260,15 +259,22 @@ def make_velocity_ame_env_cfg(
       # ang_vel_z 范围。值大转向激进，值小转向平缓。
       heading_control_stiffness=0.5,
       debug_vis=True,  # viewer 中画命令方向箭头。
-      ranges=UniformVelocityCommandCfg.Ranges(
+      ranges=ame_mdp.AmeVelocityCommandCfg.Ranges(
         lin_vel_x=(-1.0, 1.0),  # body 系前向线速度命令范围 (m/s)
         lin_vel_y=(-1.0, 1.0),  # body 系侧向线速度命令范围 (m/s)
         # body 系 yaw 角速度命令范围 (rad/s)。非 heading env 从此随机采样；
         # heading env 的 P 控制输出也 clip 到此范围。
-        ang_vel_z=(-1.5, 1.5),
+        ang_vel_z=(-0.5, 0.5),
         # heading env 的目标朝向采样范围 (rad，世界系 yaw)。全圆周 [-π, π]。
         heading=(-math.pi, math.pi),
       ),
+      # 按地形覆盖命令采样范围：narrow_beams 上限制侧向速度为小噪声，
+      # 避免机器人横跨窄桥；lin_vel_x/ang_vel_z/heading 保持默认（保留泛化）。
+      per_terrain_overrides={
+        "narrow_beams": ame_mdp.TerrainCommandOverride(
+          lin_vel_y=(-0.1, 0.1),
+        ),
+      },
     )
   }
 
