@@ -55,6 +55,11 @@ class TerrainOutput:
   """List of geometry elements comprising this terrain."""
   flat_patches: dict[str, np.ndarray] | None = None
   """Named sets of flat patch positions, each an (N, 3) array. None if not configured."""
+  reward_points: list[np.ndarray] | None = None
+  """Milestone reward-point positions, each a (3,) array (x, y, z), in the
+  sub-terrain local frame. None if this terrain has no reward points.
+  ``TerrainGenerator`` collects these into per-(row, col) arrays for reward
+  functions to index."""
 
 
 @dataclass
@@ -184,6 +189,24 @@ class TerrainGenerator:
       self.flat_patches[name] = np.zeros(
         (self.cfg.num_rows, self.cfg.num_cols, max_num_patches, 3)
       )
+
+    # Pre-allocate milestone reward-point storage by scanning sub-terrains for
+    # a ``max_reward_points`` attribute (only reward-point terrains declare it).
+    max_reward_points = 0
+    for sub_cfg in self.cfg.sub_terrains.values():
+      max_reward_points = max(
+        max_reward_points, getattr(sub_cfg, "max_reward_points", 0)
+      )
+    if max_reward_points > 0:
+      self.reward_points = np.zeros(
+        (self.cfg.num_rows, self.cfg.num_cols, max_reward_points, 3)
+      )
+      self.reward_counts = np.zeros(
+        (self.cfg.num_rows, self.cfg.num_cols), dtype=np.int32
+      )
+    else:
+      self.reward_points = None
+      self.reward_counts = None
 
   def compile(self, spec: mujoco.MjSpec) -> None:
     body = spec.worldbody.add_body(name="terrain")
@@ -343,6 +366,18 @@ class TerrainGenerator:
         # Sub-terrain didn't produce patches: fill with spawn origin so that
         # every slot contains a valid position for reset_root_state_from_flat_patches.
         arr[sub_row, sub_col] = spawn_origin
+
+    # Collect milestone reward points into pre-allocated arrays. Points are
+    # shifted by world_position to match the box geoms (offset above).
+    if self.reward_points is not None:
+      assert self.reward_counts is not None
+      if output.reward_points:
+        n = min(len(output.reward_points), self.reward_points.shape[2])
+        self.reward_counts[sub_row, sub_col] = n
+        for i, p in enumerate(output.reward_points[:n]):
+          self.reward_points[sub_row, sub_col, i] = p + world_position
+      else:
+        self.reward_counts[sub_row, sub_col] = 0
 
     return spawn_origin
 

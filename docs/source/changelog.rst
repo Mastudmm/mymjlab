@@ -5,8 +5,29 @@ Changelog
 Upcoming version (not yet released)
 -----------------------------------
 
+Added
+^^^^^
+
+- Added straight-line parkour terrains (``BoxStraightStepStonesTerrainCfg``,
+  ``BoxStraightPlatformTerrainCfg``, ``BoxStraightGapTerrainCfg``): obstacle
+  chains laid along the patch's +x axis — plum-blossom stone clusters over a
+  deep pit, raised platform boxes, and narrow trenches — with difficulty
+  interpolating obstacle count, spacing, and height/width (up to 0.35 m).
+- Added milestone reward-point plumbing: sub-terrains can declare
+  ``max_reward_points`` and return reward points via ``TerrainOutput``; the
+  generator collects them into per-(row, col) arrays exposed by the terrain
+  entity as ``reward_points`` / ``reward_counts``.
+- Added the ``reward_point_bonus`` reward and the
+  ``Mjlab-ParkourVision-Unitree-Go1`` task (``PARKOUR_TERRAINS_CFG``, depth
+  camera, pure forward x-only command) for Go1 parkour training.
+
 Fixed
 ^^^^^
+
+- Added the missing ``rnd_cfg`` field to ``RslRlPpoAlgorithmCfg``. The vendored
+  rsl_rl runner/logger index this key unconditionally, so any task using the
+  plain PPO path (e.g. velocity vision) crashed with a ``KeyError`` at runner
+  construction.
 
 - Set terrain geom mass to zero so that the static terrain body does not
   inflate ``stat.meanmass``, which made force arrow visualization invisible

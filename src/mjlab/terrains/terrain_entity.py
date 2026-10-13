@@ -120,11 +120,27 @@ class TerrainEntity(Entity):
       self._flat_patch_radii: dict[str, float] = dict(
         terrain_generator.flat_patch_radii
       )
+      self._reward_points = (
+        torch.from_numpy(terrain_generator.reward_points).to(
+          device=self._device, dtype=torch.float
+        )
+        if terrain_generator.reward_points is not None
+        else None
+      )
+      self._reward_counts = (
+        torch.from_numpy(terrain_generator.reward_counts).to(
+          device=self._device, dtype=torch.long
+        )
+        if terrain_generator.reward_counts is not None
+        else None
+      )
     elif self.cfg.terrain_type == "plane":
       self._import_ground_plane("terrain")
       self._configure_env_origins()
       self._flat_patches: dict[str, torch.Tensor] = {}
       self._flat_patch_radii: dict[str, float] = {}
+      self._reward_points = None
+      self._reward_counts = None
     else:
       raise ValueError(f"Unknown terrain type: {self.cfg.terrain_type}")
 
@@ -144,6 +160,17 @@ class TerrainEntity(Entity):
   @property
   def flat_patch_radii(self) -> dict[str, float]:
     return self._flat_patch_radii
+
+  @property
+  def reward_points(self) -> torch.Tensor | None:
+    """[num_rows, num_cols, max_points, 3] milestone reward-point positions
+    (world frame), or None if no sub-terrain declares reward points."""
+    return self._reward_points
+
+  @property
+  def reward_counts(self) -> torch.Tensor | None:
+    """[num_rows, num_cols] valid reward-point count per patch, or None."""
+    return self._reward_counts
 
   # Terrain origin management.
 

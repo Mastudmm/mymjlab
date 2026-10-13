@@ -99,6 +99,9 @@ class RslRlPpoAlgorithmCfg:
   """Share CNN encoders between actor and critic."""
   class_name: str = "PPO"
   """Algorithm class name resolved by RSL-RL."""
+  rnd_cfg: dict | None = None
+  """Random Network Distillation config passed to the algorithm. None disables
+  RND. The vendored rsl_rl runner/logger index this key unconditionally."""
 
 
 @dataclass

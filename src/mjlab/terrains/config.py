@@ -4,19 +4,17 @@ import mjlab.terrains as terrain_gen
 from mjlab.terrains.terrain_entity import TerrainEntity, TerrainEntityCfg
 from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
 
-
-
 ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
-    size=(8.0, 8.0),#每个小地形的大小
-    border_width=20.0,
-    num_rows=10,
-    num_cols=20,
-    sub_terrains={
+  size=(8.0, 8.0),  # 每个小地形的大小
+  border_width=20.0,
+  num_rows=10,
+  num_cols=20,
+  sub_terrains={
     "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.0),
     "pyramid_stairs": terrain_gen.BoxPyramidStairsTerrainCfg(
       proportion=0.1,
       step_height_range=(0.0, 0.2),
-      step_width_range=(0.25,0.45),
+      step_width_range=(0.25, 0.45),
       platform_width=3.0,
       border_width=1.0,
       stair_lip_enabled=False,
@@ -25,15 +23,18 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     ),
     "pyramid_stairs_inv": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
       proportion=0.8,
-      step_height_range=(0.0,0.20), #台阶高度可以在play的时候自由修改 train的时候尽量高
-      step_width_range=(0.25,0.35),
+      step_height_range=(
+        0.0,
+        0.20,
+      ),  # 台阶高度可以在play的时候自由修改 train的时候尽量高
+      step_width_range=(0.25, 0.35),
       step_width_mode="random",
       platform_width=3.0,
       border_width=1.0,
       stair_lip_enabled=False,
       stair_lip_outward=0.04,
       stair_lip_downward=0.03,
-    ),  
+    ),
     "hf_pyramid_slope": terrain_gen.HfPyramidSlopedTerrainCfg(
       proportion=0.0,
       slope_range=(0.0, 1.0),
@@ -73,7 +74,7 @@ ALL_TERRAINS_CFG = TerrainGeneratorCfg(
     "pyramid_stairs": terrain_gen.BoxPyramidStairsTerrainCfg(
       proportion=0.0,
       step_height_range=(0.0, 0.4),
-      step_width_range=(0.3,0.6),
+      step_width_range=(0.3, 0.6),
       platform_width=3.0,
       border_width=1.0,
       stair_lip_enabled=True,
@@ -83,7 +84,7 @@ ALL_TERRAINS_CFG = TerrainGeneratorCfg(
     "pyramid_stairs_inv": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
       proportion=10.5,
       step_height_range=(0.18, 0.2),
-      step_width_range=(0.24,0.3),
+      step_width_range=(0.24, 0.3),
       platform_width=3.0,
       border_width=1.0,
       stair_lip_enabled=True,
@@ -195,6 +196,20 @@ ALL_TERRAINS_CFG = TerrainGeneratorCfg(
       border_width=0.25,
       floor_depth=2.0,
     ),
+  },
+  add_lights=True,
+)
+
+PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
+  size=(8.0, 8.0),
+  border_width=20.0,
+  num_rows=10,
+  num_cols=3,  # 每种跑酷地形独占一列：梅花桩 / 高平台 / 沟壑，难度行共用。
+  curriculum=True,
+  sub_terrains={
+    "step_stones": terrain_gen.BoxStraightStepStonesTerrainCfg(proportion=1.0),
+    "platforms": terrain_gen.BoxStraightPlatformTerrainCfg(proportion=1.0),
+    "gaps": terrain_gen.BoxStraightGapTerrainCfg(proportion=1.0),
   },
   add_lights=True,
 )

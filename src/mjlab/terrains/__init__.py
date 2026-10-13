@@ -11,6 +11,15 @@ from mjlab.terrains.heightfield_terrains import (
   HfRandomUniformTerrainCfg as HfRandomUniformTerrainCfg,
 )
 from mjlab.terrains.heightfield_terrains import HfWaveTerrainCfg as HfWaveTerrainCfg
+from mjlab.terrains.parkour_terrains import (
+  BoxStraightGapTerrainCfg as BoxStraightGapTerrainCfg,
+)
+from mjlab.terrains.parkour_terrains import (
+  BoxStraightPlatformTerrainCfg as BoxStraightPlatformTerrainCfg,
+)
+from mjlab.terrains.parkour_terrains import (
+  BoxStraightStepStonesTerrainCfg as BoxStraightStepStonesTerrainCfg,
+)
 from mjlab.terrains.primitive_terrains import BoxFlatTerrainCfg as BoxFlatTerrainCfg
 from mjlab.terrains.primitive_terrains import (
   BoxInvertedPyramidStairsTerrainCfg as BoxInvertedPyramidStairsTerrainCfg,
