@@ -20,14 +20,16 @@ def unitree_go1_parkour_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg = unitree_go1_rough_env_cfg(play=play)
   apply_parkour_overrides(cfg)
 
-  # Play 覆盖：关闭课程，行数减半便于可视化；三种地形各保留一列。
+  # Play 覆盖：保持 curriculum=True（课程模式下生成器是确定性的——每种地形
+  # 独占一列、行=难度递增；若置 False 会切成随机模式，patch 随机抽地形+难度，
+  # 布局就乱了）。env 的初始难度行由 max_init_terrain_level 控制。
   if (
     play
     and cfg.scene.terrain is not None
     and cfg.scene.terrain.terrain_generator is not None
   ):
-    cfg.scene.terrain.terrain_generator.curriculum = False
-    cfg.scene.terrain.terrain_generator.num_rows = 6
+    cfg.scene.terrain.terrain_generator.curriculum = True
+    cfg.scene.terrain.terrain_generator.num_rows = 10
     cfg.scene.terrain.terrain_generator.num_cols = 3
     cfg.scene.terrain.terrain_generator.border_width = 10.0
 

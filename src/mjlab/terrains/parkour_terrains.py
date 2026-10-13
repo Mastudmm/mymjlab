@@ -37,31 +37,48 @@ def _lerp_range(rng_or_difficulty, value_range: tuple[float, float]) -> float:
 
 @dataclass(kw_only=True)
 class BoxStraightStepStonesTerrainCfg(SubTerrainCfg):
-  """Plum-blossom stepping stones rising from a deep pit, chained along +x.
+  """Plum-blossom stepping stones rising from a pit, chained along +x.
 
-  Each cluster is a triangle of three stone columns (one front, two rear-side).
-  The robot spawns on a solid spawn column and hops cluster to cluster; the
-  pit floor (``floor_depth`` below) makes any fall a terminating event.
+  **Two parallel, aligned columns of stone pairs** along x: at every pair
+  position one stone sits left and one right of the centerline, so the Go1
+  plants its left/right feet on the two columns naturally. The gap between
+  the two columns matches the robot's stance width; stone width is sized so
+  the robot can plant its feet flat (no contorted gaits).
+
+  ALL edge-to-edge gaps in the chain use the same difficulty-interpolated
+  ``gap`` (0 -> 0.2 m): spawn column -> first pair, between consecutive
+  pairs, and last pair -> end column. The chain therefore never asks for a
+  first/last jump larger than the trained inter-stone gap. The chain starts
+  at a solid spawn column and ends at a solid end column (the final reward
+  point), so crossing it always starts and ends on firm ground. Pit depth is
+  randomized per patch to diversify depth-camera signals.
   """
 
-  stone_size_range: tuple[float, float] = (0.25, 0.4)
-  """Stone side length (square columns), in meters."""
+  stone_size: float = 0.35
+  """Stone side length (square columns), in meters. Sized for the Go1 stance."""
   stone_height_range: tuple[float, float] = (0.2, 0.35)
   """Stone top height above z=0. Lower bound at difficulty 0, upper at 1."""
   stone_height_variation: float = 0.05
   """Per-stone top-height jitter (scaled by difficulty), in meters."""
-  spacing_range: tuple[float, float] = (1.2, 2.0)
-  """Center-to-center distance between consecutive clusters, in meters."""
-  max_clusters: int = 3
-  """Maximum number of clusters along the chain."""
-  spawn_free_radius: float = 1.0
-  """Radius around the spawn point kept free of obstacles, in meters."""
+  gap_range: tuple[float, float] = (0.0, 0.2)
+  """Edge-to-edge gap used uniformly across the chain (spawn -> first pair,
+  between pairs, last pair -> end column). Lower bound at difficulty 0,
+  upper at 1 (user spec: 0 cm -> 20 cm)."""
+  column_gap_range: tuple[float, float] = (0.0, 0.2)
+  """Edge-to-edge gap between the two stone columns, difficulty-interpolated
+  (user spec: 0 cm -> 20 cm). Column center distance = stone_size + gap,
+  matching the Go1 stance width."""
+  num_pairs: int = 8
+  """Number of stone pairs along the chain; each column has ``num_pairs``
+  stones. One reward point per pair plus one on the end column."""
   border_width: float = 0.25
   """Solid ring width around the patch closing the pit, in meters."""
-  floor_depth: float = 2.0
-  """Pit depth below z=0, in meters."""
-  max_reward_points: int = 3
-  """Pre-allocation cap for per-(row, col) reward-point arrays."""
+  floor_depth_range: tuple[float, float] = (0.4, 1.0)
+  """Pit depth below z=0, randomized per patch to diversify depth-camera
+  signals."""
+  max_reward_points: int = 9
+  """Pre-allocation cap for per-(row, col) reward-point arrays (8 pairs + 1
+  end column)."""
 
   def function(
     self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
@@ -71,11 +88,15 @@ class BoxStraightStepStonesTerrainCfg(SubTerrainCfg):
     reward_points: list[np.ndarray] = []
 
     top = _lerp_range(difficulty, self.stone_height_range)
-    spacing = _lerp_range(difficulty, self.spacing_range)
+    gap = _lerp_range(difficulty, self.gap_range)
+    column_gap = _lerp_range(difficulty, self.column_gap_range)
     variation = self.stone_height_variation * difficulty
-    num_clusters = 2 if difficulty < 0.5 else min(3, self.max_clusters)
+    pitch = self.stone_size + gap
+    col_half_dist = (self.stone_size + column_gap) / 2
+    floor_depth = rng.uniform(*self.floor_depth_range)
 
     spawn_x = self.border_width + 0.5
+    spawn_right = spawn_x + 0.5
     cy = self.size[1] / 2
 
     # Border ring closing the pit walls.
@@ -84,8 +105,8 @@ class BoxStraightStepStonesTerrainCfg(SubTerrainCfg):
         body,
         self.size,
         (self.size[0] - 2 * self.border_width, self.size[1] - 2 * self.border_width),
-        top + self.floor_depth,
-        (self.size[0] / 2, self.size[1] / 2, (top - self.floor_depth) / 2),
+        top + floor_depth,
+        (self.size[0] / 2, self.size[1] / 2, (top - floor_depth) / 2),
       )
       for box in border_boxes:
         geometries.append(TerrainGeometry(geom=box, color=_GRAY))
@@ -95,40 +116,45 @@ class BoxStraightStepStonesTerrainCfg(SubTerrainCfg):
     floor_geom = body.add_geom(
       type=mujoco.mjtGeom.mjGEOM_BOX,
       size=(self.size[0] / 2, self.size[1] / 2, floor_h / 2),
-      pos=(self.size[0] / 2, self.size[1] / 2, -self.floor_depth - floor_h / 2),
+      pos=(self.size[0] / 2, self.size[1] / 2, -floor_depth - floor_h / 2),
     )
     geometries.append(TerrainGeometry(geom=floor_geom, color=_PIT_FLOOR))
 
-    # Spawn column (solid, top flush with the stones).
-    spawn_half = 0.5
-    spawn_geom = body.add_geom(
-      type=mujoco.mjtGeom.mjGEOM_BOX,
-      size=(spawn_half, spawn_half, (top + self.floor_depth) / 2),
-      pos=(spawn_x, cy, (top - self.floor_depth) / 2),
-    )
-    geometries.append(TerrainGeometry(geom=spawn_geom, color=_GREEN))
-
-    def add_stone(px: float, py: float, stone_top: float) -> None:
-      h = self.floor_depth + stone_top
-      size = rng.uniform(*self.stone_size_range)
+    def add_column(
+      px: float, py: float, half: float, col_top: float, color: tuple
+    ) -> None:
+      h = floor_depth + col_top
       geom = body.add_geom(
         type=mujoco.mjtGeom.mjGEOM_BOX,
-        size=(size / 2, size / 2, h / 2),
-        pos=(px, py, -self.floor_depth + h / 2),
+        size=(half, half, h / 2),
+        pos=(px, py, -floor_depth + h / 2),
       )
-      geometries.append(TerrainGeometry(geom=geom, color=_ORANGE))
+      geometries.append(TerrainGeometry(geom=geom, color=color))
 
-    for i in range(num_clusters):
-      cx = spawn_x + self.spawn_free_radius + i * spacing
-      stone_top = top + rng.uniform(-variation, variation)
-      # Plum-blossom cluster: one front stone, two rear-side stones.
-      front_size = rng.uniform(*self.stone_size_range)
-      side_dx = front_size * 0.6
-      side_dy = front_size * 0.9
-      add_stone(cx, cy, stone_top)
-      add_stone(cx - side_dx, cy - side_dy, stone_top)
-      add_stone(cx - side_dx, cy + side_dy, stone_top)
-      reward_points.append(np.array([cx, cy, stone_top]))
+    # Spawn column (solid, top flush with the stones).
+    add_column(spawn_x, cy, 0.5, top, _GREEN)
+
+    # Aligned stone pairs: one stone left + one right of the centerline at
+    # every pair position. The first pair starts gap away from the spawn
+    # column edge (same gap as between pairs).
+    first_x = spawn_right + gap + self.stone_size / 2
+    for i in range(self.num_pairs):
+      pair_x = first_x + i * pitch
+      top_left = top + rng.uniform(-variation, variation)
+      top_right = top + rng.uniform(-variation, variation)
+      add_column(pair_x, cy + col_half_dist, self.stone_size / 2, top_left, _ORANGE)
+      add_column(pair_x, cy - col_half_dist, self.stone_size / 2, top_right, _ORANGE)
+      # One reward point per pair, on the centerline between the two stones.
+      reward_points.append(np.array([pair_x, cy, 0.5 * (top_left + top_right)]))
+
+    # End column (1x1 m), gap away from the last pair's edge (same gap as
+    # the chain). It carries the final reward point; stepping onto it ends
+    # the episode (parkour_completed triggers at last point + margin 0.4,
+    # which lies on the column surface).
+    last_pair_right = first_x + (self.num_pairs - 1) * pitch + self.stone_size / 2
+    end_x = last_pair_right + gap + 0.5
+    add_column(end_x, cy, 0.5, top, _GREEN)
+    reward_points.append(np.array([end_x, cy, top]))
 
     origin = np.array([spawn_x, cy, top])
     return TerrainOutput(
@@ -138,30 +164,35 @@ class BoxStraightStepStonesTerrainCfg(SubTerrainCfg):
 
 @dataclass(kw_only=True)
 class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
-  """Raised platform boxes chained along +x on flat ground.
+  """A single raised platform ("low wall") on flat ground, mid-patch.
 
-  Each platform is tall (up to 0.35 m) and wide enough across y to block
-  detours, forcing the robot to jump onto/over it. One reward point sits on
-  each platform's top center.
+  Exactly ONE wall per patch. Its height follows the difficulty ladder
+  (0.2 -> 0.5 m over the 10 rows) with a small per-patch jitter so the robot
+  sees slightly different walls at the same difficulty; its thickness is
+  randomized per patch (thin walls get hopped over, thick walls get climbed).
+  Near patch-full-width across y so the robot cannot walk around it. One
+  reward point sits on the wall's top center.
   """
 
-  platform_height_range: tuple[float, float] = (0.15, 0.35)
-  """Platform height above ground. Lower bound at difficulty 0, upper at 1."""
-  platform_depth: float = 0.8
-  """Platform extent along x (landable top surface), in meters."""
-  platform_width_range: tuple[float, float] = (3.0, 4.5)
-  """Platform extent along y (blocks detours). Lower bound at difficulty 0."""
-  spacing_range: tuple[float, float] = (1.5, 2.5)
-  """Center-to-center distance between consecutive platforms, in meters."""
-  max_platforms: int = 3
-  """Maximum number of platforms along the chain."""
-  spawn_free_radius: float = 1.0
-  """Radius around the spawn point kept free of obstacles, in meters."""
+  platform_height_range: tuple[float, float] = (0.2, 0.5)
+  """Platform height above ground. Lower bound at difficulty 0, upper at 1
+  (user spec: 20 cm -> 50 cm over the 10 difficulty rows)."""
+  height_jitter: float = 0.05
+  """Per-patch uniform jitter added on top of the difficulty ladder height,
+  in meters (clamped to [0.15, 0.55])."""
+  platform_depth_range: tuple[float, float] = (0.4, 1.2)
+  """Platform extent along x, randomized per patch (landable top surface)."""
+  platform_width_range: tuple[float, float] = (6.5, 7.5)
+  """Platform extent along y. Near patch-full-width so the robot cannot
+  walk around the platform; it must climb or jump over."""
+  wall_x_range: tuple[float, float] = (2.5, 3.5)
+  """Wall center x within the patch, randomized per patch. Keeps ~2 m of
+  flat run-up after the spawn column."""
   border_width: float = 0.25
   """Flat border width around the patch, in meters."""
   floor_thickness: float = 0.5
   """Thickness of the ground slab below z=0, in meters."""
-  max_reward_points: int = 3
+  max_reward_points: int = 1
   """Pre-allocation cap for per-(row, col) reward-point arrays."""
 
   def function(
@@ -172,9 +203,11 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     reward_points: list[np.ndarray] = []
 
     height = _lerp_range(difficulty, self.platform_height_range)
+    height += rng.uniform(-self.height_jitter, self.height_jitter)
+    height = float(np.clip(height, 0.15, 0.55))
+    depth = rng.uniform(*self.platform_depth_range)
     width = _lerp_range(difficulty, self.platform_width_range)
-    spacing = _lerp_range(difficulty, self.spacing_range)
-    num_platforms = 2 if difficulty < 0.5 else min(3, self.max_platforms)
+    px = rng.uniform(*self.wall_x_range)
 
     spawn_x = self.border_width + 0.5
     cy = self.size[1] / 2
@@ -187,15 +220,13 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     )
     geometries.append(TerrainGeometry(geom=floor_geom, color=_GRAY))
 
-    for i in range(num_platforms):
-      px = spawn_x + self.spawn_free_radius + i * spacing
-      platform_geom = body.add_geom(
-        type=mujoco.mjtGeom.mjGEOM_BOX,
-        size=(self.platform_depth / 2, width / 2, height / 2),
-        pos=(px, cy, height / 2),
-      )
-      geometries.append(TerrainGeometry(geom=platform_geom, color=_ORANGE))
-      reward_points.append(np.array([px, cy, height]))
+    platform_geom = body.add_geom(
+      type=mujoco.mjtGeom.mjGEOM_BOX,
+      size=(depth / 2, width / 2, height / 2),
+      pos=(px, cy, height / 2),
+    )
+    geometries.append(TerrainGeometry(geom=platform_geom, color=_ORANGE))
+    reward_points.append(np.array([px, cy, height]))
 
     origin = np.array([spawn_x, cy, 0.0])
     return TerrainOutput(
@@ -212,10 +243,12 @@ class BoxStraightGapTerrainCfg(SubTerrainCfg):
   pit floor. One reward point sits just past the far edge of each gap.
   """
 
-  gap_width_range: tuple[float, float] = (0.2, 0.35)
-  """Gap extent along x. Lower bound at difficulty 0, upper at 1."""
-  gap_depth: float = 1.5
-  """Trench depth below z=0, in meters."""
+  gap_width_range: tuple[float, float] = (0.0, 0.5)
+  """Gap extent along x. Lower bound at difficulty 0 (flat ground), upper at
+  1 (user spec: 0 cm -> 50 cm over the 10 difficulty rows)."""
+  gap_depth_range: tuple[float, float] = (0.4, 1.0)
+  """Trench depth below z=0, randomized per patch to diversify depth-camera
+  signals."""
   segment_range: tuple[float, float] = (1.2, 1.8)
   """Walkable segment length between gaps, in meters."""
   max_gaps: int = 3
@@ -236,6 +269,7 @@ class BoxStraightGapTerrainCfg(SubTerrainCfg):
 
     gap_width = _lerp_range(difficulty, self.gap_width_range)
     num_gaps = 2 if difficulty < 0.5 else min(3, self.max_gaps)
+    gap_depth = rng.uniform(*self.gap_depth_range)
 
     spawn_x = self.border_width + 0.5
     cy = self.size[1] / 2
@@ -247,8 +281,8 @@ class BoxStraightGapTerrainCfg(SubTerrainCfg):
         body,
         self.size,
         (self.size[0] - 2 * self.border_width, self.size[1] - 2 * self.border_width),
-        self.gap_depth,
-        (self.size[0] / 2, self.size[1] / 2, -self.gap_depth / 2),
+        gap_depth,
+        (self.size[0] / 2, self.size[1] / 2, -gap_depth / 2),
       )
       for box in border_boxes:
         geometries.append(TerrainGeometry(geom=box, color=_GRAY))
@@ -258,7 +292,7 @@ class BoxStraightGapTerrainCfg(SubTerrainCfg):
     floor_geom = body.add_geom(
       type=mujoco.mjtGeom.mjGEOM_BOX,
       size=(self.size[0] / 2, self.size[1] / 2, floor_h / 2),
-      pos=(self.size[0] / 2, self.size[1] / 2, -self.gap_depth - floor_h / 2),
+      pos=(self.size[0] / 2, self.size[1] / 2, -gap_depth - floor_h / 2),
     )
     geometries.append(TerrainGeometry(geom=floor_geom, color=_PIT_FLOOR))
 
@@ -268,13 +302,14 @@ class BoxStraightGapTerrainCfg(SubTerrainCfg):
         return
       geom = body.add_geom(
         type=mujoco.mjtGeom.mjGEOM_BOX,
-        size=(length / 2, inner_len_y / 2, self.gap_depth / 2),
-        pos=((x0 + x1) / 2, cy, -self.gap_depth / 2),
+        size=(length / 2, inner_len_y / 2, gap_depth / 2),
+        pos=((x0 + x1) / 2, cy, -gap_depth / 2),
       )
       geometries.append(TerrainGeometry(geom=geom, color=_GRAY))
 
-    # First walkable segment covers the spawn zone.
-    cursor = spawn_x
+    # First walkable segment covers the spawn zone and everything behind it
+    # (from the border, so there is no pit gap under the spawn area).
+    cursor = self.border_width
     for _ in range(num_gaps):
       seg_len = rng.uniform(*self.segment_range)
       add_segment(cursor, cursor + seg_len)

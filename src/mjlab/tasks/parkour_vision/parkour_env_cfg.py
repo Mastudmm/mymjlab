@@ -7,11 +7,14 @@ and switches the velocity command to pure forward (x-only).
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.managers.reward_manager import RewardTermCfg
-from mjlab.tasks.parkour_vision.mdp import reward_point_bonus
+from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.managers.termination_manager import TerminationTermCfg
+from mjlab.tasks.parkour_vision import mdp
 from mjlab.tasks.velocity_vision.mdp import UniformVelocityCommandCfg
 from mjlab.terrains.config import PARKOUR_TERRAINS_CFG
 
@@ -32,17 +35,79 @@ def apply_parkour_overrides(
   assert cfg.scene.terrain is not None
   cfg.scene.terrain.terrain_generator = replace(terrain_cfg)
 
-  # 奖励点 milestone bonus（robot parkour 风格）。
+  # 地形列索引（与 PARKOUR_TERRAINS_CFG.sub_terrains 顺序一致）。
+  # 0=梅花桩, 1=矮墙(平台), 2=沟壑。
+  wall_column = 1
+
+  # 奖励点 milestone bonus（robot parkour 风格）：逐点给奖，每点每回合一次。
+  # z 判定防止在墙根/坑中蹭墙顶/桩顶分；前进门控允许攀爬慢速过点拿分。
   cfg.rewards["reward_point_bonus"] = RewardTermCfg(
-    func=reward_point_bonus,
+    func=mdp.reward_point_bonus,
     weight=1.0,
     params={
       "command_name": "twist",
       "hit_radius": 0.4,
+      "z_tol": 0.1,
+      "min_forward_speed": 0.05,
       "speed_tol": 0.5,
       "command_threshold": 0.1,
       "bonus_value": 1.0,
     },
+  )
+
+  # 成功终止：越过整条障碍链（最后一个奖励点 + margin）立即重置，避免通过后
+  # 在墙前空转到超时。非 timeout 结束，PPO 正常 bootstrap。margin=0.4 使触发
+  # 线落在梅花桩终点柱左缘上（柱心 = 末桩 + 0.4 + 0.5）。
+  cfg.terminations["parkour_completed"] = TerminationTermCfg(
+    func=mdp.parkour_completed,
+    params={"asset_cfg": SceneEntityCfg("robot"), "margin": 0.4},
+  )
+
+  # 躯干接触地形终止：矮墙列豁免（攀爬贴墙不可避免，摔倒由放宽的倾角兜底），
+  # 梅花桩/沟壑列保留（躯干碰桩/坑壁 = 失败）。
+  cfg.terminations["illegal_contact"] = TerminationTermCfg(
+    func=mdp.illegal_contact_excluding,
+    params={
+      "sensor_name": "nonfoot_ground_touch",
+      "exempt_terrain_types": (wall_column,),
+    },
+  )
+
+  # 倾角终止：矮墙列放宽至 85°（攀爬前倾姿态，翻倒仍兜底），其余列 75°。
+  cfg.terminations["fell_over"] = TerminationTermCfg(
+    func=mdp.bad_orientation_excluding,
+    params={
+      "limit_angle": math.radians(75.0),
+      "relaxed_angle": math.radians(85.0),
+      "exempt_terrain_types": (wall_column,),
+    },
+  )
+
+  # 接触惩罚豁免：矮墙列攀爬时头/大腿/小腿贴墙不可避免——这三项对地形的
+  # 接触惩罚在墙列置零；梅花桩/沟壑列保持原惩罚。
+  for name in ("head_collision", "thigh_collision", "calf_collision"):
+    term = cfg.rewards[name]
+    term.func = mdp.contact_penalty_excluding
+    term.params = {
+      **term.params,
+      "exempt_terrain_types": (wall_column,),
+    }
+
+  # 姿态奖励豁免：upright(w=1.0) 前倾时从 1.0 跌至 ~0.13，攀爬全程损失超过
+  # 奖励点收益，会抑制攀爬——矮墙列置中性 1.0（无姿态信号），翻倒由 85° 兜底。
+  upright = cfg.rewards["upright"]
+  upright.func = mdp.flat_orientation_excluding
+  upright.params = {
+    **upright.params,
+    "exempt_terrain_types": (wall_column,),
+  }
+
+  # 坠落终止：掉进坑/沟底（坑深随机 0.4-1.0m，坑底站立 base≈depth-0.28）的
+  # 机器人可能不触发非足接触也不摔倒，用 base 高度兜底。0.15 可覆盖最浅
+  # 0.4m 坑（坑底 base≈0.12），正常通行 base≥0.28 不误触发。
+  cfg.terminations["fell_into_pit"] = TerminationTermCfg(
+    func=mdp.base_height_below,
+    params={"asset_cfg": SceneEntityCfg("robot"), "min_height": 0.15},
   )
 
   # 纯 x 前进 command。

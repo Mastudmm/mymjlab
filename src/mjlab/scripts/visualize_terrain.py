@@ -23,7 +23,7 @@ from mjlab.asset_zoo.robots import (
   get_go1_robot_cfg,
   get_yam_robot_cfg,
 )
-from mjlab.terrains.config import ALL_TERRAINS_CFG
+from mjlab.terrains.config import ALL_TERRAINS_CFG, PARKOUR_TERRAINS_CFG
 from mjlab.terrains.terrain_generator import (
   TerrainGenerator,
   TerrainGeneratorCfg,
@@ -92,7 +92,10 @@ def main():
   server = viser.ViserServer()
 
   # Load available terrains from config.
-  available_presets = ALL_TERRAINS_CFG.sub_terrains
+  available_presets = {
+    **ALL_TERRAINS_CFG.sub_terrains,
+    **PARKOUR_TERRAINS_CFG.sub_terrains,
+  }
   preset_names = ["All Terrains"] + list(available_presets.keys())
 
   # State management.
@@ -208,9 +211,10 @@ def main():
     status_label.content = "**Status:** Generating terrain..."
 
     if state["preset_name"] == "All Terrains":
-      # Create a copy with equal proportions to ensure all are shown once.
+      # Show the parkour set (straight-line obstacle courses), one column per
+      # terrain type with difficulty increasing along rows.
       sub_terrains = {}
-      for name, cfg in available_presets.items():
+      for name, cfg in PARKOUR_TERRAINS_CFG.sub_terrains.items():
         new_cfg = dataclasses.replace(cfg, proportion=1.0)
         sub_terrains[name] = new_cfg
       num_cols = len(sub_terrains)
