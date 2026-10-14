@@ -125,6 +125,17 @@ def apply_parkour_overrides(
     "exempt_terrain_types": (wall_column,),
   }
 
+  # 越界终止：偏离训练区域（y 越过 patch 半宽、x 倒退过远）直接终止——
+  # 绕路即失去剩余全部奖励，防止不按链方向学习。
+  cfg.terminations["out_of_bounds"] = TerminationTermCfg(
+    func=mdp.out_of_bounds,
+    params={
+      "asset_cfg": SceneEntityCfg("robot"),
+      "max_y_offset": 3.5,
+      "max_back_x": 3.5,
+    },
+  )
+
   # 坠落终止：掉进坑/沟底（坑深随机 0.4-1.0m，坑底站立 base≈depth-0.28）的
   # 机器人可能不触发非足接触也不摔倒，用 base 高度兜底。0.15 可覆盖最浅
   # 0.4m 坑（坑底 base≈0.12），正常通行 base≥0.28 不误触发。

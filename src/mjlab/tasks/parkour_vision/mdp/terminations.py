@@ -122,3 +122,25 @@ def bad_orientation_excluding(
   relaxed = bad_orientation(env, relaxed_angle, asset_cfg)
   exempt = _exempt_mask(env, exempt_terrain_types)
   return torch.where(exempt, relaxed, exceeded)
+
+
+def out_of_bounds(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  max_y_offset: float = 3.5,
+  max_back_x: float = 3.5,
+) -> torch.Tensor:
+  """Terminate when the robot leaves its training patch area.
+
+  The obstacle chains run along world +x from the spawn origin; wandering
+  sideways (into neighbouring terrain columns) or backwards escapes the
+  remaining reward points entirely. Terminating on escape makes detours a
+  hard loss instead of a slow drift. Forward x is not limited here —
+  ``parkour_completed`` already ends the episode at the end of the chain.
+  """
+  asset = env.scene[asset_cfg.name]
+  pos = asset.data.root_link_pos_w
+  origin = env.scene.env_origins
+  y_out = (pos[:, 1] - origin[:, 1]).abs() > max_y_offset
+  x_back = pos[:, 0] < origin[:, 0] - max_back_x
+  return y_out | x_back
