@@ -150,7 +150,9 @@ class Simulation:
     # MJWarp model and data.
     with wp.ScopedDevice(self.wp_device):
       self._wp_model = mjwarp.put_model(self._mj_model)
-      self._wp_model.opt.ls_parallel = cfg.ls_parallel
+      # Removed in MuJoCo Warp 3.9.1 (solver change); guard for newer installs.
+      if hasattr(self._wp_model.opt, "ls_parallel"):
+        self._wp_model.opt.ls_parallel = cfg.ls_parallel
       self._wp_model.opt.contact_sensor_maxmatch = cfg.contact_sensor_maxmatch
 
       self._wp_data = mjwarp.put_data(
