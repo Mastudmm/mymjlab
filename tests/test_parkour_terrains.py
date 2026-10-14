@@ -33,7 +33,7 @@ def _generate(cfg_cls, difficulty: float):
   "cfg_cls,low_n,high_n",
   [
     (BoxStraightStepStonesTerrainCfg, 9, 9),
-    (BoxStraightPlatformTerrainCfg, 1, 1),
+    (BoxStraightPlatformTerrainCfg, 2, 2),
     (BoxStraightGapTerrainCfg, 2, 3),
   ],
 )

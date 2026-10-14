@@ -47,12 +47,35 @@ def apply_parkour_overrides(
     params={
       "command_name": "twist",
       "hit_radius": 0.4,
-      "z_tol": 0.1,
+      "z_margin": 0.05,
       "min_forward_speed": 0.05,
       "speed_tol": 0.5,
       "command_threshold": 0.1,
       "bonus_value": 1.0,
     },
+  )
+
+  # 成功终止：越过整条障碍链（最后一个奖励点 + margin）立即重置，避免通过后
+  # 在墙前空转到超时。非 timeout 结束，PPO 正常 bootstrap。margin=0.4 使触发
+  # 线落在梅花桩终点柱左缘上（柱心 = 末桩 + 0.4 + 0.5）。
+  # 方向性奖励：治 y/yaw 漂移与绕行问题（2026-10-14 play 反馈）。
+  # 航向保持：yaw 对齐世界 +x（链方向）。
+  cfg.rewards["heading_alignment"] = RewardTermCfg(
+    func=mdp.heading_alignment,
+    weight=1.0,
+    params={"std": 0.4},
+  )
+  # 轨道保持：惩罚偏离出生中线。
+  cfg.rewards["lateral_track"] = RewardTermCfg(
+    func=mdp.lateral_track,
+    weight=1.0,
+    params={"std": 0.5},
+  )
+  # 前进进度：沿世界 +x 的位移直接给分（爬墙慢速也有收益，绕行无收益）。
+  cfg.rewards["forward_progress"] = RewardTermCfg(
+    func=mdp.forward_progress,
+    weight=3.0,
+    params={},
   )
 
   # 成功终止：越过整条障碍链（最后一个奖励点 + margin）立即重置，避免通过后

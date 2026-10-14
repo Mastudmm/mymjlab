@@ -4,6 +4,15 @@ from mjlab.tasks.parkour_vision.mdp.rewards import (
   contact_penalty_excluding as contact_penalty_excluding,
 )
 from mjlab.tasks.parkour_vision.mdp.rewards import (
+  forward_progress as forward_progress,
+)
+from mjlab.tasks.parkour_vision.mdp.rewards import (
+  heading_alignment as heading_alignment,
+)
+from mjlab.tasks.parkour_vision.mdp.rewards import (
+  lateral_track as lateral_track,
+)
+from mjlab.tasks.parkour_vision.mdp.rewards import (
   flat_orientation_excluding as flat_orientation_excluding,
 )
 from mjlab.tasks.parkour_vision.mdp.rewards import (
@@ -24,6 +33,9 @@ from mjlab.tasks.parkour_vision.mdp.terminations import (
 
 __all__ = [
   "reward_point_bonus",
+  "forward_progress",
+  "heading_alignment",
+  "lateral_track",
   "contact_penalty_excluding",
   "flat_orientation_excluding",
   "parkour_completed",

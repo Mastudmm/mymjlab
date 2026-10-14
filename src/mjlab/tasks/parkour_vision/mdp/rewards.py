@@ -73,9 +73,9 @@ class reward_point_bonus:
   ``TerrainEntity.reward_points`` / ``reward_counts``). A point is "hit" when
 
   - the robot base xy lies within ``hit_radius`` of the point,
-  - the base z is within ``z_tol`` of the point z (prevents crediting a robot
-    that is still on the ground in front of a wall, or standing in a pit
-    below the stones), and
+  - the base z is at least ``z_margin`` above the point z (prevents crediting
+    a robot that is still on the ground in front of a wall, or standing in a
+    pit below the stones), and
   - the robot makes forward progress: body-x speed is positive (climbing is
     slow — the strict speed-tracking gate would deny the wall-top bonus) or
     close to the commanded speed.
@@ -105,7 +105,7 @@ class reward_point_bonus:
     command_name: str,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
     hit_radius: float = 0.4,
-    z_tol: float = 0.1,
+    z_margin: float = 0.05,
     min_forward_speed: float = 0.05,
     speed_tol: float = 0.5,
     command_threshold: float = 0.1,
@@ -136,8 +136,9 @@ class reward_point_bonus:
     dist = torch.norm(points[..., :2] - base_pos_w[:, None, :2], dim=-1)
     near = dist < hit_radius  # [B, max]
 
-    # Hit test (z): base high enough to actually be on/at the obstacle top.
-    high_enough = base_pos_w[:, 2:3] > points[..., 2] - z_tol  # [B, max]
+    # Hit test (z): base must be ON/above the obstacle top — a robot on the
+    # ground in front of a wall or in a pit below the stones earns nothing.
+    high_enough = base_pos_w[:, 2:3] > points[..., 2] + z_margin  # [B, max]
 
     # Forward-progress gate: climbing is slow, so accept any positive
     # forward speed OR a speed close to the command.
@@ -164,3 +165,85 @@ class reward_point_bonus:
 
   def reset(self, env_ids: torch.Tensor) -> None:
     self.claimed[env_ids] = False
+
+
+class heading_alignment:
+  """Reward for aligning the base yaw with the world +x heading.
+
+  The parkour chains run along world +x and the command is pure forward-x, so
+  a robot that yaws away drifts off the obstacle line. This keeps the heading
+  pinned to the chain direction.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    pass
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    std: float = 0.4,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    quat = asset.data.root_link_quat_w
+    # Project world +x into the body frame: the body-frame x component of a
+    # world +x vector equals cos(yaw_error).
+    world_x = torch.tensor([1.0, 0.0, 0.0], device=env.device).expand(
+      env.num_envs, 3
+    )
+    from mjlab.utils.lab_api.math import quat_apply_inverse
+
+    body_x_of_world_x = quat_apply_inverse(quat, world_x)
+    cos_err = body_x_of_world_x[:, 0]  # 1.0 when yaw aligned, -1.0 when flipped
+    return torch.clamp(cos_err, min=0.0)  # no reward for facing backwards
+
+
+class lateral_track:
+  """Penalize lateral deviation from the spawn centerline (world y).
+
+  Keeps the robot on the straight obstacle line; escaping sideways earns no
+  forward progress under :class:`forward_progress` and loses this reward.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    pass
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    std: float = 0.5,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    terrain = env.scene.terrain
+    origin_y = env.scene.env_origins[:, 1]
+    y_err = asset.data.root_link_pos_w[:, 1] - origin_y
+    return torch.exp(-(y_err**2) / std**2)
+
+
+class forward_progress:
+  """Reward the world-frame +x displacement per step.
+
+  Directly pays for advancing along the obstacle-chain direction, so climbing
+  a wall (slow but forward) still earns, while sideways detours earn nothing.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self._env = env
+    self.last_x = env.scene.env_origins[:, 0].clone()
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    x = asset.data.root_link_pos_w[:, 0]
+    progress = x - self.last_x
+    self.last_x = x.clone()
+    return progress
+
+  def reset(self, env_ids: torch.Tensor) -> None:
+    # Anchor to the (possibly curriculum-updated) spawn origin so the first
+    # step after reset measures real progress from the start line.
+    self.last_x[env_ids] = self._env.scene.env_origins[env_ids, 0]

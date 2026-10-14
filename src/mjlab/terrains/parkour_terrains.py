@@ -182,9 +182,9 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
   in meters (clamped to [0.15, 0.55])."""
   platform_depth_range: tuple[float, float] = (0.4, 1.2)
   """Platform extent along x, randomized per patch (landable top surface)."""
-  platform_width_range: tuple[float, float] = (6.5, 7.5)
-  """Platform extent along y. Near patch-full-width so the robot cannot
-  walk around the platform; it must climb or jump over."""
+  platform_width_range: tuple[float, float] = (7.4, 7.5)
+  """Platform extent along y. Patch-full-width (no side gaps) so the robot
+  physically cannot walk around the platform; it must climb or jump over."""
   wall_x_range: tuple[float, float] = (2.5, 3.5)
   """Wall center x within the patch, randomized per patch. Keeps ~2 m of
   flat run-up after the spawn column."""
@@ -192,8 +192,9 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
   """Flat border width around the patch, in meters."""
   floor_thickness: float = 0.5
   """Thickness of the ground slab below z=0, in meters."""
-  max_reward_points: int = 1
-  """Pre-allocation cap for per-(row, col) reward-point arrays."""
+  max_reward_points: int = 2
+  """Pre-allocation cap for per-(row, col) reward-point arrays (wall top +
+  landing point past the wall)."""
 
   def function(
     self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
@@ -227,6 +228,9 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     )
     geometries.append(TerrainGeometry(geom=platform_geom, color=_ORANGE))
     reward_points.append(np.array([px, cy, height]))
+    # Landing point on the ground just past the wall: pays for CROSSING it,
+    # not merely touching the top.
+    reward_points.append(np.array([px + depth / 2 + 0.6, cy, 0.0]))
 
     origin = np.array([spawn_x, cy, 0.0])
     return TerrainOutput(
