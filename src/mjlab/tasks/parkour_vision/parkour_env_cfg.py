@@ -112,6 +112,7 @@ def apply_parkour_overrides(
   cfg.rewards["track_linear_velocity"].params = {
     **cfg.rewards["track_linear_velocity"].params,
     "exempt_terrain_types": (wall_column,),
+    "stall_speed": 0.15,
   }
 
   # 接触惩罚豁免：矮墙列攀爬时头/大腿/小腿贴墙不可避免——这三项对地形的

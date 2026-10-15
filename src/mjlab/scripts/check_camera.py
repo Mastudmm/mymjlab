@@ -14,8 +14,8 @@ import numpy as np
 
 from mjlab.asset_zoo.robots import get_go1_robot_cfg
 
-EXPECTED_FORWARD = np.array([0.9659, 0.0, -0.2588])  # +x, 15° below horizon
-EXPECTED_PITCH_DEG = -15.0  # arcsin(forward_z); negative = downward
+EXPECTED_FORWARD = np.array([0.8660, 0.0, -0.5])  # +x, 30° below horizon
+EXPECTED_PITCH_DEG = -30.0  # arcsin(forward_z); negative = downward
 
 
 def main() -> None:
@@ -37,7 +37,7 @@ def main() -> None:
   print(f"俯仰角(下俯为负)  : {pitch_deg:+.2f}° (期望 {EXPECTED_PITCH_DEG:+.2f}°)")
   print(f"偏航角             : {yaw_deg:+.2f}° (期望 0.00°)")
 
-  ok_pos = abs(pos[2] - 0.545) < 1e-3  # trunk base 0.445 + site z 0.1
+  ok_pos = abs(pos[2] - 0.595) < 1e-3  # trunk base 0.445 + site z 0.15
   ok_forward = np.allclose(forward, EXPECTED_FORWARD, atol=1e-3)
   print("位置检查:", "PASS" if ok_pos else "FAIL")
   print("朝向检查:", "PASS" if ok_forward else "FAIL")

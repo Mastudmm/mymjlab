@@ -254,24 +254,31 @@ def track_linear_velocity_excluding_z(
   std: float,
   command_name: str,
   exempt_terrain_types: tuple[int, ...] = (),
+  stall_speed: float = 0.15,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Velocity tracking without the vertical-speed penalty on exempt columns.
+  """Velocity tracking without penalizing climb stalls on exempt columns.
 
-  The base ``track_linear_velocity`` penalizes body-frame vz (commanded vz is
-  zero), which is correct for walking but makes jumping — required to climb
-  the 0.2-0.5 m wall — extremely expensive. On the wall column the vz penalty
-  is dropped; the xy tracking term stays everywhere.
+  Two adjustments on exempt columns (the wall column is the only user):
+
+  - the vz penalty is dropped (jumping needs large vz, which the base term
+    punishes out of existence);
+  - the xy tracking term is neutralized (returns 1.0) while the robot is
+    nearly stationary (< ``stall_speed``). Climbing a 0.2-0.5 m wall requires
+    1-2 s of near-zero forward speed; with w=4 the tracking loss over that
+    stall (~360) dwarfs the two reward points (~2), so a rational policy
+    never stops to climb. Walking segments (v >= stall_speed) are still
+    tracked normally.
+
+  Non-exempt columns get the base term unchanged.
   """
   from mjlab.tasks.velocity_vision.mdp.rewards import track_linear_velocity
 
   value = track_linear_velocity(env, std, command_name, asset_cfg)
   exempt = _exempt_mask(env, exempt_terrain_types)
-  # On exempt columns drop the vz part only: recompute xy-only term and blend.
   asset: Entity = env.scene[asset_cfg.name]
-  command = env.command_manager.get_command(command_name)
-  assert command is not None
   actual = asset.data.root_link_lin_vel_b
-  xy_error = torch.sum(torch.square(command[:, :2] - actual[:, :2]), dim=1)
-  xy_only = torch.exp(-xy_error / std**2)
-  return torch.where(exempt, xy_only, value)
+  stalled = actual[:, 0] < stall_speed
+  neutral = torch.ones_like(value)
+  anti_stall = torch.where(stalled, neutral, value)
+  return torch.where(exempt, anti_stall, value)
