@@ -37,7 +37,7 @@ def main() -> None:
   print(f"俯仰角(下俯为负)  : {pitch_deg:+.2f}° (期望 {EXPECTED_PITCH_DEG:+.2f}°)")
   print(f"偏航角             : {yaw_deg:+.2f}° (期望 0.00°)")
 
-  ok_pos = abs(pos[2] - 0.645) < 1e-3  # trunk base 0.445 + site z 0.2
+  ok_pos = abs(pos[2] - 0.545) < 1e-3  # trunk base 0.445 + site z 0.1
   ok_forward = np.allclose(forward, EXPECTED_FORWARD, atol=1e-3)
   print("位置检查:", "PASS" if ok_pos else "FAIL")
   print("朝向检查:", "PASS" if ok_forward else "FAIL")
