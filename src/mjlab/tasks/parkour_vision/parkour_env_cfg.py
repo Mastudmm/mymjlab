@@ -195,10 +195,12 @@ def apply_parkour_overrides(
 
   # ---- 相机俯仰随机化（wmp_go1 实机配置）：XML head site 水平朝前，
   # 每 env 固定随机下俯 15-25° + 偏航 ±2°——同时见过"近处脚下"与
-  # "远处障碍"，根治固定大俯角的视野盲区。 ----
+  # "远处障碍"，根治固定大俯角的视野盲区。
+  # 注意符号：quat_from_euler_xyz 的 pitch 为正 = 下俯（wmp_go1 同款
+  # "positive pitch down"）；负值会抬头看天（2026-10-15 play 实证）。----
   cfg.events["cam_quat"].params["pitch_range"] = (
-    math.radians(-25.0),
-    math.radians(-15.0),
+    math.radians(15.0),
+    math.radians(25.0),
   )
   cfg.events["cam_quat"].params["yaw_range"] = (
     math.radians(-2.0),
