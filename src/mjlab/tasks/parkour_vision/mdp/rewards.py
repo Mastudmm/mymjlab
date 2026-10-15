@@ -247,3 +247,31 @@ class forward_progress:
     # Anchor to the (possibly curriculum-updated) spawn origin so the first
     # step after reset measures real progress from the start line.
     self.last_x[env_ids] = self._env.scene.env_origins[env_ids, 0]
+
+
+def track_linear_velocity_excluding_z(
+  env: ManagerBasedRlEnv,
+  std: float,
+  command_name: str,
+  exempt_terrain_types: tuple[int, ...] = (),
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Velocity tracking without the vertical-speed penalty on exempt columns.
+
+  The base ``track_linear_velocity`` penalizes body-frame vz (commanded vz is
+  zero), which is correct for walking but makes jumping — required to climb
+  the 0.2-0.5 m wall — extremely expensive. On the wall column the vz penalty
+  is dropped; the xy tracking term stays everywhere.
+  """
+  from mjlab.tasks.velocity_vision.mdp.rewards import track_linear_velocity
+
+  value = track_linear_velocity(env, std, command_name, asset_cfg)
+  exempt = _exempt_mask(env, exempt_terrain_types)
+  # On exempt columns drop the vz part only: recompute xy-only term and blend.
+  asset: Entity = env.scene[asset_cfg.name]
+  command = env.command_manager.get_command(command_name)
+  assert command is not None
+  actual = asset.data.root_link_lin_vel_b
+  xy_error = torch.sum(torch.square(command[:, :2] - actual[:, :2]), dim=1)
+  xy_only = torch.exp(-xy_error / std**2)
+  return torch.where(exempt, xy_only, value)

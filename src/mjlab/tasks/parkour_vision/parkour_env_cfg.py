@@ -106,6 +106,14 @@ def apply_parkour_overrides(
     },
   )
 
+  # 速度跟踪 z 分量豁免：track_linear_velocity 的 vz 惩罚让跳跃翻墙代价
+  # 巨大（w=4 主奖励瞬间归零）——矮墙列去掉竖直速度惩罚，xy 跟踪保持。
+  cfg.rewards["track_linear_velocity"].func = mdp.track_linear_velocity_excluding_z
+  cfg.rewards["track_linear_velocity"].params = {
+    **cfg.rewards["track_linear_velocity"].params,
+    "exempt_terrain_types": (wall_column,),
+  }
+
   # 接触惩罚豁免：矮墙列攀爬时头/大腿/小腿贴墙不可避免——这三项对地形的
   # 接触惩罚在墙列置零；梅花桩/沟壑列保持原惩罚。
   for name in ("head_collision", "thigh_collision", "calf_collision"):
