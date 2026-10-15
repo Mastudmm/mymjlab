@@ -54,3 +54,41 @@ mjlab 通过 `key_callback` 注入了自己的按键处理，
 - `R` 键关闭 debug 可视化后，深度相机射线束会消失——排查相机朝向时请保持开启；
 - 暂停（`Space`）时射线束静止，适合逐帧观察相机视野覆盖；
 - 多 env 模式下 `A` + `,`/`.` 组合可以快速定位某个 env 的相机视野。
+
+## 字母键的完整真相：为什么只有上面几个
+
+mjlab 的 native viewer 底层是 `mujoco.viewer.launch_passive`，它**不使用**
+MuJoCo 官方 simulate 应用的完整键位（simulate 二进制/`mujoco.viewer.launch`
+阻塞版才有 A-Z 全套渲染开关）。mjlab 只通过 `key_callback` 注册了上表的
+9 个键——**其余字母键（B、C、D、E、F、G…）在 mjlab native viewer 中没有
+任何功能**，这不是遗漏，是 passive viewer 的设计（渲染选项由代码/UI 控制，
+不经键盘）。
+
+## site 显示与 plot 数据注册时机（源码行为）
+
+### site 显示：没有专用按键
+
+mjlab 的 native viewer 没有为 site 绑定按键；渲染选项 `mjvOption` 中 **site 默认开启**。
+`head` site 是 `size=0.02` 的红色小方块（group=5），正常 play 时渲染在躯干前上方
+（相机安装点）。看不到时的排查顺序：
+
+1. 滚轮拉近——site 只有 2cm，远距离不可见；
+2. 双击它选中，窗口底部 info 栏显示其世界坐标；
+3. 确认 viewer 窗口右侧 MuJoCo UI 面板（Rendering 组）中 Site 勾选未被取消。
+
+### `P` 键 reward 曲线：数据注册时机
+
+按 `P`（`TOGGLE_PLOTS`）只切换**显示/隐藏**，数据注册独立于该按键：
+
+- viewer 启动时即为 `reward_manager` 的每个奖励项创建 **300 点 ring buffer**
+  （`viewer.py` 的 `_histories`）；
+- **渲染线程每帧**从 `reward_manager.get_active_iterable_terms(env_idx)` 读取
+  最近一步的各奖励项单步值写入缓冲并刷新 figure（`_update_reward_figures`）；
+- 因此按 `P` 之前的最近 300 步历史也在曲线里；暂停（`Space`）后数据停止增长；
+  `Enter` 重置环境时缓冲清空（`_clear_histories`）。
+
+### `--live-plot`（与 `P` 键的另一套）
+
+启动参数 `--live-plot` 挂 `LiveJointPlot` wrapper：每个 `env.step()` 里记录
+**root 线速度 + hip/thigh/calf 关节角**，每 N 步刷新独立 matplotlib 窗口。
+与 `P` 键的 reward 曲线相互独立。
