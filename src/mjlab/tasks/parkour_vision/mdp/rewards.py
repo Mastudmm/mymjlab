@@ -9,10 +9,7 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.tasks.velocity_vision.mdp.rewards import (
-  flat_orientation,
-  self_collision_cost,
-)
+from mjlab.tasks.velocity_vision.mdp.rewards import self_collision_cost
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -42,28 +39,15 @@ def contact_penalty_excluding(
 
   On the platform ("low wall") column the head/thigh/trunk inevitably brush
   the wall while climbing, so those contacts must not be penalized there;
-  the stones/gaps columns keep the original penalty.
+  the stones/gaps columns keep the original penalty. (This exemption — and
+  the matching contact termination / orientation-limit relaxations — is the
+  ONLY per-column exemption kept in the wmp_go1-aligned reward set: unlike
+  wmp_go1's heightfield terrain, a true vertical box wall forces body contact
+  during the climb.)
   """
   value = self_collision_cost(env, sensor_name, force_threshold)
   exempt = _exempt_mask(env, exempt_terrain_types)
   return value * (~exempt).float()
-
-
-def flat_orientation_excluding(
-  env: ManagerBasedRlEnv,
-  std: float,
-  exempt_terrain_types: tuple[int, ...] = (),
-  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-) -> torch.Tensor:
-  """Upright-orientation reward with per-column exemption.
-
-  Climbing the wall pitches the trunk far beyond flat, so the upright reward
-  would suppress climbing; exempt columns receive the neutral 1.0 (no
-  orientation signal at all).
-  """
-  value = flat_orientation(env, std, asset_cfg)
-  exempt = _exempt_mask(env, exempt_terrain_types)
-  return value * (~exempt).float() + exempt.float()
 
 
 class reward_point_bonus:
@@ -249,36 +233,91 @@ class forward_progress:
     self.last_x[env_ids] = self._env.scene.env_origins[env_ids, 0]
 
 
-def track_linear_velocity_excluding_z(
+def stuck_penalty(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  stall_speed: float = 0.1,
+  command_threshold: float = 0.1,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize standing still while the command asks to move (wmp_go1 ``stuck``).
+
+  The wmp_go1 philosophy replaces stall-neutralizing hacks with a hard penalty:
+  a robot commanded forward that keeps |vx| < ``stall_speed`` loses reward every
+  step, so lingering in front of an obstacle is strictly worse than attempting
+  it. The velocity-clip tracking term keeps fast obstacle crossings unpunished,
+  so "keep moving" is the dominant strategy.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  command = env.command_manager.get_command(command_name)
+  assert command is not None
+  vel_b = asset.data.root_link_lin_vel_b
+  stalled = vel_b[:, 0].abs() < stall_speed
+  commanded = command[:, 0] > command_threshold
+  return (stalled & commanded).float()
+
+
+def cheat_penalty(
+  env: ManagerBasedRlEnv,
+  max_yaw_dev: float = 1.0,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize large world-frame yaw deviation from the chain direction (+x).
+
+  wmp_go1 applies the same penalty to its forward-only terrain group: heading
+  beyond +-``max_yaw_dev`` rad in the WORLD frame means the robot turned away
+  from the obstacle line (the only way around a full-width chain), so the
+  detour is penalized directly instead of relying on lost progress alone.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  quat = asset.data.root_link_quat_w
+  from mjlab.utils.lab_api.math import quat_apply
+
+  world_x = torch.tensor([1.0, 0.0, 0.0], device=env.device).expand(
+    env.num_envs, 3
+  )
+  forward = quat_apply(quat, world_x)  # body +x direction in world frame
+  heading = torch.atan2(forward[:, 1], forward[:, 0])
+  return ((heading > max_yaw_dev) | (heading < -max_yaw_dev)).float()
+
+
+def track_linear_velocity_clipped(
   env: ManagerBasedRlEnv,
   std: float,
   command_name: str,
-  exempt_terrain_types: tuple[int, ...] = (),
-  stall_speed: float = 0.15,
+  lin_vel_clip: float = 0.1,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Velocity tracking without penalizing climb stalls on exempt columns.
+  """Velocity tracking with speed overspeed clipping (wmp_go1 style).
 
-  Two adjustments on exempt columns (the wall column is the only user):
+  The actual body-frame xy velocity is clipped to the commanded speed plus
+  ``lin_vel_clip`` before the exponential error is computed: moving FASTER
+  than commanded (charging over a gap, leaping onto a wall) costs nothing,
+  while slow/erratic motion is still punished. This is what lets wmp_go1
+  train obstacle traversal with a single uniform tracking reward and no
+  per-terrain exemptions — the obstacle columns reward speed instead of
+  punishing it.
 
-  - the vz penalty is dropped (jumping needs large vz, which the base term
-    punishes out of existence);
-  - the xy tracking term is neutralized (returns 1.0) while the robot is
-    nearly stationary (< ``stall_speed``). Climbing a 0.2-0.5 m wall requires
-    1-2 s of near-zero forward speed; with w=4 the tracking loss over that
-    stall (~360) dwarfs the two reward points (~2), so a rational policy
-    never stops to climb. Walking segments (v >= stall_speed) are still
-    tracked normally.
-
-  Non-exempt columns get the base term unchanged.
+  Note the vz penalty of the base term stays in effect everywhere (wmp_go1
+  keeps it too): jumping is paid for by the reward points on the obstacle,
+  not subsidized by per-column exemptions.
   """
   from mjlab.tasks.velocity_vision.mdp.rewards import track_linear_velocity
 
-  value = track_linear_velocity(env, std, command_name, asset_cfg)
-  exempt = _exempt_mask(env, exempt_terrain_types)
   asset: Entity = env.scene[asset_cfg.name]
-  actual = asset.data.root_link_lin_vel_b
-  stalled = actual[:, 0] < stall_speed
-  neutral = torch.ones_like(value)
-  anti_stall = torch.where(stalled, neutral, value)
-  return torch.where(exempt, anti_stall, value)
+  command = env.command_manager.get_command(command_name)
+  assert command is not None
+  actual = asset.data.root_link_lin_vel_b[:, :2]
+  upper = torch.where(
+    command[:, :2] < 0,
+    torch.full_like(command[:, :2], 1e5),
+    command[:, :2] + lin_vel_clip,
+  )
+  lower = torch.where(
+    command[:, :2] > 0,
+    torch.full_like(command[:, :2], -1e5),
+    command[:, :2] - lin_vel_clip,
+  )
+  clipped = torch.clip(actual, lower, upper)
+  xy_error = torch.sum(torch.square(command[:, :2] - clipped), dim=1)
+  return torch.exp(-xy_error / std**2)

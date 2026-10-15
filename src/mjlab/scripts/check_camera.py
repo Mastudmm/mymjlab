@@ -14,8 +14,8 @@ import numpy as np
 
 from mjlab.asset_zoo.robots import get_go1_robot_cfg
 
-EXPECTED_FORWARD = np.array([0.8660, 0.0, -0.5])  # +x, 30° below horizon
-EXPECTED_PITCH_DEG = -30.0  # arcsin(forward_z); negative = downward
+EXPECTED_FORWARD = np.array([1.0, 0.0, 0.0])  # +x, horizontal (no fixed pitch)
+EXPECTED_PITCH_DEG = 0.0  # arcsin(forward_z); training randomizes -25°..-15°
 
 
 def main() -> None:

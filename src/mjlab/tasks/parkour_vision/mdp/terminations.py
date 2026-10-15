@@ -56,6 +56,33 @@ def parkour_completed(
   return passed_x & near_y
 
 
+def vel_violate(
+  env: ManagerBasedRlEnv,
+  command_name: str = "twist",
+  threshold: float = 1.5,
+  min_level: int = 3,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Terminate on excessive velocity violation vs the command (wmp_go1 style).
+
+  Catches a robot charging BACKWARDS (or standing while commanded forward) by
+  more than ``threshold`` m/s on body-frame x. Only active on terrain levels
+  above ``min_level``: on the easy rows the robot is still learning to walk,
+  and disqualifying it there would just reset it constantly. Complements
+  :func:`out_of_bounds`, which only fires on spatial escape.
+  """
+  asset = env.scene[asset_cfg.name]
+  command = env.command_manager.get_command(command_name)
+  assert command is not None
+  vel_error = asset.data.root_link_lin_vel_b[:, 0] - command[:, 0]
+  violated = ((vel_error > threshold) & (command[:, 0] < 0.0)) | (
+    (vel_error < -threshold) & (command[:, 0] > 0.0)
+  )
+  terrain = env.scene.terrain
+  assert terrain is not None
+  return violated & (terrain.terrain_levels > min_level)
+
+
 def base_height_below(
   env: ManagerBasedRlEnv,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,

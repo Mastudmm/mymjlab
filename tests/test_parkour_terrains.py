@@ -33,7 +33,7 @@ def _generate(cfg_cls, difficulty: float):
   "cfg_cls,low_n,high_n",
   [
     (BoxStraightStepStonesTerrainCfg, 9, 9),
-    (BoxStraightPlatformTerrainCfg, 2, 2),
+    (BoxStraightPlatformTerrainCfg, 4, 4),
     (BoxStraightGapTerrainCfg, 2, 3),
   ],
 )
@@ -103,7 +103,11 @@ def test_platform_height_increases_with_difficulty():
 
 
 def test_gap_reward_point_past_far_edge():
-  """Gap reward points sit on the walkable ground past each gap's far edge."""
+  """Gap reward points sit on the walkable ground past each gap's far edge.
+
+  Landing segments carry a random micro-elevation (0-0.15 m, wmp_go1
+  continuous_gap style), so the point z equals the landing segment's top
+  height; the spawn segment stays flush with z=0."""
   cfg = BoxStraightGapTerrainCfg(size=SIZE)
   spec = mujoco.MjSpec()
   spec.worldbody.add_body(name="terrain")
@@ -111,9 +115,8 @@ def test_gap_reward_point_past_far_edge():
   output = cfg.function(1.0, spec, rng)
 
   assert output.reward_points is not None
-  # Every reward point lies on the landing-side ground (z=0), inside the patch.
   for point in output.reward_points:
-    assert point[2] == pytest.approx(0.0)
+    assert 0.0 <= point[2] <= cfg.segment_height_range[1]
     assert point[0] < SIZE[0] - cfg.border_width
 
 

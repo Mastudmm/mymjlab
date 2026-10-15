@@ -164,37 +164,44 @@ class BoxStraightStepStonesTerrainCfg(SubTerrainCfg):
 
 @dataclass(kw_only=True)
 class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
-  """A single raised platform ("low wall") on flat ground, mid-patch.
+  """TWO raised platforms ("low walls") on flat ground, chained along +x.
 
-  Exactly ONE wall per patch. Its height follows the difficulty ladder
-  (0.2 -> 0.5 m over the 10 rows) with a small per-patch jitter so the robot
-  sees slightly different walls at the same difficulty; its thickness is
-  randomized per patch (thin walls get hopped over, thick walls get climbed).
-  Near patch-full-width across y so the robot cannot walk around it. One
-  reward point sits on the wall's top center.
+  Layout mirrors wmp_go1's ``climb`` terrain: two near-full-width wall groups
+  per patch with a 2.5-2.9 m flat run between them. Heights follow the
+  difficulty ladder (0.2 -> 0.5 m over the 10 rows) with per-wall jitter;
+  thicknesses are randomized per patch (thin walls get hopped over, thick
+  walls get climbed). Each wall carries two reward points (top + landing),
+  so the full chain pays 4 points.
   """
 
   platform_height_range: tuple[float, float] = (0.2, 0.5)
   """Platform height above ground. Lower bound at difficulty 0, upper at 1
   (user spec: 20 cm -> 50 cm over the 10 difficulty rows)."""
   height_jitter: float = 0.05
-  """Per-patch uniform jitter added on top of the difficulty ladder height,
+  """Per-wall uniform jitter added on top of the difficulty ladder height,
   in meters (clamped to [0.15, 0.55])."""
   platform_depth_range: tuple[float, float] = (0.4, 1.2)
   """Platform extent along x, randomized per patch (landable top surface)."""
   platform_width_range: tuple[float, float] = (7.4, 7.5)
   """Platform extent along y. Patch-full-width (no side gaps) so the robot
   physically cannot walk around the platform; it must climb or jump over."""
-  wall_x_range: tuple[float, float] = (2.5, 3.5)
-  """Wall center x within the patch, randomized per patch. Keeps ~2 m of
-  flat run-up after the spawn column."""
+  wall1_x_range: tuple[float, float] = (2.0, 2.5)
+  """First wall center x within the patch, randomized per patch."""
+  wall_gap_range: tuple[float, float] = (2.5, 2.9)
+  """Edge-to-edge flat gap between the two walls (wmp_go1 climb: 2.5-2.9 m).
+  The second wall is clamped so its landing reward point stays reachable
+  before the patch border."""
+  wall2_right_max: float = 6.8
+  """Upper bound for the second wall's right edge; keeps the landing point
+  (edge + 0.5 m) and the success-termination line (landing + 0.4 m margin)
+  inside the walkable patch."""
   border_width: float = 0.25
   """Flat border width around the patch, in meters."""
   floor_thickness: float = 0.5
   """Thickness of the ground slab below z=0, in meters."""
-  max_reward_points: int = 2
-  """Pre-allocation cap for per-(row, col) reward-point arrays (wall top +
-  landing point past the wall)."""
+  max_reward_points: int = 4
+  """Pre-allocation cap for per-(row, col) reward-point arrays (2 walls x
+  top + landing point)."""
 
   def function(
     self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
@@ -203,12 +210,23 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     geometries: list[TerrainGeometry] = []
     reward_points: list[np.ndarray] = []
 
-    height = _lerp_range(difficulty, self.platform_height_range)
-    height += rng.uniform(-self.height_jitter, self.height_jitter)
-    height = float(np.clip(height, 0.15, 0.55))
-    depth = rng.uniform(*self.platform_depth_range)
+    def sample_height() -> float:
+      h = _lerp_range(difficulty, self.platform_height_range)
+      h += rng.uniform(-self.height_jitter, self.height_jitter)
+      return float(np.clip(h, 0.15, 0.55))
+
+    height1 = sample_height()
+    height2 = sample_height()
+    depth1 = rng.uniform(*self.platform_depth_range)
+    depth2 = rng.uniform(*self.platform_depth_range)
     width = _lerp_range(difficulty, self.platform_width_range)
-    px = rng.uniform(*self.wall_x_range)
+    px1 = rng.uniform(*self.wall1_x_range)
+    gap = rng.uniform(*self.wall_gap_range)
+    # Clamp the second wall so landing point + success margin stay on the patch.
+    px2 = min(
+      px1 + depth1 / 2 + gap + depth2 / 2,
+      self.wall2_right_max - depth2 / 2,
+    )
 
     spawn_x = self.border_width + 0.5
     cy = self.size[1] / 2
@@ -221,16 +239,17 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     )
     geometries.append(TerrainGeometry(geom=floor_geom, color=_GRAY))
 
-    platform_geom = body.add_geom(
-      type=mujoco.mjtGeom.mjGEOM_BOX,
-      size=(depth / 2, width / 2, height / 2),
-      pos=(px, cy, height / 2),
-    )
-    geometries.append(TerrainGeometry(geom=platform_geom, color=_ORANGE))
-    reward_points.append(np.array([px, cy, height]))
-    # Landing point on the ground just past the wall: pays for CROSSING it,
-    # not merely touching the top.
-    reward_points.append(np.array([px + depth / 2 + 0.6, cy, 0.0]))
+    for px, height, depth in ((px1, height1, depth1), (px2, height2, depth2)):
+      platform_geom = body.add_geom(
+        type=mujoco.mjtGeom.mjGEOM_BOX,
+        size=(depth / 2, width / 2, height / 2),
+        pos=(px, cy, height / 2),
+      )
+      geometries.append(TerrainGeometry(geom=platform_geom, color=_ORANGE))
+      reward_points.append(np.array([px, cy, height]))
+      # Landing point on the ground just past the wall: pays for CROSSING it,
+      # not merely touching the top.
+      reward_points.append(np.array([px + depth / 2 + 0.5, cy, 0.0]))
 
     origin = np.array([spawn_x, cy, 0.0])
     return TerrainOutput(
@@ -255,6 +274,10 @@ class BoxStraightGapTerrainCfg(SubTerrainCfg):
   signals."""
   segment_range: tuple[float, float] = (1.2, 1.8)
   """Walkable segment length between gaps, in meters."""
+  segment_height_range: tuple[float, float] = (0.0, 0.15)
+  """Per-segment top height above z=0, sampled per segment (wmp_go1's
+  continuous_gap raises intermediate platforms by up to 0.15 m so the depth
+  camera sees more than one flat level). The spawn segment stays at 0."""
   max_gaps: int = 3
   """Maximum number of gaps along the chain."""
   spawn_free_radius: float = 1.0
@@ -300,31 +323,41 @@ class BoxStraightGapTerrainCfg(SubTerrainCfg):
     )
     geometries.append(TerrainGeometry(geom=floor_geom, color=_PIT_FLOOR))
 
-    def add_segment(x0: float, x1: float) -> None:
+    def add_segment(x0: float, x1: float, top: float) -> None:
       length = x1 - x0
       if length <= 1e-3:
         return
+      # Box spans [x0, x1] x [-gap_depth, top].
       geom = body.add_geom(
         type=mujoco.mjtGeom.mjGEOM_BOX,
-        size=(length / 2, inner_len_y / 2, gap_depth / 2),
-        pos=((x0 + x1) / 2, cy, -gap_depth / 2),
+        size=(length / 2, inner_len_y / 2, (gap_depth + top) / 2),
+        pos=((x0 + x1) / 2, cy, (top - gap_depth) / 2),
       )
       geometries.append(TerrainGeometry(geom=geom, color=_GRAY))
+
+    # Per-segment top heights: the spawn segment stays flush with z=0 (safe
+    # reset), later segments get a random micro-elevation (D3).
+    heights = [0.0] + [
+      rng.uniform(*self.segment_height_range) for _ in range(num_gaps)
+    ]
 
     # First walkable segment covers the spawn zone and everything behind it
     # (from the border, so there is no pit gap under the spawn area).
     cursor = self.border_width
-    for _ in range(num_gaps):
+    for i in range(num_gaps):
       seg_len = rng.uniform(*self.segment_range)
-      add_segment(cursor, cursor + seg_len)
+      add_segment(cursor, cursor + seg_len, heights[i])
       cursor += seg_len
       # The gap itself is left empty (true hole over the pit floor). The
-      # reward point sits just past the gap's far edge (landing side).
-      reward_points.append(np.array([cursor + gap_width + 0.15, cy, 0.0]))
+      # reward point sits just past the gap's far edge (landing side), on
+      # the NEXT segment, so its z follows that segment's top height.
+      reward_points.append(
+        np.array([cursor + gap_width + 0.15, cy, heights[i + 1]])
+      )
       cursor += gap_width
 
     # Close the patch with a final walkable segment up to the border.
-    add_segment(cursor, self.size[0] - self.border_width)
+    add_segment(cursor, self.size[0] - self.border_width, heights[-1])
 
     origin = np.array([spawn_x, cy, 0.0])
     return TerrainOutput(
