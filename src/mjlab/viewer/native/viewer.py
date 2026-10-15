@@ -187,6 +187,10 @@ class NativeMujocoViewer(BaseViewer):
       self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
 
     self.viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_SCLINERTIA] = 1
+    # MuJoCo 默认只渲染 group 0-1 的 site（调试标记常用高 group）——
+    # 全部开启，否则 head site（group=5，相机安装点）不可见。
+    for group in range(2, 6):
+      self.viewer.opt.sitegroup[group] = 1
 
     self._setup_camera()
 
