@@ -51,7 +51,10 @@ def apply_parkour_overrides(
       "min_forward_speed": 0.05,
       "speed_tol": 0.5,
       "command_threshold": 0.1,
-      "bonus_value": 1.0,
+      # 量级设计: reward manager 每步按 dt(0.02) 缩放——bonus=1 时单点实际
+      # 入账仅 0.02, 比 tracking(w=4, 每秒~1.3) 弱 200 倍, 策略理性选择绕行。
+      # 200 → 单点入账 4.0(≈1 秒满速跟踪), 翻墙 2 点=8.0 显著覆盖攀爬损失。
+      "bonus_value": 200.0,
     },
   )
 
