@@ -70,18 +70,17 @@ class BoxStraightStepStonesTerrainCfg(SubTerrainCfg):
   matching the Go1 stance width."""
   num_pairs: int = 8
   """Number of stone pairs along the chain; each column has ``num_pairs``
-  stones. NO intermediate reward points (user decision 2026-10-16: dense
-  mid-chain points let the policy farm easy low rows by suiciding down the
-  curriculum ladder) — the ONLY reward point sits on the end column, so the
-  whole chain must be crossed to score."""
+  stones. Exactly TWO reward points (uniform with the other columns: mid +
+  terminal, user decision 2026-10-16): one on the middle pair, one on the
+  end column — the whole chain must be crossed to score both."""
   border_width: float = 0.25
   """Solid ring width around the patch closing the pit, in meters."""
   floor_depth_range: tuple[float, float] = (0.4, 1.0)
   """Pit depth below z=0, randomized per patch to diversify depth-camera
   signals."""
-  max_reward_points: int = 1
-  """Pre-allocation cap for per-(row, col) reward-point arrays (end column
-  only)."""
+  max_reward_points: int = 2
+  """Pre-allocation cap for per-(row, col) reward-point arrays (middle pair
+  + end column)."""
 
   def function(
     self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
@@ -139,15 +138,18 @@ class BoxStraightStepStonesTerrainCfg(SubTerrainCfg):
 
     # Aligned stone pairs: one stone left + one right of the centerline at
     # every pair position. The first pair starts gap away from the spawn
-    # column edge (same gap as between pairs). No mid-chain reward points:
-    # the end column carries the single point for the whole chain.
+    # column edge (same gap as between pairs). Reward points: the MIDDLE
+    # pair (on the centerline between its two stones) and the end column.
     first_x = spawn_right + gap + self.stone_size / 2
+    mid_pair = self.num_pairs // 2 - 1
     for i in range(self.num_pairs):
       pair_x = first_x + i * pitch
       top_left = top + rng.uniform(-variation, variation)
       top_right = top + rng.uniform(-variation, variation)
       add_column(pair_x, cy + col_half_dist, self.stone_size / 2, top_left, _ORANGE)
       add_column(pair_x, cy - col_half_dist, self.stone_size / 2, top_right, _ORANGE)
+      if i == mid_pair:
+        reward_points.append(np.array([pair_x, cy, 0.5 * (top_left + top_right)]))
 
     # End column (1x1 m), gap away from the last pair's edge (same gap as
     # the chain). It carries the final reward point; stepping onto it ends
@@ -172,8 +174,9 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
   per patch with a 2.5-2.9 m flat run between them. Heights follow the
   difficulty ladder (0.2 -> 0.5 m over the 10 rows) with per-wall jitter;
   thicknesses are randomized per patch (thin walls get hopped over, thick
-  walls get climbed). Each wall carries two reward points (top + landing),
-  so the full chain pays 4 points.
+  walls get climbed). Two reward points, uniform with the other columns
+  (mid + terminal): the first wall's top center and the landing ground
+  past the second wall.
   """
 
   platform_height_range: tuple[float, float] = (0.0, 0.5)
@@ -202,9 +205,9 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
   """Flat border width around the patch, in meters."""
   floor_thickness: float = 0.5
   """Thickness of the ground slab below z=0, in meters."""
-  max_reward_points: int = 4
-  """Pre-allocation cap for per-(row, col) reward-point arrays (2 walls x
-  top + landing point)."""
+  max_reward_points: int = 2
+  """Pre-allocation cap for per-(row, col) reward-point arrays — uniform
+  mid + terminal scheme (first wall top + second wall landing)."""
 
   def function(
     self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
@@ -242,17 +245,23 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     )
     geometries.append(TerrainGeometry(geom=floor_geom, color=_GRAY))
 
-    for px, height, depth in ((px1, height1, depth1), (px2, height2, depth2)):
+    for wall_idx, (px, height, depth) in enumerate(
+      ((px1, height1, depth1), (px2, height2, depth2))
+    ):
       platform_geom = body.add_geom(
         type=mujoco.mjtGeom.mjGEOM_BOX,
         size=(depth / 2, width / 2, height / 2),
         pos=(px, cy, height / 2),
       )
       geometries.append(TerrainGeometry(geom=platform_geom, color=_ORANGE))
-      reward_points.append(np.array([px, cy, height]))
-      # Landing point on the ground just past the wall: pays for CROSSING it,
-      # not merely touching the top.
-      reward_points.append(np.array([px + depth / 2 + 0.5, cy, 0.0]))
+      # Uniform mid + terminal scheme: the FIRST wall pays at its top
+      # center (the mid-chain milestone), the SECOND wall pays at the
+      # landing ground past it (the terminal milestone: pays for CROSSING,
+      # not merely touching the top).
+      if wall_idx == 0:
+        reward_points.append(np.array([px, cy, height]))
+      else:
+        reward_points.append(np.array([px + depth / 2 + 0.5, cy, 0.0]))
 
     origin = np.array([spawn_x, cy, 0.0])
     return TerrainOutput(
@@ -283,8 +292,9 @@ class BoxStraightGapTerrainCfg(SubTerrainCfg):
   """Radius around the spawn point kept free of gaps, in meters."""
   border_width: float = 0.25
   """Solid ring width around the patch closing the trench sides, in meters."""
-  max_reward_points: int = 3
-  """Pre-allocation cap for per-(row, col) reward-point arrays."""
+  max_reward_points: int = 2
+  """Pre-allocation cap for per-(row, col) reward-point arrays — uniform
+  mid + terminal scheme (after the middle gap + after the last gap)."""
 
   def function(
     self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
@@ -339,14 +349,18 @@ class BoxStraightGapTerrainCfg(SubTerrainCfg):
 
     # First walkable segment covers the spawn zone and everything behind it
     # (from the border, so there is no pit gap under the spawn area).
+    # Reward points: uniform mid + terminal scheme — after the middle gap
+    # and after the last gap only.
+    mid_gap = (num_gaps - 1) // 2
     cursor = self.border_width
-    for _ in range(num_gaps):
+    for i in range(num_gaps):
       seg_len = rng.uniform(*self.segment_range)
       add_segment(cursor, cursor + seg_len)
       cursor += seg_len
       # The gap itself is left empty (true hole over the pit floor). The
       # reward point sits just past the gap's far edge (landing side).
-      reward_points.append(np.array([cursor + gap_width + 0.15, cy, 0.0]))
+      if i == mid_gap or i == num_gaps - 1:
+        reward_points.append(np.array([cursor + gap_width + 0.15, cy, 0.0]))
       cursor += gap_width
 
     # Close the patch with a final walkable segment up to the border.

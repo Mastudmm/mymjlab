@@ -32,9 +32,9 @@ def _generate(cfg_cls, difficulty: float):
 @pytest.mark.parametrize(
   "cfg_cls,low_n,high_n",
   [
-    (BoxStraightStepStonesTerrainCfg, 1, 1),
-    (BoxStraightPlatformTerrainCfg, 4, 4),
-    (BoxStraightGapTerrainCfg, 2, 3),
+    (BoxStraightStepStonesTerrainCfg, 2, 2),
+    (BoxStraightPlatformTerrainCfg, 2, 2),
+    (BoxStraightGapTerrainCfg, 2, 2),
   ],
 )
 def test_reward_point_count_scales_with_difficulty(cfg_cls, low_n, high_n):
@@ -70,7 +70,7 @@ def test_stone_gap_increases_with_difficulty():
 
   for difficulty, gap in ((0.0, 0.0), (1.0, 0.2)):
     output = _generate(BoxStraightStepStonesTerrainCfg, difficulty)
-    assert output.reward_points is not None and len(output.reward_points) == 1
+    assert output.reward_points is not None and len(output.reward_points) == 2
     xs = orange_x(output)
     assert len(xs) == cfg.num_pairs
     # Spawn column edge -> first pair edge uses the same gap.
@@ -79,9 +79,11 @@ def test_stone_gap_increases_with_difficulty():
     for a, b in zip(xs[:-1], xs[1:]):
       assert b - a == pytest.approx(cfg.stone_size + gap)
     # Last pair edge -> end column edge uses the same gap; the end column
-    # carries the chain's only reward point at its center.
-    end_col_center = output.reward_points[0][0]
+    # carries the terminal reward point at its center, the mid point sits
+    # on the middle pair (4th of 8).
+    end_col_center = output.reward_points[1][0]
     assert end_col_center - 0.5 - (xs[-1] + half) == pytest.approx(gap)
+    assert output.reward_points[0][0] == pytest.approx(xs[3])
 
 
 @pytest.mark.parametrize("cfg_cls", ALL_PARKOUR_CFGS)
@@ -190,6 +192,6 @@ def test_parkour_generator_collects_reward_points():
 
   assert generator.reward_points is not None
   assert generator.reward_counts is not None
-  assert generator.reward_points.shape == (cfg.num_rows, cfg.num_cols, 4, 3)
+  assert generator.reward_points.shape == (cfg.num_rows, cfg.num_cols, 2, 3)
   # Every curriculum patch places at least one obstacle (and reward point).
   assert (generator.reward_counts > 0).all()
