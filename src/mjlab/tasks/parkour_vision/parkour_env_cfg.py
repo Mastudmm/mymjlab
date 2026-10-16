@@ -6,8 +6,9 @@ with the parkour terrain set. Reward/curriculum structure follows wmp_go1
 
 - ONE uniform velocity-tracking reward with overspeed clipping
   (``lin_vel_clip``) — no per-column exemptions except true wall-contact terms;
-- wmp_go1's anti-stall pair: ``stuck`` penalty (stalls are punished, not
-  neutralized) + ``cheat`` penalty (large world-yaw deviation);
+- ``cheat`` penalty for large world-yaw deviation (no stuck penalty: stalls
+  are discouraged by the reward-point forward gate and the tracking gradient
+  itself, per user decision 2026-10-16);
 - reward-point milestone bonus kept as the primary task drive;
 - score-driven forward-speed command curriculum ([0.2, 0.5] -> [0.2, 1.0]);
 - depth observations normalized to wmp_go1's [-0.5, 0.5] range with a 3 m
@@ -38,7 +39,7 @@ def apply_parkour_overrides(
   """在 velocity_vision env cfg 上叠加 parkour 任务专属配置（机器人无关）。
 
   - 地形替换为 ``PARKOUR_TERRAINS_CFG``（梅花桩 / 矮墙 / 沟壑，各占一列）。
-  - 奖励按 wmp_go1 对齐重构：裁剪跟踪 + stuck/cheat 惩罚 + 奖励点 bonus。
+  - 奖励按 wmp_go1 对齐重构：裁剪跟踪 + cheat 惩罚 + 奖励点 bonus。
   - command 切纯 x 前进，范围 [0.2, 0.5] 起步，分数课程升至 [0.2, 1.0]。
   """
   # 地形：替换为 parkour 集合（replace 浅拷贝 cfg 本身，sub_terrains 共享）。
@@ -77,16 +78,11 @@ def apply_parkour_overrides(
     },
   )
 
-  # ---- wmp_go1 反停顿双件套 ----
-  # 基座的 EMA 平滑版 stuck_penalty 删除，避免与即时版双重计罚。
+  # ---- cheat：世界系朝向偏离链方向(+x) 超 ±1 rad —— 绕行直接受罚 ----
+  # （用户决定 2026-10-16：stuck 反停顿惩罚不在跑酷任务注册——基座 EMA 版
+  # stuck_penalty 与即时版一并取消，停顿惩罚交给奖励点的前进门控与速度
+  # 裁剪跟踪的自然梯度。）
   cfg.rewards.pop("stuck_penalty", None)
-  # stuck：指令>0.1 而 |vx|<0.1 —— 停顿是负收益而非中性（替代旧 anti-stall）。
-  cfg.rewards["stuck"] = RewardTermCfg(
-    func=mdp.stuck_penalty,
-    weight=-1.0,
-    params={"command_name": "twist"},
-  )
-  # cheat：世界系朝向偏离链方向(+x) 超 ±1 rad —— 绕行直接受罚。
   cfg.rewards["cheat"] = RewardTermCfg(
     func=mdp.cheat_penalty,
     weight=-1.0,

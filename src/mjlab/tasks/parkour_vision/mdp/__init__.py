@@ -25,9 +25,6 @@ from mjlab.tasks.parkour_vision.mdp.rewards import (
   reward_point_bonus as reward_point_bonus,
 )
 from mjlab.tasks.parkour_vision.mdp.rewards import (
-  stuck_penalty as stuck_penalty,
-)
-from mjlab.tasks.parkour_vision.mdp.rewards import (
   track_linear_velocity_clipped as track_linear_velocity_clipped,
 )
 from mjlab.tasks.parkour_vision.mdp.terminations import (
@@ -55,7 +52,6 @@ __all__ = [
   "heading_alignment",
   "lateral_track",
   "track_linear_velocity_clipped",
-  "stuck_penalty",
   "cheat_penalty",
   "contact_penalty_excluding",
   "parkour_completed",

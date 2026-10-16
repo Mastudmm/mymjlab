@@ -233,30 +233,6 @@ class forward_progress:
     self.last_x[env_ids] = self._env.scene.env_origins[env_ids, 0]
 
 
-def stuck_penalty(
-  env: ManagerBasedRlEnv,
-  command_name: str,
-  stall_speed: float = 0.1,
-  command_threshold: float = 0.1,
-  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-) -> torch.Tensor:
-  """Penalize standing still while the command asks to move (wmp_go1 ``stuck``).
-
-  The wmp_go1 philosophy replaces stall-neutralizing hacks with a hard penalty:
-  a robot commanded forward that keeps |vx| < ``stall_speed`` loses reward every
-  step, so lingering in front of an obstacle is strictly worse than attempting
-  it. The velocity-clip tracking term keeps fast obstacle crossings unpunished,
-  so "keep moving" is the dominant strategy.
-  """
-  asset: Entity = env.scene[asset_cfg.name]
-  command = env.command_manager.get_command(command_name)
-  assert command is not None
-  vel_b = asset.data.root_link_lin_vel_b
-  stalled = vel_b[:, 0].abs() < stall_speed
-  commanded = command[:, 0] > command_threshold
-  return (stalled & commanded).float()
-
-
 def cheat_penalty(
   env: ManagerBasedRlEnv,
   max_yaw_dev: float = 1.0,
