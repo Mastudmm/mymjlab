@@ -248,12 +248,16 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     for wall_idx, (px, height, depth) in enumerate(
       ((px1, height1, depth1), (px2, height2, depth2))
     ):
-      platform_geom = body.add_geom(
-        type=mujoco.mjtGeom.mjGEOM_BOX,
-        size=(depth / 2, width / 2, height / 2),
-        pos=(px, cy, height / 2),
-      )
-      geometries.append(TerrainGeometry(geom=platform_geom, color=_ORANGE))
+      # A zero-height wall (row 0 of the 0->0.5 ladder + negative jitter
+      # clamps to 0) would be a zero-thickness box, which MuJoCo rejects at
+      # compile time — skip the geom entirely, the floor slab IS the ground.
+      if height > 1e-3:
+        platform_geom = body.add_geom(
+          type=mujoco.mjtGeom.mjGEOM_BOX,
+          size=(depth / 2, width / 2, height / 2),
+          pos=(px, cy, height / 2),
+        )
+        geometries.append(TerrainGeometry(geom=platform_geom, color=_ORANGE))
       # Uniform mid + terminal scheme: the FIRST wall pays at its top
       # center (the mid-chain milestone), the SECOND wall pays at the
       # landing ground past it (the terminal milestone: pays for CROSSING,
