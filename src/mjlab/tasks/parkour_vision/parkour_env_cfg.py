@@ -69,7 +69,7 @@ def apply_parkour_overrides(
     weight=10.0,
     params={
       "command_name": "twist",
-      "hit_radius": 0.4,
+      "hit_radius": 0.2,
       "z_margin": 0.05,
       "min_forward_speed": 0.05,
       "speed_tol": 0.5,
