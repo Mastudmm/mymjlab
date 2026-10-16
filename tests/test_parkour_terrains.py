@@ -108,12 +108,12 @@ def test_stone_top_height_increases_with_difficulty():
 
 
 def test_platform_height_increases_with_difficulty():
-  """The platform top (reward point z) follows the 0.2 -> 0.5 m ladder with
-  a ±0.05 m per-patch jitter."""
+  """The platform top (reward point z) follows the 0.0 -> 0.5 m ladder with
+  a ±0.05 m per-patch jitter (user spec 2026-10-16: start from 0 cm)."""
   low = _generate(BoxStraightPlatformTerrainCfg, 0.0)
   high = _generate(BoxStraightPlatformTerrainCfg, 1.0)
   assert low.reward_points is not None and high.reward_points is not None
-  assert low.reward_points[0][2] == pytest.approx(0.2, abs=0.055)
+  assert low.reward_points[0][2] == pytest.approx(0.0, abs=0.055)
   assert high.reward_points[0][2] == pytest.approx(0.5, abs=0.055)
   assert high.reward_points[0][2] > low.reward_points[0][2]
 
@@ -121,9 +121,9 @@ def test_platform_height_increases_with_difficulty():
 def test_gap_reward_point_past_far_edge():
   """Gap reward points sit on the walkable ground past each gap's far edge.
 
-  Landing segments carry a random micro-elevation (0-0.15 m, wmp_go1
-  continuous_gap style), so the point z equals the landing segment's top
-  height; the spawn segment stays flush with z=0."""
+  All segments are flush with the spawn plane at z=0 (a micro-elevation
+  experiment created a climb lip after every jump — reverted), so every
+  point lies exactly on the landing plane."""
   cfg = BoxStraightGapTerrainCfg(size=SIZE)
   spec = mujoco.MjSpec()
   spec.worldbody.add_body(name="terrain")
@@ -132,7 +132,7 @@ def test_gap_reward_point_past_far_edge():
 
   assert output.reward_points is not None
   for point in output.reward_points:
-    assert 0.0 <= point[2] <= cfg.segment_height_range[1]
+    assert point[2] == pytest.approx(0.0)
     assert point[0] < SIZE[0] - cfg.border_width
 
 

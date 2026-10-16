@@ -176,12 +176,13 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
   so the full chain pays 4 points.
   """
 
-  platform_height_range: tuple[float, float] = (0.2, 0.5)
+  platform_height_range: tuple[float, float] = (0.0, 0.5)
   """Platform height above ground. Lower bound at difficulty 0, upper at 1
-  (user spec: 20 cm -> 50 cm over the 10 difficulty rows)."""
+  (user spec 2026-10-16: start from 0 cm -> 50 cm over the 10 difficulty
+  rows, so the reward/behavior signal ramps up smoothly for the policy)."""
   height_jitter: float = 0.05
   """Per-wall uniform jitter added on top of the difficulty ladder height,
-  in meters (clamped to [0.15, 0.55])."""
+  in meters (clamped to [0.0, 0.55])."""
   platform_depth_range: tuple[float, float] = (0.4, 1.2)
   """Platform extent along x, randomized per patch (landable top surface)."""
   platform_width_range: tuple[float, float] = (7.4, 7.5)
@@ -215,7 +216,7 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     def sample_height() -> float:
       h = _lerp_range(difficulty, self.platform_height_range)
       h += rng.uniform(-self.height_jitter, self.height_jitter)
-      return float(np.clip(h, 0.15, 0.55))
+      return float(np.clip(h, 0.0, 0.55))
 
     height1 = sample_height()
     height2 = sample_height()
@@ -276,10 +277,6 @@ class BoxStraightGapTerrainCfg(SubTerrainCfg):
   signals."""
   segment_range: tuple[float, float] = (1.2, 1.8)
   """Walkable segment length between gaps, in meters."""
-  segment_height_range: tuple[float, float] = (0.0, 0.15)
-  """Per-segment top height above z=0, sampled per segment (wmp_go1's
-  continuous_gap raises intermediate platforms by up to 0.15 m so the depth
-  camera sees more than one flat level). The spawn segment stays at 0."""
   max_gaps: int = 3
   """Maximum number of gaps along the chain."""
   spawn_free_radius: float = 1.0
@@ -325,41 +322,35 @@ class BoxStraightGapTerrainCfg(SubTerrainCfg):
     )
     geometries.append(TerrainGeometry(geom=floor_geom, color=_PIT_FLOOR))
 
-    def add_segment(x0: float, x1: float, top: float) -> None:
+    def add_segment(x0: float, x1: float) -> None:
       length = x1 - x0
       if length <= 1e-3:
         return
-      # Box spans [x0, x1] x [-gap_depth, top].
+      # Box spans [x0, x1] x [-gap_depth, 0] — ALL segments flush with the
+      # spawn plane (a 2026-10-16 attempt at random micro-elevation put a
+      # vertical lip at the far edge of every gap, forcing a climb right
+      # after each jump — reverted).
       geom = body.add_geom(
         type=mujoco.mjtGeom.mjGEOM_BOX,
-        size=(length / 2, inner_len_y / 2, (gap_depth + top) / 2),
-        pos=((x0 + x1) / 2, cy, (top - gap_depth) / 2),
+        size=(length / 2, inner_len_y / 2, gap_depth / 2),
+        pos=((x0 + x1) / 2, cy, -gap_depth / 2),
       )
       geometries.append(TerrainGeometry(geom=geom, color=_GRAY))
-
-    # Per-segment top heights: the spawn segment stays flush with z=0 (safe
-    # reset), later segments get a random micro-elevation (D3).
-    heights = [0.0] + [
-      rng.uniform(*self.segment_height_range) for _ in range(num_gaps)
-    ]
 
     # First walkable segment covers the spawn zone and everything behind it
     # (from the border, so there is no pit gap under the spawn area).
     cursor = self.border_width
-    for i in range(num_gaps):
+    for _ in range(num_gaps):
       seg_len = rng.uniform(*self.segment_range)
-      add_segment(cursor, cursor + seg_len, heights[i])
+      add_segment(cursor, cursor + seg_len)
       cursor += seg_len
       # The gap itself is left empty (true hole over the pit floor). The
-      # reward point sits just past the gap's far edge (landing side), on
-      # the NEXT segment, so its z follows that segment's top height.
-      reward_points.append(
-        np.array([cursor + gap_width + 0.15, cy, heights[i + 1]])
-      )
+      # reward point sits just past the gap's far edge (landing side).
+      reward_points.append(np.array([cursor + gap_width + 0.15, cy, 0.0]))
       cursor += gap_width
 
     # Close the patch with a final walkable segment up to the border.
-    add_segment(cursor, self.size[0] - self.border_width, heights[-1])
+    add_segment(cursor, self.size[0] - self.border_width)
 
     origin = np.array([spawn_x, cy, 0.0])
     return TerrainOutput(
