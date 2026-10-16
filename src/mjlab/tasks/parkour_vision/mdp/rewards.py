@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
 import torch
 
 from mjlab.entity import Entity
@@ -71,6 +72,8 @@ class reward_point_bonus:
   """
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self._cfg = cfg
+    self._env = env
     terrain = env.scene.terrain
     points = None if terrain is None else terrain.reward_points
     if points is not None:
@@ -82,6 +85,48 @@ class reward_point_bonus:
     self.claimed = torch.zeros(
       (env.num_envs, self._max_points), dtype=torch.bool, device=env.device
     )
+
+  def debug_vis(self, visualizer) -> None:
+    """Draw the reward points of each visualized env in the 3D scene.
+
+    Per point (for the env's CURRENT terrain row/col):
+
+    - small solid sphere: green = unclaimed, gray = claimed this episode;
+    - large transparent sphere of ``hit_radius``: the xy capture zone;
+    - short stem of height ``z_margin``: how far ABOVE the point's z the
+      base must climb before the hit test passes.
+
+    Toggle with the viewer's debug-visualizer switch (``R`` in the native
+    viewer, on by default)."""
+    if not self._has_points:
+      return
+    terrain = self._env.scene.terrain
+    assert terrain is not None
+    points_t = terrain.reward_points
+    counts_t = terrain.reward_counts
+    assert points_t is not None and counts_t is not None
+    params = self._cfg.params
+    hit_radius = float(params["hit_radius"])
+    z_margin = float(params["z_margin"])
+    stem = np.array([0.0, 0.0, z_margin])
+
+    for env_idx in visualizer.get_env_indices(self._env.num_envs):
+      row = terrain.terrain_levels[env_idx]
+      col = terrain.terrain_types[env_idx]
+      points = points_t[row, col]
+      count = int(counts_t[row, col])
+      claimed = self.claimed[env_idx]
+      for i in range(min(count, self._max_points)):
+        p = points[i].detach().cpu().numpy()
+        if claimed[i]:
+          marker_color = (0.4, 0.4, 0.4, 0.35)
+          zone_color = (0.4, 0.4, 0.4, 0.05)
+        else:
+          marker_color = (0.15, 0.9, 0.2, 0.9)
+          zone_color = (0.15, 0.9, 0.2, 0.10)
+        visualizer.add_sphere(p, 0.06, marker_color)
+        visualizer.add_sphere(p, hit_radius, zone_color)
+        visualizer.add_cylinder(p, p + stem, 0.012, (0.95, 0.7, 0.1, 0.85))
 
   def __call__(
     self,

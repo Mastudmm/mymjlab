@@ -66,7 +66,7 @@ def apply_parkour_overrides(
   # tracking(vz)+upright 损失(~2-3)，绕行则被 cheat/越界终止硬性掐断。
   cfg.rewards["reward_point_bonus"] = RewardTermCfg(
     func=mdp.reward_point_bonus,
-    weight=1.0,
+    weight=10.0,
     params={
       "command_name": "twist",
       "hit_radius": 0.4,

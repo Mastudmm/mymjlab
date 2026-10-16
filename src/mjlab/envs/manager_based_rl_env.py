@@ -264,6 +264,8 @@ class ManagerBasedRlEnv:
     if getattr(self.command_manager, "active_terms", None):
       self.manager_visualizers["command_manager"] = self.command_manager
     self.manager_visualizers["event_manager"] = self.event_manager
+    if getattr(self.reward_manager, "active_terms", None):
+      self.manager_visualizers["reward_manager"] = self.reward_manager
 
   def load_managers(self) -> None:
     """Load and initialize all managers.

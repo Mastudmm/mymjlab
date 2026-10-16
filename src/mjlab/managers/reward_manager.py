@@ -13,6 +13,7 @@ from mjlab.managers.manager_base import ManagerBase, ManagerTermBaseCfg
 
 if TYPE_CHECKING:
   from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnv
+  from mjlab.viewer.debug_visualizer import DebugVisualizer
 
 
 @dataclass(kw_only=True)
@@ -139,6 +140,18 @@ class RewardManager(ManagerBase):
     if term_name not in self._term_names:
       raise ValueError(f"Term '{term_name}' not found in active terms.")
     return self._term_cfgs[self._term_names.index(term_name)]
+
+  def debug_vis(self, visualizer: "DebugVisualizer") -> None:
+    """Draw debug visuals for class-based terms that implement debug_vis.
+
+    Mirrors the command manager convention: a class term opts in by defining a
+    ``debug_vis`` method (e.g. the parkour reward-point markers); plain
+    function terms have nothing to draw.
+    """
+    for term_cfg in self._class_term_cfgs:
+      debug_vis = getattr(term_cfg.func, "debug_vis", None)
+      if callable(debug_vis):
+        debug_vis(visualizer)
 
   def _prepare_terms(self):
     for term_name, term_cfg in self.cfg.items():
