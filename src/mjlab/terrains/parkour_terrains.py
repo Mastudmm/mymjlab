@@ -70,15 +70,18 @@ class BoxStraightStepStonesTerrainCfg(SubTerrainCfg):
   matching the Go1 stance width."""
   num_pairs: int = 8
   """Number of stone pairs along the chain; each column has ``num_pairs``
-  stones. One reward point per pair plus one on the end column."""
+  stones. NO intermediate reward points (user decision 2026-10-16: dense
+  mid-chain points let the policy farm easy low rows by suiciding down the
+  curriculum ladder) — the ONLY reward point sits on the end column, so the
+  whole chain must be crossed to score."""
   border_width: float = 0.25
   """Solid ring width around the patch closing the pit, in meters."""
   floor_depth_range: tuple[float, float] = (0.4, 1.0)
   """Pit depth below z=0, randomized per patch to diversify depth-camera
   signals."""
-  max_reward_points: int = 9
-  """Pre-allocation cap for per-(row, col) reward-point arrays (8 pairs + 1
-  end column)."""
+  max_reward_points: int = 1
+  """Pre-allocation cap for per-(row, col) reward-point arrays (end column
+  only)."""
 
   def function(
     self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
@@ -136,7 +139,8 @@ class BoxStraightStepStonesTerrainCfg(SubTerrainCfg):
 
     # Aligned stone pairs: one stone left + one right of the centerline at
     # every pair position. The first pair starts gap away from the spawn
-    # column edge (same gap as between pairs).
+    # column edge (same gap as between pairs). No mid-chain reward points:
+    # the end column carries the single point for the whole chain.
     first_x = spawn_right + gap + self.stone_size / 2
     for i in range(self.num_pairs):
       pair_x = first_x + i * pitch
@@ -144,8 +148,6 @@ class BoxStraightStepStonesTerrainCfg(SubTerrainCfg):
       top_right = top + rng.uniform(-variation, variation)
       add_column(pair_x, cy + col_half_dist, self.stone_size / 2, top_left, _ORANGE)
       add_column(pair_x, cy - col_half_dist, self.stone_size / 2, top_right, _ORANGE)
-      # One reward point per pair, on the centerline between the two stones.
-      reward_points.append(np.array([pair_x, cy, 0.5 * (top_left + top_right)]))
 
     # End column (1x1 m), gap away from the last pair's edge (same gap as
     # the chain). It carries the final reward point; stepping onto it ends

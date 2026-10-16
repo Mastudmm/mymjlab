@@ -32,7 +32,7 @@ def _generate(cfg_cls, difficulty: float):
 @pytest.mark.parametrize(
   "cfg_cls,low_n,high_n",
   [
-    (BoxStraightStepStonesTerrainCfg, 9, 9),
+    (BoxStraightStepStonesTerrainCfg, 1, 1),
     (BoxStraightPlatformTerrainCfg, 4, 4),
     (BoxStraightGapTerrainCfg, 2, 3),
   ],
@@ -48,24 +48,40 @@ def test_reward_point_count_scales_with_difficulty(cfg_cls, low_n, high_n):
 
 def test_stone_gap_increases_with_difficulty():
   """Stones keep a fixed width; the edge gap grows 0 -> 0.2 m, uniformly for
-  the spawn->first-pair gap, between pairs, and last pair -> end column."""
+  the spawn->first-pair gap, between pairs, and last pair -> end column.
+
+  Positions are read from the stone geometries: the chain carries a SINGLE
+  reward point on the end column only (user decision 2026-10-16)."""
   cfg = BoxStraightStepStonesTerrainCfg(size=SIZE)
-  low = _generate(BoxStraightStepStonesTerrainCfg, 0.0)
-  high = _generate(BoxStraightStepStonesTerrainCfg, 1.0)
-  assert low.reward_points is not None and high.reward_points is not None
-  for out, gap in ((low, 0.0), (high, 0.2)):
-    points = out.reward_points
+  half = cfg.stone_size / 2
+  spawn_right = cfg.border_width + 1.0  # green spawn column right edge
+
+  def orange_x(output):
+    xs = sorted(
+      {
+        round(g.geom.pos[0], 6)
+        for g in output.geometries
+        if g.geom is not None
+        and g.color is not None
+        and tuple(g.color) == (0.85, 0.55, 0.15, 1.0)
+      }
+    )
+    return xs
+
+  for difficulty, gap in ((0.0, 0.0), (1.0, 0.2)):
+    output = _generate(BoxStraightStepStonesTerrainCfg, difficulty)
+    assert output.reward_points is not None and len(output.reward_points) == 1
+    xs = orange_x(output)
+    assert len(xs) == cfg.num_pairs
     # Spawn column edge -> first pair edge uses the same gap.
-    spawn_right = cfg.border_width + 0.5 + 0.5
-    assert points[0][0] - cfg.stone_size / 2 - spawn_right == pytest.approx(gap)
+    assert xs[0] - half - spawn_right == pytest.approx(gap)
     # Consecutive pair gaps use the same gap.
-    pitch = points[1][0] - points[0][0]
-    assert pitch == pytest.approx(cfg.stone_size + gap)
-    # Last pair edge -> end column edge uses the same gap. The end column
-    # carries the final reward point at its center (half width 0.5).
-    last_pair_right = points[-2][0] + cfg.stone_size / 2
-    end_col_center = points[-1][0]
-    assert end_col_center - 0.5 - last_pair_right == pytest.approx(gap)
+    for a, b in zip(xs[:-1], xs[1:]):
+      assert b - a == pytest.approx(cfg.stone_size + gap)
+    # Last pair edge -> end column edge uses the same gap; the end column
+    # carries the chain's only reward point at its center.
+    end_col_center = output.reward_points[0][0]
+    assert end_col_center - 0.5 - (xs[-1] + half) == pytest.approx(gap)
 
 
 @pytest.mark.parametrize("cfg_cls", ALL_PARKOUR_CFGS)
@@ -174,6 +190,6 @@ def test_parkour_generator_collects_reward_points():
 
   assert generator.reward_points is not None
   assert generator.reward_counts is not None
-  assert generator.reward_points.shape == (cfg.num_rows, cfg.num_cols, 9, 3)
+  assert generator.reward_points.shape == (cfg.num_rows, cfg.num_cols, 4, 3)
   # Every curriculum patch places at least one obstacle (and reward point).
   assert (generator.reward_counts > 0).all()
