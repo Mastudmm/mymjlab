@@ -40,3 +40,11 @@ terrain origin 标记等几十个调试 site 涌进渲染画面，破坏整体�
 forward 向量与位置（本项目已有 `src/mjlab/scripts/check_camera.py`）。
 本次相机 quat 事故：把 `(w,0,y,0)` 误当绕 x 轴旋转，实际是绕 y 轴——
 两轮修改方向全错，直到写 check_camera.py 数值验证才纠正。
+
+## 5. 类内编辑禁止跨出类体；冒烟必须覆盖真实构造链
+在类体内插入/替换代码时，new_string 不得引入模块级新类——否则后续成员
+会被静默切进新类（2026-10-16 distribution 事故：`_ClampedDeterministicOutput`
+插在 GaussianDistribution 中间，input_dim/mean/std 等全部属性被挂到辅助类，
+play 构造 runner 时 NotImplementedError）。模块级辅助类一律追加到文件尾部。
+配套教训：stub-only 冒烟不等于验证——必须跑通真实构造链（rsl_rl runner
+构建 + checkpoint 加载 + viewer 打开）才算数；play 报错当时 stub 全绿。
