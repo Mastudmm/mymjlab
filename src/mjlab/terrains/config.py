@@ -204,12 +204,13 @@ PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
   size=(8.0, 8.0),
   border_width=20.0,
   num_rows=10,
-  num_cols=3,  # 每种跑酷地形独占一列：梅花桩 / 高平台 / 沟壑，难度行共用。
+  # 单地形任务（用户决定 2026-10-19）：只保留翻越高墙（矮墙/平台），梅花桩
+  # 与沟壑已移除——聚焦单一障碍类型更适配当前 MLP+CNN 网络结构。
+  # 保留 3 列：同难度行有 3 个独立随机布局的墙 patch，增加 patch 多样性。
+  num_cols=3,
   curriculum=True,
   sub_terrains={
-    "step_stones": terrain_gen.BoxStraightStepStonesTerrainCfg(proportion=1.0),
     "platforms": terrain_gen.BoxStraightPlatformTerrainCfg(proportion=1.0),
-    "gaps": terrain_gen.BoxStraightGapTerrainCfg(proportion=1.0),
   },
   add_lights=True,
 )

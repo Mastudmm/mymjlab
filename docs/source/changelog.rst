@@ -36,6 +36,11 @@ Changed
   ``cheat``): the waypoint command itself carries the direction toward the
   next reward point. The term functions remain importable for replaying old
   experiment config dumps.
+- The parkour terrain set is now wall-climbing only
+  (``BoxStraightPlatformTerrainCfg``): the stepping-stone and gap terrains
+  were removed from ``PARKOUR_TERRAINS_CFG`` to focus training on a single
+  obstacle type; the three columns now hold independently randomized wall
+  layouts per difficulty row. The terrain classes remain available.
 
 Fixed
 ^^^^^

@@ -41,7 +41,8 @@ def apply_parkour_overrides(
 ) -> None:
   """在 velocity_vision env cfg 上叠加 parkour 任务专属配置（机器人无关）。
 
-  - 地形替换为 ``PARKOUR_TERRAINS_CFG``（梅花桩 / 矮墙 / 沟壑，各占一列）。
+  - 地形替换为 ``PARKOUR_TERRAINS_CFG``：单地形任务，仅翻越高墙（矮墙/平台，
+    3 列独立随机布局；梅花桩/沟壑已移除，用户决定 2026-10-19）。
   - 奖励按 wmp_go1 对齐重构：裁剪跟踪 + 奖励点 bonus（方向类手工奖励已随
     航点命令的引入移除——方向信息由命令本身携带）。
   - command 切航点制（WaypointVelocityCommand）：每步指向下一个奖励点，
@@ -53,8 +54,8 @@ def apply_parkour_overrides(
   cfg.scene.terrain.terrain_generator = replace(terrain_cfg)
 
   # 地形列索引（与 PARKOUR_TERRAINS_CFG.sub_terrains 顺序一致）。
-  # 0=梅花桩, 1=矮墙(平台), 2=沟壑。
-  wall_column = 1
+  # 单地形任务：唯一列 0 = 矮墙(平台)（梅花桩/沟壑已移除，2026-10-19）。
+  wall_column = 0
 
   # ---- 跟踪奖励：统一裁剪版，无列级豁免（wmp_go1 核心结构） ----
   # 权重 4.0 -> 1.0（对齐 wmp_go1）；超速裁剪让冲障碍/跳跃期不罚快。
@@ -99,8 +100,8 @@ def apply_parkour_overrides(
     params={"asset_cfg": SceneEntityCfg("robot"), "margin": 0.4},
   )
 
-  # 躯干接触地形终止：矮墙列豁免（真垂直墙攀爬贴墙不可避免——唯一保留的
-  # 接触豁免），梅花桩/沟壑列保留（躯干碰桩/坑壁 = 失败）。
+  # 躯干接触地形终止：墙列豁免（真垂直墙攀爬贴墙不可避免）。单地形任务下
+  # 所有 env 都在墙列——等效于全局停用躯干接触终止（攀爬贴墙属正常姿态）。
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
     func=mdp.illegal_contact_excluding,
     params={
@@ -109,7 +110,8 @@ def apply_parkour_overrides(
     },
   )
 
-  # 倾角终止：矮墙列放宽至 85°（攀爬前倾姿态，翻倒仍兜底），其余列 75°。
+  # 倾角终止：墙列放宽至 85°（攀爬前倾姿态，翻倒仍兜底）。单地形下即全局
+  # 85°（保留 excluding 结构以便日后恢复多地形）。
   cfg.terminations["fell_over"] = TerminationTermCfg(
     func=mdp.bad_orientation_excluding,
     params={
@@ -146,7 +148,8 @@ def apply_parkour_overrides(
     params={"asset_cfg": SceneEntityCfg("robot"), "min_height": 0.15},
   )
 
-  # ---- 接触惩罚豁免：矮墙列攀爬贴墙不可避免（保留的唯一惩罚豁免） ----
+  # ---- 接触惩罚豁免：墙列攀爬贴墙不可避免。单地形下等效于全局豁免
+  # （头/大腿/小腿碰撞惩罚归零，攀爬贴墙不罚）。 ----
   for name in ("head_collision", "thigh_collision", "calf_collision"):
     term = cfg.rewards[name]
     term.func = mdp.contact_penalty_excluding

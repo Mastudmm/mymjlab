@@ -15,7 +15,8 @@ def unitree_go1_parkour_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   复用 ``unitree_go1_rough_env_cfg`` 的全部 Go1 特化（robot、depth_camera、
   terrain_scan、contact sensors、foot friction、camera DR、reward std、
   terminations 等），仅叠加 parkour 任务专属覆盖（见
-  :func:`apply_parkour_overrides`）：parkour 地形、奖励点 bonus、纯 x command。
+  :func:`apply_parkour_overrides`）：翻墙地形（单地形）、奖励点 bonus、
+  航点命令（WaypointVelocityCommand）。
   """
   cfg = unitree_go1_rough_env_cfg(play=play)
   apply_parkour_overrides(cfg)
