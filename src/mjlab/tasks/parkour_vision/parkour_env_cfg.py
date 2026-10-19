@@ -6,11 +6,14 @@ with the parkour terrain set. Reward/curriculum structure follows wmp_go1
 
 - ONE uniform velocity-tracking reward with overspeed clipping
   (``lin_vel_clip``) — no per-column exemptions except true wall-contact terms;
-- ``cheat`` penalty for large world-yaw deviation (no stuck penalty: stalls
-  are discouraged by the reward-point forward gate and the tracking gradient
-  itself, per user decision 2026-10-16);
+- waypoint-directed command (Extreme-Parkour style, user decision 2026-10-19):
+  every step the command points at the next terrain reward point, replacing
+  the fixed pure-x command AND the handcrafted direction rewards
+  (forward_progress / lateral_track / heading_alignment / cheat are no
+  longer registered — the command itself carries the direction);
 - reward-point milestone bonus kept as the primary task drive;
-- score-driven forward-speed command curriculum ([0.2, 0.5] -> [0.2, 1.0]);
+- score-driven forward-speed command curriculum ([0.2, 0.5] -> [0.2, 1.0])
+  plus a pass-rate-driven waypoint-timeout curriculum (10 s -> 3 s);
 - depth observations normalized to wmp_go1's [-0.5, 0.5] range with a 3 m
   far clip, and camera pitch randomized 15-25 deg down per env.
 """
@@ -39,8 +42,11 @@ def apply_parkour_overrides(
   """在 velocity_vision env cfg 上叠加 parkour 任务专属配置（机器人无关）。
 
   - 地形替换为 ``PARKOUR_TERRAINS_CFG``（梅花桩 / 矮墙 / 沟壑，各占一列）。
-  - 奖励按 wmp_go1 对齐重构：裁剪跟踪 + cheat 惩罚 + 奖励点 bonus。
-  - command 切纯 x 前进，范围 [0.2, 0.5] 起步，分数课程升至 [0.2, 1.0]。
+  - 奖励按 wmp_go1 对齐重构：裁剪跟踪 + 奖励点 bonus（方向类手工奖励已随
+    航点命令的引入移除——方向信息由命令本身携带）。
+  - command 切航点制（WaypointVelocityCommand）：每步指向下一个奖励点，
+    幅值范围 [0.4, 0.8] 起步，分数课程升至 [0.2, 1.0]；限时课程随通过率
+    从 10 s 收紧至 3 s。
   """
   # 地形：替换为 parkour 集合（replace 浅拷贝 cfg 本身，sub_terrains 共享）。
   assert cfg.scene.terrain is not None
@@ -63,7 +69,7 @@ def apply_parkour_overrides(
   # ---- 奖励点 milestone bonus（robot parkour 风格，主任务驱动） ----
   # 量级（w=1 体系）：单点入账 = bonus*dt = 2.0 ≈ 2 秒满速跟踪收益。
   # 梅花 9 点=18.0，矮墙 2 点/墙=4.0，沟壑 3 点=6.0——覆盖攀爬期
-  # tracking(vz)+upright 损失(~2-3)，绕行则被 cheat/越界终止硬性掐断。
+  # tracking(vz)+upright 损失(~2-3)，绕行则被航点超时推进/越界终止掐断。
   cfg.rewards["reward_point_bonus"] = RewardTermCfg(
     func=mdp.reward_point_bonus,
     weight=1.0,
@@ -78,34 +84,14 @@ def apply_parkour_overrides(
     },
   )
 
-  # ---- cheat：世界系朝向偏离链方向(+x) 超 ±1 rad —— 绕行直接受罚 ----
-  # （用户决定 2026-10-16：stuck 反停顿惩罚不在跑酷任务注册——基座 EMA 版
-  # stuck_penalty 与即时版一并取消，停顿惩罚交给奖励点的前进门控与速度
-  # 裁剪跟踪的自然梯度。）
+  # ---- 方向类手工奖励全部移除（用户决定 2026-10-19）----
+  # 航点命令本身携带方向信息（指向下一奖励点），与 forward_progress /
+  # lateral_track / heading_alignment / cheat 重叠。绕行由航点超时推进与
+  # out_of_bounds 兜底。函数定义保留在 mdp.rewards 中（旧实验 env.yaml
+  # 转储以 !!python/name 引用它们，删除会破坏历史配置回放）。
   cfg.rewards.pop("stuck_penalty", None)
-  cfg.rewards["cheat"] = RewardTermCfg(
-    func=mdp.cheat_penalty,
-    weight=-1.0,
-    params={},
-  )
-
-  # 方向性奖励：治 y/yaw 漂移与绕行问题（2026-10-14 play 反馈）。
-  cfg.rewards["heading_alignment"] = RewardTermCfg(
-    func=mdp.heading_alignment,
-    weight=1.0,
-    params={"std": 0.4},
-  )
-  cfg.rewards["lateral_track"] = RewardTermCfg(
-    func=mdp.lateral_track,
-    weight=1.0,
-    params={"std": 0.5},
-  )
-  # 前进进度权重 3.0 -> 1.0：与 tracking 同量纲，避免位移奖励压过一切。
-  cfg.rewards["forward_progress"] = RewardTermCfg(
-    func=mdp.forward_progress,
-    weight=1.0,
-    params={},
-  )
+  for name in ("forward_progress", "lateral_track", "heading_alignment", "cheat"):
+    cfg.rewards.pop(name, None)
 
   # ---- 成功终止：越过整条障碍链（最后奖励点 + margin）立即重置 ----
   cfg.terminations["parkour_completed"] = TerminationTermCfg(
@@ -203,20 +189,20 @@ def apply_parkour_overrides(
     math.radians(2.0),
   )
 
-  # ---- 纯 x 前进 command：范围 [0.2, 0.5] 起步（wmp_go1 forward 组）， ----
-  # 5% 概率零指令（zero_command_prob），<0.2 的碎步指令通过下界 0.2 等效消除。
-  twist = cfg.commands["twist"]
-  assert isinstance(twist, UniformVelocityCommandCfg)
-  twist.rel_standing_envs = 0.05
-  twist.rel_heading_envs = 0.0
-  twist.rel_pure_x_envs = 1.0
-  twist.rel_pure_y_envs = 0.0
-  twist.heading_command = False
-  twist.ranges.heading = None
-  twist.ranges.lin_vel_x = (0.2, 0.5)
-  twist.ranges.lin_vel_y = (0.0, 0.0)
-  twist.ranges.ang_vel_z = (0.0, 0.0)
-  twist.terrain_command_ranges = {}
+  # ---- 航点命令（Extreme-Parkour 风格，用户决定 2026-10-19）----
+  # 每步动态指向下一个奖励点：机体系 [vx, vy] = 指向航点的单位方向 × 幅值，
+  # wz = 朝向航点的 P 控制。幅值范围 [0.4, 0.8]（wmp_go1 forward 组起步值），
+  # 分数课程升至 [0.2, 1.0]；ang_vel_z 为 wz 裁剪范围。lin_vel_y 不参与
+  # （方向来自航点），仅为 Ranges 结构占位。5% 概率零指令（站立）。
+  cfg.commands["twist"] = mdp.WaypointVelocityCommandCfg(
+    entity_name="robot",
+    ranges=UniformVelocityCommandCfg.Ranges(
+      lin_vel_x=(0.4, 0.8),
+      lin_vel_y=(0.0, 0.0),
+      ang_vel_z=(-1.0, 1.0),
+    ),
+    debug_vis=True,
+  )
 
   # 固定初始 yaw 朝世界 x，收紧出生随机范围（障碍链附近需留出自由半径）。
   cfg.events["reset_base"].params["pose_range"]["x"] = (-0.2, 0.2)
@@ -224,7 +210,7 @@ def apply_parkour_overrides(
   cfg.events["reset_base"].params["pose_range"]["yaw"] = (0.0, 0.0)
 
   # ---- 指令课程：静态迭代阶段 -> 分数驱动（wmp_go1 forward 组） ----
-  # 组内归一化 tracking 分数 > 0.8 时 x 上限 +0.2，封顶 1.0。
+  # 组内归一化 tracking 分数 > 0.8 时速度幅值上限 +0.2，封顶 1.0。
   cfg.curriculum["command_vel"] = CurriculumTermCfg(
     func=mdp.commands_vel_score,
     params={
@@ -234,5 +220,19 @@ def apply_parkour_overrides(
       "increment": 0.2,
       "vel_x_min": 0.2,
       "vel_x_cap": 1.0,
+    },
+  )
+
+  # ---- 航点限时课程：通过率 > 0.8 时基础限时 -1 s，下限 3 s ----
+  # 初期给足前往目标点的时间；可行性下限（dist/speed × 1.3）由命令侧公式
+  # 硬性保证，课程收紧不会造成"命令速度下不可达"的死锁。
+  cfg.curriculum["waypoint_timeout"] = CurriculumTermCfg(
+    func=mdp.waypoint_timeout_schedule,
+    params={
+      "command_name": "twist",
+      "bonus_term_name": "reward_point_bonus",
+      "score_threshold": 0.8,
+      "decrement": 1.0,
+      "timeout_min": 3.0,
     },
   )

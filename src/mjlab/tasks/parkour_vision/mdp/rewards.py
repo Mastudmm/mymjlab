@@ -217,9 +217,7 @@ class heading_alignment:
     quat = asset.data.root_link_quat_w
     # Project world +x into the body frame: the body-frame x component of a
     # world +x vector equals cos(yaw_error).
-    world_x = torch.tensor([1.0, 0.0, 0.0], device=env.device).expand(
-      env.num_envs, 3
-    )
+    world_x = torch.tensor([1.0, 0.0, 0.0], device=env.device).expand(env.num_envs, 3)
     from mjlab.utils.lab_api.math import quat_apply_inverse
 
     body_x_of_world_x = quat_apply_inverse(quat, world_x)
@@ -244,7 +242,6 @@ class lateral_track:
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
   ) -> torch.Tensor:
     asset: Entity = env.scene[asset_cfg.name]
-    terrain = env.scene.terrain
     origin_y = env.scene.env_origins[:, 1]
     y_err = asset.data.root_link_pos_w[:, 1] - origin_y
     return torch.exp(-(y_err**2) / std**2)
@@ -294,9 +291,7 @@ def cheat_penalty(
   quat = asset.data.root_link_quat_w
   from mjlab.utils.lab_api.math import quat_apply
 
-  world_x = torch.tensor([1.0, 0.0, 0.0], device=env.device).expand(
-    env.num_envs, 3
-  )
+  world_x = torch.tensor([1.0, 0.0, 0.0], device=env.device).expand(env.num_envs, 3)
   forward = quat_apply(quat, world_x)  # body +x direction in world frame
   heading = torch.atan2(forward[:, 1], forward[:, 0])
   return ((heading > max_yaw_dev) | (heading < -max_yaw_dev)).float()
@@ -323,7 +318,6 @@ def track_linear_velocity_clipped(
   keeps it too): jumping is paid for by the reward points on the obstacle,
   not subsidized by per-column exemptions.
   """
-  from mjlab.tasks.velocity_vision.mdp.rewards import track_linear_velocity
 
   asset: Entity = env.scene[asset_cfg.name]
   command = env.command_manager.get_command(command_name)

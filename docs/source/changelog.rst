@@ -20,6 +20,22 @@ Added
 - Added the ``reward_point_bonus`` reward and the
   ``Mjlab-ParkourVision-Unitree-Go1`` task (``PARKOUR_TERRAINS_CFG``, depth
   camera, pure forward x-only command) for Go1 parkour training.
+- Added the waypoint-directed ``WaypointVelocityCommand`` for the parkour
+  task: every step the body-frame command points at the next terrain reward
+  point (P-controlled yaw rate), with a per-waypoint time budget
+  ``max(waypoint_timeout, dist / speed * factor)`` whose feasibility floor
+  guarantees the budget always exceeds the commanded-speed arrival time.
+- Added the ``waypoint_timeout_schedule`` curriculum: shrinks the waypoint
+  time budget as the reward-point pass rate improves (10 s -> 3 s).
+
+Changed
+^^^^^^^
+
+- The parkour vision task no longer registers the handcrafted direction
+  rewards (``forward_progress``, ``lateral_track``, ``heading_alignment``,
+  ``cheat``): the waypoint command itself carries the direction toward the
+  next reward point. The term functions remain importable for replaying old
+  experiment config dumps.
 
 Fixed
 ^^^^^

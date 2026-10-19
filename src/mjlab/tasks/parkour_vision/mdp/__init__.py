@@ -3,6 +3,9 @@
 from mjlab.tasks.parkour_vision.mdp.curriculums import (
   commands_vel_score as commands_vel_score,
 )
+from mjlab.tasks.parkour_vision.mdp.curriculums import (
+  waypoint_timeout_schedule as waypoint_timeout_schedule,
+)
 from mjlab.tasks.parkour_vision.mdp.observations import (
   depth_camera_normalized as depth_camera_normalized,
 )
@@ -34,16 +37,22 @@ from mjlab.tasks.parkour_vision.mdp.terminations import (
   base_height_below as base_height_below,
 )
 from mjlab.tasks.parkour_vision.mdp.terminations import (
-  out_of_bounds as out_of_bounds,
+  illegal_contact_excluding as illegal_contact_excluding,
 )
 from mjlab.tasks.parkour_vision.mdp.terminations import (
-  illegal_contact_excluding as illegal_contact_excluding,
+  out_of_bounds as out_of_bounds,
 )
 from mjlab.tasks.parkour_vision.mdp.terminations import (
   parkour_completed as parkour_completed,
 )
 from mjlab.tasks.parkour_vision.mdp.terminations import (
   vel_violate as vel_violate,
+)
+from mjlab.tasks.parkour_vision.mdp.waypoint_command import (
+  WaypointVelocityCommand as WaypointVelocityCommand,
+)
+from mjlab.tasks.parkour_vision.mdp.waypoint_command import (
+  WaypointVelocityCommandCfg as WaypointVelocityCommandCfg,
 )
 
 __all__ = [
@@ -62,4 +71,7 @@ __all__ = [
   "vel_violate",
   "depth_camera_normalized",
   "commands_vel_score",
+  "waypoint_timeout_schedule",
+  "WaypointVelocityCommand",
+  "WaypointVelocityCommandCfg",
 ]

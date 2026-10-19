@@ -12,12 +12,20 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from mjlab.tasks.parkour_vision.mdp.waypoint_command import (
+  WaypointVelocityCommand,
+)
+
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
 
 # Module-level accumulator state (one training env per process, so a single
 # entry keyed by the env object is sufficient; wiped if the env is rebuilt).
 _STATE: dict[int, dict[str, float]] = {}
+
+# Separate accumulator for waypoint_timeout_schedule (shared keys with _STATE
+# would collide with commands_vel_score on the same env).
+_TIMEOUT_STATE: dict[int, dict[str, float]] = {}
 
 
 def commands_vel_score(
@@ -49,11 +57,11 @@ def commands_vel_score(
   assert command_term is not None
   ranges = command_term.cfg.ranges
 
-  state = _STATE.setdefault(
-    id(env), {"sum": 0.0, "count": 0.0, "last_score": 0.0}
-  )
+  state = _STATE.setdefault(id(env), {"sum": 0.0, "count": 0.0, "last_score": 0.0})
 
-  env_ids = env_ids[env.episode_length_buf[env_ids] > 0] if zero_step_reset_guard else env_ids
+  env_ids = (
+    env_ids[env.episode_length_buf[env_ids] > 0] if zero_step_reset_guard else env_ids
+  )
   if len(env_ids) > 0:
     reward_manager = env.reward_manager
     # Episode sums are already weight- and dt-scaled by the reward manager.
@@ -77,4 +85,79 @@ def commands_vel_score(
     "lin_vel_x_min": torch.tensor(ranges.lin_vel_x[0]),
     "lin_vel_x_max": torch.tensor(ranges.lin_vel_x[1]),
     "last_score": torch.tensor(state["last_score"]),
+  }
+
+
+def waypoint_timeout_schedule(
+  env: ManagerBasedRlEnv,
+  env_ids: torch.Tensor,
+  command_name: str = "twist",
+  bonus_term_name: str = "reward_point_bonus",
+  score_threshold: float = 0.8,
+  decrement: float = 1.0,
+  timeout_min: float = 3.0,
+  zero_step_reset_guard: bool = True,
+) -> dict[str, torch.Tensor]:
+  """Pass-rate-driven waypoint-timeout curriculum.
+
+  On every reset batch, accumulates the resetting envs' reward-point pass
+  rate (claimed points / valid points of the env's current terrain, read from
+  ``reward_point_bonus``'s ``claimed`` buffer — safe because the curriculum
+  manager computes BEFORE the reward manager resets that buffer). Once at
+  least ``env.num_envs`` episodes have accumulated, the mean pass rate is
+  evaluated:
+
+  - pass rate > ``score_threshold``: shrink the waypoint command's
+    ``waypoint_timeout`` by ``decrement`` seconds (never below
+    ``timeout_min``, only down, never up);
+  - otherwise: keep the current budget.
+
+  Infeasibility guard: ``WaypointVelocityCommand._effective_timeout`` floors
+  the budget at ``dist / speed * timeout_speed_factor``, so even at
+  ``timeout_min`` a robot moving at the commanded speed can always reach the
+  waypoint in time — the curriculum only removes the surplus waiting budget.
+
+  Stats returned for TensorBoard: current budget and last evaluated pass rate.
+  """
+  command_term = env.command_manager.get_term(command_name)
+  assert isinstance(command_term, WaypointVelocityCommand)
+
+  state = _TIMEOUT_STATE.setdefault(
+    id(env), {"sum": 0.0, "count": 0.0, "last_rate": 0.0}
+  )
+
+  env_ids = (
+    env_ids[env.episode_length_buf[env_ids] > 0] if zero_step_reset_guard else env_ids
+  )
+  if len(env_ids) > 0:
+    reward_manager = env.reward_manager
+    bonus_cfg = reward_manager.get_term_cfg(bonus_term_name)
+    claimed = bonus_cfg.func.claimed[env_ids]  # [n, max_points]
+    terrain = env.scene.terrain
+    assert terrain is not None
+    counts_t = terrain.reward_counts
+    assert counts_t is not None, (
+      "waypoint_timeout_schedule requires terrain with reward points."
+    )
+    counts = counts_t[terrain.terrain_levels[env_ids], terrain.terrain_types[env_ids]]
+    idx = torch.arange(claimed.shape[1], device=env.device)
+    valid = idx[None, :] < counts[:, None]
+    n_claimed = (claimed & valid).sum(dim=1).float()
+    rate = n_claimed / valid.sum(dim=1).clamp(min=1).float()
+    state["sum"] += float(rate.sum().item())
+    state["count"] += float(len(env_ids))
+
+    if state["count"] >= env.num_envs:
+      pass_rate = state["sum"] / state["count"]
+      state["last_rate"] = pass_rate
+      state["sum"] = 0.0
+      state["count"] = 0.0
+      if pass_rate > score_threshold:
+        command_term.cfg.waypoint_timeout = max(
+          timeout_min, command_term.cfg.waypoint_timeout - decrement
+        )
+
+  return {
+    "waypoint_timeout": torch.tensor(command_term.cfg.waypoint_timeout),
+    "last_pass_rate": torch.tensor(state["last_rate"]),
   }
