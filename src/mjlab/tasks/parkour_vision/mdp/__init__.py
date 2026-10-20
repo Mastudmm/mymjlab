@@ -30,6 +30,9 @@ from mjlab.tasks.parkour_vision.mdp.rewards import (
 from mjlab.tasks.parkour_vision.mdp.rewards import (
   track_linear_velocity_clipped as track_linear_velocity_clipped,
 )
+from mjlab.tasks.parkour_vision.mdp.rewards import (
+  wall_climb_shaping as wall_climb_shaping,
+)
 from mjlab.tasks.parkour_vision.mdp.terminations import (
   bad_orientation_excluding as bad_orientation_excluding,
 )
@@ -57,6 +60,7 @@ from mjlab.tasks.parkour_vision.mdp.waypoint_command import (
 
 __all__ = [
   "reward_point_bonus",
+  "wall_climb_shaping",
   "forward_progress",
   "heading_alignment",
   "lateral_track",

@@ -48,6 +48,13 @@ def terrain_levels_vel(
   command = env.command_manager.get_command(command_name)
   assert command is not None
 
+  # Zero-step guard: the construction-time reset has episode_length_buf == 0
+  # and the robot pose is still the world-origin default, so the "distance"
+  # is meaningless (it looks like a 7 m walk from the patch origin and would
+  # spuriously promote fresh envs). Skip those envs (same pattern as
+  # commands_vel_score's zero_step_reset_guard).
+  env_ids = env_ids[env.episode_length_buf[env_ids] > 0]
+
   # Compute the distance the robot walked.
   distance = torch.norm(
     asset.data.root_link_pos_w[env_ids, :2] - env.scene.env_origins[env_ids, :2], dim=1

@@ -57,15 +57,38 @@ def apply_parkour_overrides(
   # 单地形任务：唯一列 0 = 矮墙(平台)（梅花桩/沟壑已移除，2026-10-19）。
   wall_column = 0
 
-  # ---- 跟踪奖励：统一裁剪版，无列级豁免（wmp_go1 核心结构） ----
+  # ---- 跟踪奖励：统一裁剪版（wmp_go1 核心结构） ----
   # 权重 4.0 -> 1.0（对齐 wmp_go1）；超速裁剪让冲障碍/跳跃期不罚快。
-  # vz 惩罚保持全域生效：跳跃代价由障碍上的奖励点支付。
+  # 注意：clipped 版本只算机体系 xy 误差，z 速度不罚（攀爬需要 vz>0）。
   cfg.rewards["track_linear_velocity"].func = mdp.track_linear_velocity_clipped
   cfg.rewards["track_linear_velocity"].weight = 1.0
   cfg.rewards["track_linear_velocity"].params = {
     **cfg.rewards["track_linear_velocity"].params,
     "lin_vel_clip": 0.1,
   }
+
+  # ---- upright 放宽（用户决定 2026-10-20）----
+  # std sqrt(0.2) -> sqrt(0.5)：45° 前倾姿态奖励 0.08 -> 0.37，攀爬前倾
+  # 不再重罚；深度翻倒仍由 bad_orientation 85° 终止兜底。
+  cfg.rewards["upright"].params["std"] = math.sqrt(0.5)
+
+  # ---- 初始难度最低（用户决定 2026-10-20）----
+  # 所有 env 从 row 0（墙高 ~0-8 cm，近平障碍）开始学攀爬；
+  # terrain_levels_vel 的升行条件（走出 4 m）在学会后自然推升难度。
+  assert cfg.scene.terrain is not None
+  cfg.scene.terrain.max_init_terrain_level = 0
+
+  # ---- 攀爬塑造奖励（用户决定 2026-10-20）----
+  # 近墙区门控的连续梯度：贴近墙(0.3) + 前倾昂首(0.3) + 前爪上墙(0.5)。
+  # 奖励点 bonus（登顶 2.0/点）仍是攀爬的主要报酬，塑造只负责搭梯子。
+  cfg.rewards["wall_climb_shaping"] = RewardTermCfg(
+    func=mdp.wall_climb_shaping,
+    weight=1.0,
+    params={
+      "sensor_name": "feet_ground_contact",
+      "asset_cfg": SceneEntityCfg("robot", site_names=("FR", "FL")),
+    },
+  )
 
   # ---- 奖励点 milestone bonus（robot parkour 风格，主任务驱动） ----
   # 量级（w=1 体系）：单点入账 = bonus*dt = 2.0 ≈ 2 秒满速跟踪收益。

@@ -10,12 +10,15 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.sensor import ContactSensor
 from mjlab.tasks.velocity_vision.mdp.rewards import self_collision_cost
+from mjlab.utils.lab_api.math import quat_apply
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
 
 _DEFAULT_ASSET_CFG = SceneEntityCfg("robot")
+_FRONT_FEET_CFG = SceneEntityCfg("robot", site_names=("FR", "FL"))
 
 
 def _exempt_mask(env: ManagerBasedRlEnv, exempt_terrain_types: tuple[int, ...]):
@@ -28,6 +31,104 @@ def _exempt_mask(env: ManagerBasedRlEnv, exempt_terrain_types: tuple[int, ...]):
     terrain.terrain_types,
     torch.tensor(list(exempt_terrain_types), device=env.device),
   )
+
+
+def wall_climb_shaping(
+  env: ManagerBasedRlEnv,
+  sensor_name: str = "feet_ground_contact",
+  asset_cfg: SceneEntityCfg = _FRONT_FEET_CFG,
+  approach_weight: float = 0.3,
+  pitch_weight: float = 0.3,
+  paw_weight: float = 0.5,
+  near_max: float = 1.5,
+  max_pitch: float = 0.8,
+  paw_min_height: float = 0.1,
+) -> torch.Tensor:
+  """Dense shaping gradient toward the wall-climb behavior (user request
+  2026-10-20: approach + pitch + front paws on the wall).
+
+  Three components, all gated by a NEAR-WALL ZONE around the FIRST wall's
+  reward point (wall-top center, world frame from ``terrain.reward_points``)
+  so nothing is payable away from the wall:
+
+  - zone: horizontal distance to the point < ``near_max`` AND base below the
+    point's top (not yet climbed) AND base x before the wall center — i.e.
+    the robot is on the approach side of wall 1;
+  - approach: linear ramp ``1 - d_xy / near_max`` — pays for closing in on
+    the wall face (gradient exists from the spawn onward);
+  - pitch: nose-up tilt ``clamp(body-x world z, 0, max_pitch) / max_pitch``
+    — the climb-preparation posture (front of the trunk rising);
+  - paws: fraction of FRONT feet (FR/FL, ``feet_ground_contact`` sensor — its
+    secondary match covers the wall geoms) in contact with terrain while the
+    foot site is above ``paw_min_height`` (elevated = on the wall face, not
+    the ground).
+
+  Magnitudes: full-value sum ~1.1 with term weight 1.0 — comparable to but
+  below the tracking reward; the milestone bonus (2.0/point on top) remains
+  the primary climb payment. Component means are logged to TensorBoard via
+  ``Metrics/wall_shaping/*``.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  terrain = env.scene.terrain
+  assert terrain is not None
+  points_t = terrain.reward_points
+  counts_t = terrain.reward_counts
+  assert points_t is not None and counts_t is not None, (
+    "wall_climb_shaping requires terrain with reward points."
+  )
+
+  base_pos = asset.data.root_link_pos_w
+  rows = terrain.terrain_levels
+  cols = terrain.terrain_types
+
+  # Wall-1 top center for each env; envs without points get no shaping.
+  has_point = counts_t[rows, cols] > 0
+  batch = torch.arange(env.num_envs, device=env.device)
+  idx0 = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+  wall_xy = points_t[rows, cols][batch, idx0, :2]  # [B, 2]
+  wall_top_z = points_t[rows, cols][batch, idx0, 2]  # [B]
+
+  d_xy = torch.norm(wall_xy - base_pos[:, :2], dim=-1)
+  # "Not yet on top" gate: for TALL walls require the base to still be below
+  # the top; for LOW walls (top < 0.15 m — the training-start rows where the
+  # standing base is already above the top) the x-side gate alone delimits
+  # the approach side, otherwise the zone would be empty there.
+  low_wall = wall_top_z < 0.15
+  zone = (
+    (d_xy < near_max)
+    & ((base_pos[:, 2] < wall_top_z + 0.1) | low_wall)
+    & (base_pos[:, 0] < wall_xy[:, 0] + 0.3)
+    & has_point
+  ).float()
+
+  # (a) approach ramp: 0 at near_max -> 1 at the wall.
+  approach = torch.clamp(1.0 - d_xy / near_max, min=0.0)
+
+  # (b) nose-up pitch: body +x axis world z component (0 = level, 1 = 90°).
+  quat = asset.data.root_link_quat_w
+  world_x = torch.tensor([1.0, 0.0, 0.0], device=env.device).expand(env.num_envs, 3)
+  pitch_sin = quat_apply(quat, world_x)[:, 2]
+  pitch_n = torch.clamp(pitch_sin, min=0.0, max=max_pitch) / max_pitch
+
+  # (c) front paws on the wall: contact while the foot site is elevated.
+  contact_sensor: ContactSensor = env.scene[sensor_name]
+  assert contact_sensor.data.found is not None
+  # Sensor geom order is (FR, FL, RR, RL) — front feet are columns [:, :2],
+  # matching asset_cfg site order ("FR", "FL").
+  in_contact = (contact_sensor.data.found[:, :2] > 0).float()  # [B, 2]
+  foot_z = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]  # [B, 2]
+  elevated = (foot_z > paw_min_height).float()
+  paws_n = (in_contact * elevated).mean(dim=1)  # [B]
+
+  combined = zone * (
+    approach_weight * approach + pitch_weight * pitch_n + paw_weight * paws_n
+  )
+
+  env.extras["log"]["Metrics/wall_shaping/approach"] = approach.mean()
+  env.extras["log"]["Metrics/wall_shaping/pitch"] = pitch_n.mean()
+  env.extras["log"]["Metrics/wall_shaping/paws"] = paws_n.mean()
+  env.extras["log"]["Metrics/wall_shaping/zone"] = zone.mean()
+  return combined
 
 
 def contact_penalty_excluding(
@@ -314,9 +415,9 @@ def track_linear_velocity_clipped(
   per-terrain exemptions — the obstacle columns reward speed instead of
   punishing it.
 
-  Note the vz penalty of the base term stays in effect everywhere (wmp_go1
-  keeps it too): jumping is paid for by the reward points on the obstacle,
-  not subsidized by per-column exemptions.
+  Only the body-frame xy error enters the exponential — the z velocity is
+  NOT penalized (deliberately: climbing needs vz > 0; the base term's
+  ``z_error`` does not apply here).
   """
 
   asset: Entity = env.scene[asset_cfg.name]

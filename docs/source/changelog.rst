@@ -41,6 +41,14 @@ Changed
   were removed from ``PARKOUR_TERRAINS_CFG`` to focus training on a single
   obstacle type; the three columns now hold independently randomized wall
   layouts per difficulty row. The terrain classes remain available.
+- Added the ``wall_climb_shaping`` reward for the parkour task: a near-wall
+  gated dense gradient (approach ramp + nose-up pitch + elevated front-paw
+  wall contact) that pays for climb-preparation behavior the milestone bonus
+  alone could not reach — fixes the "push against the wall" local optimum.
+- The parkour task now starts every env at terrain difficulty row 0
+  (``max_init_terrain_level = 0``) so climbing is first learned on near-flat
+  walls, and relaxes the upright reward (std sqrt(0.2) -> sqrt(0.5)) so the
+  pitched climbing posture is no longer heavily penalized.
 
 Fixed
 ^^^^^
