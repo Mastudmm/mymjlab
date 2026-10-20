@@ -57,15 +57,18 @@ def apply_parkour_overrides(
   # 单地形任务：唯一列 0 = 矮墙(平台)（梅花桩/沟壑已移除，2026-10-19）。
   wall_column = 0
 
-  # ---- 跟踪奖励：统一裁剪版（wmp_go1 核心结构） ----
-  # 权重 4.0 -> 1.0（对齐 wmp_go1）；超速裁剪让冲障碍/跳跃期不罚快。
-  # 注意：clipped 版本只算机体系 xy 误差，z 速度不罚（攀爬需要 vz>0）。
-  cfg.rewards["track_linear_velocity"].func = mdp.track_linear_velocity_clipped
+  # ---- 跟踪奖励：Extreme-Parkour 线性截断版（A/B 对比，用户决定 2026-10-20）----
+  # r = min(⟨v_xy_w, d̂_cmd_w⟩, v_cmd)：误差大时仍有稠密梯度（exp 版在误差大时
+  # 梯度趋零），天然不罚 vz。
+  # 回退方式（一行）：func 换回 mdp.track_linear_velocity_clipped，params 加回
+  # {"std": math.sqrt(0.09), "lin_vel_clip": 0.1}（exp 版 wmp_go1 结构）。
+  cfg.rewards["track_linear_velocity"].func = mdp.track_goal_vel
   cfg.rewards["track_linear_velocity"].weight = 1.0
-  cfg.rewards["track_linear_velocity"].params = {
-    **cfg.rewards["track_linear_velocity"].params,
-    "lin_vel_clip": 0.1,
-  }
+  cfg.rewards["track_linear_velocity"].params = {"command_name": "twist"}
+
+  # ---- 负总奖励截零（Extreme-Parkour only_positive_rewards）----
+  # 防止早期惩罚项压过正项导致"冻结最安全"的瘫痪策略。
+  cfg.only_positive_rewards = True
 
   # ---- upright 放宽（用户决定 2026-10-20）----
   # std sqrt(0.2) -> sqrt(0.5)：45° 前倾姿态奖励 0.08 -> 0.37，攀爬前倾

@@ -56,11 +56,13 @@ class RewardManager(ManagerBase):
     env: ManagerBasedRlEnv,
     *,
     scale_by_dt: bool = True,
+    only_positive: bool = False,
   ):
     self._term_names: list[str] = list()
     self._term_cfgs: list[RewardTermCfg] = list()
     self._class_term_cfgs: list[RewardTermCfg] = list()
     self._scale_by_dt = scale_by_dt
+    self._only_positive = only_positive
 
     self.cfg = deepcopy(cfg)
     super().__init__(env=env)
@@ -128,6 +130,10 @@ class RewardManager(ManagerBase):
       self._reward_buf += value
       self._episode_sums[name] += value
       self._step_reward[:, term_idx] = value / scale
+    if self._only_positive:
+      # Extreme-Parkour's only_positive_rewards: clip the per-step TOTAL at
+      # zero. Per-term logs (episode sums / step reward) stay unclipped.
+      self._reward_buf = torch.clamp(self._reward_buf, min=0.0)
     return self._reward_buf
 
   def get_active_iterable_terms(self, env_idx):

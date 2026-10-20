@@ -398,6 +398,49 @@ def cheat_penalty(
   return ((heading > max_yaw_dev) | (heading < -max_yaw_dev)).float()
 
 
+def track_goal_vel(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Linear capped goal-direction tracking, borrowed from Extreme Parkour
+  (``tracking_goal_vel`` in chengxuxin/Extreme-Parkour, user decision
+  2026-10-20).
+
+  ``r = min(<v_xy_w, d_cmd_w>, v_cmd)``: the world-frame xy velocity projected
+  onto the commanded direction, paid LINEARLY (a dense gradient at any error
+  magnitude — unlike the exponential form whose gradient vanishes when the
+  tracking error is large, e.g. pushing against a wall) and capped at the
+  commanded speed (no overspeed bonus). vz is not penalized by construction.
+
+  Standing envs (commanded speed < 0.05) get ``-||v_xy_w||`` instead: moving
+  while standing still is commanded earns nothing (and with
+  ``only_positive_rewards`` the total clips at zero).
+
+  Rollback: switch ``parkour_env_cfg`` back to
+  :func:`track_linear_velocity_clipped` (one line, the exponential form is
+  kept below).
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  command = env.command_manager.get_command(command_name)
+  assert command is not None
+
+  quat = asset.data.root_link_quat_w
+  cmd_b = torch.cat(
+    [command[:, :2], torch.zeros(env.num_envs, 1, device=env.device)], dim=-1
+  )
+  cmd_w = quat_apply(quat, cmd_b)[:, :2]
+  speed = torch.norm(command[:, :2], dim=-1)
+  dir_w = cmd_w / speed.clamp(min=1e-6).unsqueeze(-1)
+
+  vel_w = asset.data.root_link_lin_vel_w[:, :2]
+  projection = (vel_w * dir_w).sum(dim=-1)
+
+  moving = torch.clamp(projection, max=speed)
+  standing = -torch.norm(vel_w, dim=-1)
+  return torch.where(speed > 0.05, moving, standing)
+
+
 def track_linear_velocity_clipped(
   env: ManagerBasedRlEnv,
   std: float,

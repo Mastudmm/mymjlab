@@ -49,6 +49,16 @@ Changed
   (``max_init_terrain_level = 0``) so climbing is first learned on near-flat
   walls, and relaxes the upright reward (std sqrt(0.2) -> sqrt(0.5)) so the
   pitched climbing posture is no longer heavily penalized.
+- Added the Extreme-Parkour-style linear capped tracking reward
+  (``track_goal_vel``, ``r = min(<v, d_cmd>, v_cmd)``) as the parkour task's
+  velocity tracking term: a dense gradient at any error magnitude, unlike the
+  exponential form whose gradient vanishes when the error is large. The
+  exponential ``track_linear_velocity_clipped`` remains available for
+  one-line rollback.
+- Added ``ManagerBasedRlEnvCfg.only_positive_rewards`` (Extreme-Parkour's
+  only-positive-rewards mechanism): the per-step total reward is clipped at
+  zero so early penalty terms cannot drive a "freeze in place" local optimum.
+  Per-term logs stay unclipped; default off for other tasks.
 
 Fixed
 ^^^^^

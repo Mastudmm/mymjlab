@@ -140,6 +140,13 @@ class ManagerBasedRlEnvCfg:
   algorithms that expect unscaled reward signals (e.g., HER, static reward scaling).
   """
 
+  only_positive_rewards: bool = False
+  """Whether to clip the summed per-step reward at zero (Extreme-Parkour's
+  ``only_positive_rewards``). When True, a step whose penalty terms outweigh
+  its positive terms yields 0 instead of a negative signal — prevents
+  penalty-dominated early training from converging to a "freeze in place"
+  policy. Per-term logs (``Episode_Reward/*``) are unaffected."""
+
 
 class ManagerBasedRlEnv:
   """Manager-based RL environment."""
@@ -298,7 +305,10 @@ class ManagerBasedRlEnv:
     self.termination_manager = TerminationManager(self.cfg.terminations, self)
     print_info(f"[INFO] {self.termination_manager}")
     self.reward_manager = RewardManager(
-      self.cfg.rewards, self, scale_by_dt=self.cfg.scale_rewards_by_dt
+      self.cfg.rewards,
+      self,
+      scale_by_dt=self.cfg.scale_rewards_by_dt,
+      only_positive=self.cfg.only_positive_rewards,
     )
     print_info(f"[INFO] {self.reward_manager}")
     if len(self.cfg.curriculum) > 0:
