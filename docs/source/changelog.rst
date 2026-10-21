@@ -58,7 +58,20 @@ Changed
 - Added ``ManagerBasedRlEnvCfg.only_positive_rewards`` (Extreme-Parkour's
   only-positive-rewards mechanism): the per-step total reward is clipped at
   zero so early penalty terms cannot drive a "freeze in place" local optimum.
-  Per-term logs stay unclipped; default off for other tasks.
+  Per-term logs stay unclipped; default off for other tasks. NOTE (2026-10-21):
+  this mechanism backfires with our many-mid-weight-penalty reward structure —
+  during early chaos the positives are ~0 and clipping removes the only
+  "stop flailing" gradient (policy noise std exploded to its clamp). The
+  parkour task now leaves it off.
+- Removed the parkour tilt termination (``fell_over``), aligning with Extreme
+  Parkour which has no orientation limit at all: climbing a 0.4-0.5 m wall
+  pitches the trunk 60-90 deg, so the 75/85 deg limits killed every climb
+  attempt mid-action. Falls are bounded by the pit-height and time-out
+  terminations; self-recovery after falling is now learnable.
+- Enabled the foot-lift shaping the gait was missing (the learned gait lifted
+  its feet only ~2 cm, stalling on any ledge >= 3 cm):
+  ``foot_swing_height`` penalty at weight -0.5 (target 0.15 m), stumble
+  penalty raised to -0.5, and the static posture reward reduced to 0.25.
 
 Fixed
 ^^^^^

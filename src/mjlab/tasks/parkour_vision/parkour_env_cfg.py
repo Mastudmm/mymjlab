@@ -57,18 +57,27 @@ def apply_parkour_overrides(
   # 单地形任务：唯一列 0 = 矮墙(平台)（梅花桩/沟壑已移除，2026-10-19）。
   wall_column = 0
 
-  # ---- 跟踪奖励：Extreme-Parkour 线性截断版（A/B 对比，用户决定 2026-10-20）----
-  # r = min(⟨v_xy_w, d̂_cmd_w⟩, v_cmd)：误差大时仍有稠密梯度（exp 版在误差大时
-  # 梯度趋零），天然不罚 vz。
-  # 回退方式（一行）：func 换回 mdp.track_linear_velocity_clipped，params 加回
-  # {"std": math.sqrt(0.09), "lin_vel_clip": 0.1}（exp 版 wmp_go1 结构）。
-  cfg.rewards["track_linear_velocity"].func = mdp.track_goal_vel
+  # ---- 跟踪奖励：A2 对照组 = exp 误差版（wmp_go1 结构，w=1.0）----
+  # 机体系 xy 误差指数跟踪，超速裁剪；z 速度不罚。
+  # B2 实验组（另一 commit）：mdp.track_goal_vel（EP 线性截断版）w=1.5——
+  # 误差大时仍有稠密梯度，翻墙期持续付钱（见 worktree B 的 cfg）。
+  cfg.rewards["track_linear_velocity"].func = mdp.track_linear_velocity_clipped
   cfg.rewards["track_linear_velocity"].weight = 1.0
-  cfg.rewards["track_linear_velocity"].params = {"command_name": "twist"}
+  cfg.rewards["track_linear_velocity"].params = {
+    **cfg.rewards["track_linear_velocity"].params,
+    "lin_vel_clip": 0.1,
+  }
 
-  # ---- 负总奖励截零（Extreme-Parkour only_positive_rewards）----
-  # 防止早期惩罚项压过正项导致"冻结最安全"的瘫痪策略。
-  cfg.only_positive_rewards = True
+  # ---- 抬脚包（v5 根因修复：健康 run 步态抬脚仅 2cm，任何 ≥3cm 的坎都
+  # 撞墙卡死；训练中没有任何奖励抬脚）----
+  # 1) 摆动峰值欠抬惩罚（velocity_vision 现成 class term，落地评估，
+  #    命令门控 + 直立门控，欠抬重罚/过抬轻罚），目标 0.15m 已在 params；
+  cfg.rewards["foot_swing_height"].weight = -0.5
+  # 2) 踝击拖步惩罚（EP feet_stumble -1.0，取半起步）：脚尖横向冲击 >
+  #    垂直支撑时罚，直立门控。
+  cfg.rewards["stumble"].weight = -0.5
+  # 3) 削弱静态姿态正奖励：默认关节角奖励与抬脚/攀爬姿态直接冲突。
+  cfg.rewards["pose"].weight = 0.25
 
   # ---- upright 放宽（用户决定 2026-10-20）----
   # std sqrt(0.2) -> sqrt(0.5)：45° 前倾姿态奖励 0.08 -> 0.37，攀爬前倾
@@ -136,16 +145,12 @@ def apply_parkour_overrides(
     },
   )
 
-  # 倾角终止：墙列放宽至 85°（攀爬前倾姿态，翻倒仍兜底）。单地形下即全局
-  # 85°（保留 excluding 结构以便日后恢复多地形）。
-  cfg.terminations["fell_over"] = TerminationTermCfg(
-    func=mdp.bad_orientation_excluding,
-    params={
-      "limit_angle": math.radians(75.0),
-      "relaxed_angle": math.radians(85.0),
-      "exempt_terrain_types": (wall_column,),
-    },
-  )
+  # ---- 移除倾角终止（v5，EP 对齐：EP 无任何倾角终止，摔倒自行翻回是
+  # emergent re-trying 的前提）——翻 0.4-0.5m 墙时躯干俯仰可达 60-90°，
+  # 75°/85° 终止在攀爬最关键的时刻杀掉尝试，攀爬永远得不到强化。 ----
+  # 摔倒兜底：fell_into_pit（z<0.15）+ time_out（趴地无 upright/pose/
+  # tracking 收益，自然抑制）。回退：恢复 bad_orientation_excluding 注册。
+  del cfg.terminations["fell_over"]
 
   # 速度违反终止（wmp_go1 同款）：倒退/停滞超 1.5 m/s（高难度行）。
   cfg.terminations["vel_violate"] = TerminationTermCfg(
