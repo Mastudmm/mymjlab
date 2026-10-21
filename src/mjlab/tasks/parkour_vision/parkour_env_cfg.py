@@ -57,16 +57,14 @@ def apply_parkour_overrides(
   # 单地形任务：唯一列 0 = 矮墙(平台)（梅花桩/沟壑已移除，2026-10-19）。
   wall_column = 0
 
-  # ---- 跟踪奖励：A2 对照组 = exp 误差版（wmp_go1 结构，w=1.0）----
-  # 机体系 xy 误差指数跟踪，超速裁剪；z 速度不罚。
-  # B2 实验组（另一 commit）：mdp.track_goal_vel（EP 线性截断版）w=1.5——
-  # 误差大时仍有稠密梯度，翻墙期持续付钱（见 worktree B 的 cfg）。
-  cfg.rewards["track_linear_velocity"].func = mdp.track_linear_velocity_clipped
-  cfg.rewards["track_linear_velocity"].weight = 1.0
-  cfg.rewards["track_linear_velocity"].params = {
-    **cfg.rewards["track_linear_velocity"].params,
-    "lin_vel_clip": 0.1,
-  }
+  # ---- 跟踪奖励：B2 实验组 = EP 线性截断版（w=1.5，EP 同款）----
+  # r = min(⟨v_xy_w, d̂_cmd_w⟩, v_cmd)：误差大时仍有稠密梯度，翻墙期持续
+  # 付钱；天然不罚 vz。
+  # A2 对照组（另一 worktree/commit）：mdp.track_linear_velocity_clipped
+  # （exp 版 wmp_go1 结构）w=1.0，params 加回 std/lin_vel_clip。
+  cfg.rewards["track_linear_velocity"].func = mdp.track_goal_vel
+  cfg.rewards["track_linear_velocity"].weight = 1.5
+  cfg.rewards["track_linear_velocity"].params = {"command_name": "twist"}
 
   # ---- 抬脚包（v5 根因修复：健康 run 步态抬脚仅 2cm，任何 ≥3cm 的坎都
   # 撞墙卡死；训练中没有任何奖励抬脚）----
