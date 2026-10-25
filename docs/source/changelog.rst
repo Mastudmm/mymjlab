@@ -67,11 +67,32 @@ Changed
   Parkour which has no orientation limit at all: climbing a 0.4-0.5 m wall
   pitches the trunk 60-90 deg, so the 75/85 deg limits killed every climb
   attempt mid-action. Falls are bounded by the pit-height and time-out
-  terminations; self-recovery after falling is now learnable.
+  terminations; self-recovery after falling is now learnable. NOTE
+  (2026-10-25): reverted — without the termination a fallen robot burns the
+  whole 20 s episode (the single-terrain setup also makes the wall-column
+  exemptions cover every env, so there is no body-contact fallback either).
+  The parkour task now restores ``fell_over`` with an 85 deg limit and no
+  terrain exemption: the 60-85 deg climbing posture is allowed, a true fall
+  ends the episode.
 - Enabled the foot-lift shaping the gait was missing (the learned gait lifted
   its feet only ~2 cm, stalling on any ledge >= 3 cm):
   ``foot_swing_height`` penalty at weight -0.5 (target 0.15 m), stumble
   penalty raised to -0.5, and the static posture reward reduced to 0.25.
+- Rebalanced the parkour reward scale so the dense velocity tracking and the
+  sparse milestone bonus dominate instead of passive posture income. A
+  zero-action (stand still) rollout used to earn +2.05/s (~41 per 20 s
+  episode, from ``track_angular_velocity`` 1.0 + ``upright`` 1.0 + ``pose``
+  0.25 all paying full value at rest) while the entire obstacle chain was
+  worth only 4 points, so the policy converged to standing
+  (``reward_point_bonus`` stayed 0 for 2236 iterations and the terrain
+  curriculum decayed to row 0). ``track_angular_velocity`` 1.0 -> 0.3,
+  ``upright`` 1.0 -> 0.2, ``pose`` 0.25 -> 0.1, ``wall_climb_shaping``
+  1.0 -> 0.5 and ``bonus_value`` 100 -> 1000 (20 points per milestone, 40 for
+  the chain) put stand-still at +0.49/s (~10 per episode) against ~66 for
+  completing the chain. The milestone ``hit_radius`` was widened 0.2 -> 0.35
+  so it is no longer tighter than the waypoint ``reach_radius`` (0.3): the
+  command advanced at 0.3 m, outside the 0.2 m capture zone, so the bonus
+  could not fire.
 
 Fixed
 ^^^^^

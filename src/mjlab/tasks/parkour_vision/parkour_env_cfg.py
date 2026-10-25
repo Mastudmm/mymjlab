@@ -24,6 +24,7 @@ import math
 from dataclasses import replace
 
 from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs import mdp as envs_mdp
 from mjlab.managers.curriculum_manager import CurriculumTermCfg
 from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
@@ -66,6 +67,25 @@ def apply_parkour_overrides(
   cfg.rewards["track_linear_velocity"].weight = 1.5
   cfg.rewards["track_linear_velocity"].params = {"command_name": "twist"}
 
+  # ======== 奖励尺度再平衡（用户决定 2026-10-25）========
+  # 实证（HEAD 配置、8 env、200 步零动作 rollout）：
+  #   站立不动 = +2.05 /s ≈ 41 分/20 s 回合，其中 track_angular_velocity
+  #   +0.95/s、upright +0.95/s、pose +0.20/s 全部"免费"拿满；而整条跑酷链
+  #   2 个奖励点合计只有 4 分。于是 PPO 收敛到"站着"退化解——日志佐证：
+  #   2236 次迭代 reward_point_bonus 恒为 0、terrain_levels 衰减到 0、
+  #   mean_reward≈48 ≈ 站立收益。
+  #
+  # 再平衡原则：只让「跟踪速度（稠密）」与「奖励点（稀疏里程碑）」当主力，
+  # 姿态类正奖励降级为"稳定器"（防后仰刷分、保持可站立姿态），不再是收益源。
+  # 目标预算（/s 速率，weight×raw 后）：
+  #   站立: upright 0.19 + pose 0.08 + angular 0.29            ≈ 0.56/s (11 分)
+  #   行走: tracking 0.9 + upright 0.18 + angular 0.25
+  #         + pose 0.08 + air_time 0.4 - 动作类惩罚 ≈ 0.5       ≈ 1.3/s (26 分)
+  #   通关: 行走 26 + 2 点 × 20 分 = 66 分                     → 站立的 6 倍
+  # 三处都是单行可回退。
+  cfg.rewards["track_angular_velocity"].weight = 0.3  # 1.0 -> 0.3（站立白拿 ~0.95/s）
+  cfg.rewards["upright"].weight = 0.2  # 1.0 -> 0.2（站立白拿 ~0.95/s）
+
   # ---- 抬脚包（v5 根因修复：健康 run 步态抬脚仅 2cm，任何 ≥3cm 的坎都
   # 撞墙卡死；训练中没有任何奖励抬脚）----
   # 1) 摆动峰值欠抬惩罚（velocity_vision 现成 class term，落地评估，
@@ -75,7 +95,8 @@ def apply_parkour_overrides(
   #    垂直支撑时罚，直立门控。
   cfg.rewards["stumble"].weight = -0.5
   # 3) 削弱静态姿态正奖励：默认关节角奖励与抬脚/攀爬姿态直接冲突。
-  cfg.rewards["pose"].weight = 0.25
+  #    0.25 -> 0.1（再平衡）：站立时 pose 白拿 ~0.2/s，必须压到稳定器量级。
+  cfg.rewards["pose"].weight = 0.1
 
   # ---- upright 放宽（用户决定 2026-10-20）----
   # std sqrt(0.2) -> sqrt(0.5)：45° 前倾姿态奖励 0.08 -> 0.37，攀爬前倾
@@ -88,33 +109,42 @@ def apply_parkour_overrides(
   assert cfg.scene.terrain is not None
   cfg.scene.terrain.max_init_terrain_level = 0
 
-  # ---- 攀爬塑造奖励（用户决定 2026-10-20）----
-  # 近墙区门控的连续梯度：贴近墙(0.3) + 前倾昂首(0.3) + 前爪上墙(0.5)。
-  # 奖励点 bonus（登顶 2.0/点）仍是攀爬的主要报酬，塑造只负责搭梯子。
+  # ---- 攀爬塑造奖励（用户决定 2026-10-20，2026-10-25 降权）----
+  # 近墙区门控的连续梯度：贴近墙(0.3) + 前倾昂首(0.3) + 前爪上墙(0.5)，
+  # 原件满值 ≈ 1.1 —— 会高于跟踪奖励(0.9)，且"贴墙抬头不动"就能白拿
+  # approach+pitch ≈ 0.6/s，又变成一个局部最优。权重 1.0 -> 0.5 后满值
+  # ≈ 0.55/s，低于 tracking(0.9) 与单点 bonus(20)，只负责"搭梯子"。
+  # 主报酬仍是奖励点 bonus（单点 20 分）。
   cfg.rewards["wall_climb_shaping"] = RewardTermCfg(
     func=mdp.wall_climb_shaping,
-    weight=1.0,
+    weight=0.5,
     params={
       "sensor_name": "feet_ground_contact",
       "asset_cfg": SceneEntityCfg("robot", site_names=("FR", "FL")),
     },
   )
 
-  # ---- 奖励点 milestone bonus（robot parkour 风格，主任务驱动） ----
-  # 量级（w=1 体系）：单点入账 = bonus*dt = 2.0 ≈ 2 秒满速跟踪收益。
-  # 梅花 9 点=18.0，矮墙 2 点/墙=4.0，沟壑 3 点=6.0——覆盖攀爬期
-  # tracking(vz)+upright 损失(~2-3)，绕行则被航点超时推进/越界终止掐断。
+  # ---- 奖励点 milestone bonus（主任务驱动，2026-10-25 再平衡后为收益主项） ----
+  # 量级（w=1 体系）：单点入账 = bonus_value * dt。dt = 0.02 s，因此
+  # bonus_value 1000 -> 单点 20 分，两点共 40 分 ≈ 站立收益(11 分)的 3.6 倍、
+  # 使"打通障碍链"成为全局最优，而不是"站着不动"。
+  # 历史：bonus_value=100（单点 2 分、两点 4 分）时，跑酷总收益只有站立的
+  # 1/10，是训练收敛到站立退化解的直接原因之一。
+  # 回退：把 bonus_value 改回 100.0 即恢复到旧量级。
   cfg.rewards["reward_point_bonus"] = RewardTermCfg(
     func=mdp.reward_point_bonus,
     weight=1.0,
     params={
       "command_name": "twist",
-      "hit_radius": 0.2,
+      # 0.2 -> 0.35：必须 ≥ 航点命令的 reach_radius(0.3)。否则机器人在
+      # 0.25-0.3 m 处就被判定"到达"并切走下一个航点，永远不会进入 0.2 m
+      # 计奖区 → 白跑一趟（这是整程 bonus 恒为 0 的坑之一）。
+      "hit_radius": 0.35,
       "z_margin": 0.05,
       "min_forward_speed": 0.05,
       "speed_tol": 0.5,
       "command_threshold": 0.1,
-      "bonus_value": 100.0,
+      "bonus_value": 1000.0,
     },
   )
 
@@ -143,12 +173,20 @@ def apply_parkour_overrides(
     },
   )
 
-  # ---- 移除倾角终止（v5，EP 对齐：EP 无任何倾角终止，摔倒自行翻回是
-  # emergent re-trying 的前提）——翻 0.4-0.5m 墙时躯干俯仰可达 60-90°，
-  # 75°/85° 终止在攀爬最关键的时刻杀掉尝试，攀爬永远得不到强化。 ----
-  # 摔倒兜底：fell_into_pit（z<0.15）+ time_out（趴地无 upright/pose/
-  # tracking 收益，自然抑制）。回退：恢复 bad_orientation_excluding 注册。
-  del cfg.terminations["fell_over"]
+  # ---- 恢复倾角终止，放宽到 85°（用户决定 2026-10-25）----
+  # v5 曾整体删除倾角终止（EP 对齐），但实证代价是：摔倒的机器人不会被
+  # 重置，白白烧掉整个 20 s 回合（单地形下 illegal_contact 的墙列豁免
+  # 覆盖全部 env，也没有躯干接触兜底），只产出噪声。
+  # 85° 的含义：0.4-0.5 m 墙攀爬时躯干俯仰 60-85° 全部放行（这是攀爬
+  # 必需姿态），只有真正翻过去/侧翻（>85°）才终止——既保住"攀爬不被误
+  # 杀"，又不让倒地机器人占着回合。
+  # 注意：这里用 envs_mdp.bad_orientation 而**不做地形列豁免**。单地形
+  # 任务下 terrain_types 恒为 0，任何 exempt_terrain_types=(0,) 都会变成
+  # 全环境豁免 = 等于没有终止（v5 删除它的真实原因）。
+  cfg.terminations["fell_over"] = TerminationTermCfg(
+    func=envs_mdp.bad_orientation,
+    params={"limit_angle": math.radians(85.0)},
+  )
 
   # 速度违反终止（wmp_go1 同款）：倒退/停滞超 1.5 m/s（高难度行）。
   cfg.terminations["vel_violate"] = TerminationTermCfg(
