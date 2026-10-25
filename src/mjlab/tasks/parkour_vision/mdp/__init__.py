@@ -4,6 +4,9 @@ from mjlab.tasks.parkour_vision.mdp.curriculums import (
   commands_vel_score as commands_vel_score,
 )
 from mjlab.tasks.parkour_vision.mdp.curriculums import (
+  terrain_levels_by_pass_rate as terrain_levels_by_pass_rate,
+)
+from mjlab.tasks.parkour_vision.mdp.curriculums import (
   waypoint_timeout_schedule as waypoint_timeout_schedule,
 )
 from mjlab.tasks.parkour_vision.mdp.observations import (
@@ -79,6 +82,7 @@ __all__ = [
   "vel_violate",
   "depth_camera_normalized",
   "commands_vel_score",
+  "terrain_levels_by_pass_rate",
   "waypoint_timeout_schedule",
   "WaypointVelocityCommand",
   "WaypointVelocityCommandCfg",

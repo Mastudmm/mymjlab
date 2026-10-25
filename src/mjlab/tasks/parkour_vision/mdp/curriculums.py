@@ -161,3 +161,75 @@ def waypoint_timeout_schedule(
     "waypoint_timeout": torch.tensor(command_term.cfg.waypoint_timeout),
     "last_pass_rate": torch.tensor(state["last_rate"]),
   }
+
+
+def terrain_levels_by_pass_rate(
+  env: ManagerBasedRlEnv,
+  env_ids: torch.Tensor,
+  bonus_term_name: str = "reward_point_bonus",
+  promote_rate: float = 0.5,
+  demote_rate: float = 0.0,
+  zero_step_reset_guard: bool = True,
+) -> torch.Tensor:
+  """Terrain-difficulty curriculum driven by the reward-point pass rate.
+
+  Replaces the velocity task's ``terrain_levels_vel`` for parkour. That one
+  promotes on ``distance walked > patch/2``, which is a bad proxy once the
+  patch contains walls: a robot can walk the full distance along flat ground
+  (or circle in front of the wall) and never touch an obstacle, yet be sent to
+  the next difficulty row — and, conversely, a robot that climbs slowly is
+  demoted for "walking too little". The logs showed exactly this failure: rows
+  decayed to 0 while the robots were walking around.
+
+  Here the SAME quantity the milestone reward pays for drives the ladder, so
+  difficulty only rises when the robot actually clears obstacles:
+
+  - pass rate >= ``promote_rate``: move the env up one difficulty row;
+  - pass rate <= ``demote_rate``: move it down one row;
+  - in between: stay.
+
+  The pass rate is read from ``reward_point_bonus``'s per-env ``claimed``
+  buffer (claimed points / valid points of the env's current terrain patch).
+  This is only valid because the curriculum manager computes BEFORE the reward
+  manager resets that buffer inside ``_reset_idx`` (same contract as
+  :func:`waypoint_timeout_schedule`).
+
+  Note the ordering with resets: ``terrain.update_env_origins`` changes the
+  env's terrain (row, col) and its origin, so the NEXT episode starts on the
+  new patch — no current-episode state is touched.
+
+  Returns the mean terrain level for TensorBoard.
+  """
+  terrain = env.scene.terrain
+  assert terrain is not None, "terrain_levels_by_pass_rate needs a terrain."
+  if terrain.terrain_origins is None:
+    # Flat-plane tasks have no difficulty rows to move between.
+    return torch.tensor(0.0)
+
+  # The construction-time reset has episode_length_buf == 0 (nothing claimed
+  # yet, origin still the default pose); skipping it avoids dividing by zero
+  # and wrongly demoting fresh envs.
+  env_ids = (
+    env_ids[env.episode_length_buf[env_ids] > 0] if zero_step_reset_guard else env_ids
+  )
+  if len(env_ids) == 0:
+    return torch.mean(terrain.terrain_levels.float())
+
+  reward_manager = env.reward_manager
+  bonus_cfg = reward_manager.get_term_cfg(bonus_term_name)
+  claimed = bonus_cfg.func.claimed[env_ids]  # [n, max_points]
+  counts_t = terrain.reward_counts
+  assert counts_t is not None, (
+    "terrain_levels_by_pass_rate requires terrain with reward points."
+  )
+  counts = counts_t[terrain.terrain_levels[env_ids], terrain.terrain_types[env_ids]]
+  idx = torch.arange(claimed.shape[1], device=env.device)
+  valid = idx[None, :] < counts[:, None]
+  n_claimed = (claimed & valid).sum(dim=1).float()
+  pass_rate = n_claimed / valid.sum(dim=1).clamp(min=1).float()
+
+  move_up = pass_rate >= promote_rate
+  move_down = (pass_rate <= demote_rate) & (~move_up)
+  terrain.update_env_origins(env_ids, move_up, move_down)
+
+  return torch.mean(terrain.terrain_levels.float())

@@ -93,6 +93,29 @@ Changed
   so it is no longer tighter than the waypoint ``reach_radius`` (0.3): the
   command advanced at 0.3 m, outside the 0.2 m capture zone, so the bonus
   could not fire.
+- The parkour terrain-difficulty curriculum now promotes/demotes on the
+  reward-point pass rate (``terrain_levels_by_pass_rate``) instead of the
+  walked distance (``terrain_levels_vel``). Distance is a poor proxy once a
+  patch contains walls: a robot can walk 4 m on flat ground without touching
+  an obstacle and still be promoted, while a slow climber is demoted. The same
+  ``claimed`` buffer that pays the milestone now drives the ladder, so
+  difficulty only rises when obstacles are actually cleared.
+- The parkour depth observation now stacks 3 frames (``history_length``
+  1 -> 3, ``depth_history_num`` 1 -> 3 in the runner cfg) and drops the whole
+  frame of a random 15% of envs per step (``depth_camera_normalized``'s new
+  ``dropout_prob``). Multi-frame input exposes obstacle-edge motion that a
+  single delayed frame cannot; the dropout makes the policy fall back on
+  proprioception instead of freezing when a real camera returns a dead frame.
+  The eval/play path sets ``dropout_prob = 0``. NOTE: this changes the actor
+  observation dimension (6400 -> 19200 depth), so checkpoints trained before
+  this change cannot be resumed.
+- The parkour critic now enables empirical observation normalization
+  (``obs_normalization=True``). Its input mixes m/s velocities, contact forces
+  of hundreds of newtons, height-scan heights and joint velocities, and the
+  rebalanced milestone bonus raised the return scale to ~0-70. The actor stays
+  unnormalized: ``DepthActorCritic`` applies the normalizer to the whole actor
+  observation before splitting off the depth frames, so enabling it would also
+  per-pixel standardize the already-bounded depth image.
 
 Fixed
 ^^^^^

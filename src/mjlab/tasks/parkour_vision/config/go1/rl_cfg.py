@@ -2,6 +2,12 @@
 
 Mirrors the velocity_vision Go1 config; ``depth_shape`` is fixed to match the
 80x80 depth camera pattern (the vision task's (1, 50, 80) is a known mismatch).
+
+``depth_history_num`` MUST equal the number of depth frames the environment
+stacks in the actor observation group: ``DepthActorCritic`` splits the actor
+observation into ``[proprio | depth]`` using ``depth_vol * depth_history_num``,
+so a mismatch silently shifts the split point and corrupts both branches. The
+parkour env cfg sets ``history_length=3`` on the depth term -> keep this at 3.
 """
 
 from dataclasses import dataclass
@@ -12,6 +18,9 @@ from mjlab.rl import RslRlModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
 @dataclass
 class DepthActorCriticCfg(RslRlModelCfg):
   depth_shape: tuple = (1, 80, 80)
+  # Number of stacked depth frames consumed by the shared CNN; must match the
+  # depth observation term's history_length (3 in the parkour env cfg).
+  depth_history_num: int = 3
   obs_history_num: int = 1
   # scan_shape is automatically derived
 
@@ -25,14 +34,26 @@ def unitree_go1_parkour_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       "init_std": 1.0,
       "std_type": "scalar",
     },
+    # Actor normalization stays OFF: DepthActorCritic applies the normalizer to
+    # the WHOLE actor observation before splitting off the depth frames, so
+    # enabling it would also per-pixel standardize the depth image (already
+    # bounded in [-0.5, 0.5]); pixels that are constant most of the time get a
+    # near-zero std and their noise gets amplified. One-line A/B if wanted.
     obs_normalization=False,
     hidden_dims=(512, 256, 128),
     activation="elu",
     depth_shape=(1, 80, 80),
+    depth_history_num=3,
   )
 
+  # Critic normalization ON (2026-10-25): the critic mixes physically unrelated
+  # units — base_lin_vel (m/s), foot_contact_forces (N, up to hundreds),
+  # height_scan (m, scaled 1/3), joint velocities — so the value MLP sees an
+  # input whose scale spans orders of magnitude. Empirical normalization is the
+  # cheap fix and matters more now that the milestone bonus raised the return
+  # scale to ~0-70. The critic has no depth frames, so this is safe.
   critic_cfg = RslRlModelCfg(
-    obs_normalization=False,
+    obs_normalization=True,
     hidden_dims=(512, 256, 128),
     activation="elu",
   )

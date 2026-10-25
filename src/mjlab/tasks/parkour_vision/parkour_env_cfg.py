@@ -228,10 +228,21 @@ def apply_parkour_overrides(
   # 且防止"后仰刷 upright"的局部最优。
 
   # ---- 深度观测：wmp_go1 量纲（[-0.5, 0.5]，far 3m） ----
+  # 2026-10-25：history_length 1 -> 3（3 帧深度历史）+ 15% 整帧随机失效。
+  #  - 多帧：单帧看不出"障碍边缘在靠近"的运动趋势；DepthActorCritic 已支持
+  #    多帧（共用 CNN 逐帧提特征，见 rl/modules.py:depth_history_num），
+  #    只需这里给 3 帧、并在 rl_cfg 里把 depth_history_num 同步为 3。
+  #  - 随机失效（dropout_prob）：模拟实机反光/过曝/丢帧，逼策略学会回退到
+  #    本体感知；配合 3 帧历史，失效帧会落在历史窗口内（正是部署时的表现）。
+  # play 时在 unitree_go1_parkour_env_cfg 里把 dropout_prob 置 0。
   cfg.observations["actor"].terms["depth"] = ObservationTermCfg(
     func=mdp.depth_camera_normalized,
-    params={"sensor_cfg": SceneEntityCfg("depth_camera"), "far_clip": 3.0},
-    history_length=1,
+    params={
+      "sensor_cfg": SceneEntityCfg("depth_camera"),
+      "far_clip": 3.0,
+      "dropout_prob": 0.15,
+    },
+    history_length=3,
     flatten_history_dim=True,
     delay_min_lag=2,
     delay_max_lag=5,
@@ -278,6 +289,22 @@ def apply_parkour_overrides(
   cfg.events["reset_base"].params["pose_range"]["x"] = (-0.2, 0.2)
   cfg.events["reset_base"].params["pose_range"]["y"] = (-0.3, 0.3)
   cfg.events["reset_base"].params["pose_range"]["yaw"] = (0.0, 0.0)
+
+  # ---- 地形难度课程：改用奖励点通过率驱动（用户决定 2026-10-25）----
+  # 原 terrain_levels_vel 的升级判据是"走出 patch/2 (=4 m)"，在有墙的 patch 上
+  # 严重失真：机器人可以沿平地走满 4 m（或贴着墙绕圈）却一次没上墙，照样被
+  # 送上更高难度；而爬得慢的反而被判"没走动"降级。历史日志正是如此：
+  # terrain_levels 在训练中衰减到 0，同时 reward_point_bonus 全程为 0。
+  # 换成"本回合奖励点通过率 >= 0.5 升一行，<= 0 降一行"，让难度和真正的
+  # 任务里程碑绑定；与 waypoint_timeout 课程读同一份 claimed 缓冲。
+  cfg.curriculum["terrain_levels"] = CurriculumTermCfg(
+    func=mdp.terrain_levels_by_pass_rate,
+    params={
+      "bonus_term_name": "reward_point_bonus",
+      "promote_rate": 0.5,
+      "demote_rate": 0.0,
+    },
+  )
 
   # ---- 指令课程：静态迭代阶段 -> 分数驱动（wmp_go1 forward 组） ----
   # 组内归一化 tracking 分数 > 0.8 时速度幅值上限 +0.2，封顶 1.0。
