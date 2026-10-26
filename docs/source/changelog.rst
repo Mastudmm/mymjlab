@@ -120,6 +120,33 @@ Changed
 Fixed
 ^^^^^
 
+- Fixed the parkour contact exemptions, which only covered one third of the
+  environments. After the task went single-terrain the three terrain "columns"
+  are three randomized layouts of the SAME wall, so ``terrain_types`` still
+  spans 0/1/2, but the exemptions were configured as
+  ``exempt_terrain_types=(0,)``. Every env on columns 1-2 therefore treated
+  "trunk touching the wall while climbing" as an illegal contact and reset
+  immediately: in the 2026-10-25 run ``illegal_contact`` accounted for ~83% of
+  all terminations (mean episode length collapsed to ~10 steps) and
+  ``reward_point_bonus`` never fired across 4700 iterations. The exemptions
+  (``illegal_contact``, ``head/thigh/calf_collision``) now cover every column,
+  guarded by an assert on the single-terrain assumption.
+- Fixed the critic observation split in ``DepthActorCritic``:
+  ``scan_dim`` was omitted from the configs, so the class used its stale
+  default of 256 while the Go1 ``terrain_scan`` produces 17x17 = 289 rays. The
+  ``[proprio | height_scan]`` boundary was therefore off by 33 dimensions — the
+  proprio branch swallowed 33 scan values and the scan branch dropped the first
+  33 cells, silently (no error, no crash). ``scan_dim`` is now a required
+  argument (raising a clear error when missing) and is set to 289 in both the
+  parkour and velocity-vision Go1 runner configs.
+- Fixed the parkour forward-speed curriculum never firing: the normalized
+  tracking score divided by ``weight * 1.0`` even though the linear
+  ``track_goal_vel`` term is capped at ``weight * commanded_speed``, so the
+  score could not exceed the commanded speed (0.4-0.8) and never crossed the
+  0.8 threshold (``lin_vel_x_max`` stayed 0.8 for the whole 2026-10-25 run).
+  The score is now normalized per env by the speed actually sampled for that
+  episode.
+
 - Added the missing ``rnd_cfg`` field to ``RslRlPpoAlgorithmCfg``. The vendored
   rsl_rl runner/logger index this key unconditionally, so any task using the
   plain PPO path (e.g. velocity vision) crashed with a ``KeyError`` at runner

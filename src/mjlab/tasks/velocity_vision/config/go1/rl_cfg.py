@@ -12,7 +12,11 @@ from mjlab.rl import (
 class DepthActorCriticCfg(RslRlModelCfg):
     depth_shape: tuple = (1, 50, 80)
     obs_history_num: int = 1
-    # scan_shape is automatically derived
+    # height_scan 的宽度（critic 的扫描分支）。必须等于 terrain_scan 的射线数：
+    # size=(0.8,0.8) / resolution=0.05 -> 17x17 = 289。
+    # 2026-10-26: 之前没传，DepthActorCritic 的旧默认 256 使 critic 的
+    # [proprio | scan] 切分点偏移 33 维（静默污染，不报错）。
+    scan_dim: int = 289
 
 
 def unitree_go1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:

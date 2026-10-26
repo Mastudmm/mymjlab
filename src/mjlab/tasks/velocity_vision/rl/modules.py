@@ -99,9 +99,25 @@ class DepthActorCritic(ActorCritic):
         # Scan Config (for Teacher/Critic)
         # 对于 Critic：已知总观测 = Critic特有本体与特权状态(非scan) + 地形扫描 (scan * 1帧)
         # Critic 不再使用 10 帧历史，所以此时 history 对于 critic 为 1
-        self.scan_dim = kwargs.pop("scan_dim", 256) # 默认 256，允许外部传入避免硬编码
+        # 2026-10-26: scan_dim 必须显式给出。旧默认值 256 是历史遗留——Go1 的
+        # terrain_scan 改成 size=(0.8,0.8)/resolution=0.05 之后实际是 17x17=289
+        # 个点，256 会让下面的切分点静默偏移 33 维：proprio 分支吃进 33 个扫描
+        # 值，scan 分支丢掉前 33 个格子。既不报错也不崩，只是 critic 输入被污染。
+        self.scan_dim = kwargs.pop("scan_dim", None)
+        if self.scan_dim is None:
+            raise ValueError(
+                "DepthActorCritic requires an explicit scan_dim (the width of the "
+                "height_scan observation term). The old default of 256 silently "
+                "mis-sliced the critic observation once the Go1 terrain_scan "
+                "became 17x17=289 points."
+            )
         self.scan_total_dim = self.scan_dim  #scan木有历史数据，直接等于一帧大小
         self.critic_proprio_priv_total_dim = num_critic_obs - self.scan_total_dim
+        if self.critic_proprio_priv_total_dim <= 0:
+            raise ValueError(
+                f"scan_dim={self.scan_dim} exceeds the critic observation width "
+                f"({num_critic_obs}); check the height_scan configuration."
+            )
 
         print(f"[DepthActorCritic] Architecture Dimensions:")
         print(f"  -> Actor Proprio Total: {self.proprio_total_dim}, Single Frame: {self.proprio_single_dim} | Depth Vol (Single): {depth_vol}")

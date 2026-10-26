@@ -68,6 +68,17 @@ def commands_vel_score(
     episode_sums = reward_manager._episode_sums[reward_term_name][env_ids]
     term_cfg = reward_manager.get_term_cfg(reward_term_name)
     per_episode_max = env.max_episode_length * env.step_dt * term_cfg.weight
+    # 2026-10-26: 跟踪项的实际上界是 weight * 指令速度，不是 weight * 1。
+    # track_goal_vel 被 clamp 在 v_cmd，所以满速跟踪一回合的 episode_sum 只有
+    # weight * speed * episode_s。用 weight * 1 归一化时 score 的上限就是
+    # speed(0.4~0.8)，永远到不了 0.8 阈值——实测 4700 轮 lin_vel_x_max 恒为
+    # 0.8、last_score 恒在 0.12 附近，这个课程实际上是死的。
+    # 这里按每个 env 本回合实际采样的速度归一化（curriculum 在 command.reset
+    # 之前计算，此时 speed 仍是刚结束那一回合的值），score 才是真正的
+    # "跟踪达成率" [0, 1]。
+    episode_speed = getattr(command_term, "speed", None)
+    if episode_speed is not None:
+      per_episode_max = per_episode_max * episode_speed[env_ids].clamp(min=0.05)
     normalized = episode_sums / per_episode_max
     state["sum"] += float(normalized.sum().item())
     state["count"] += float(len(env_ids))

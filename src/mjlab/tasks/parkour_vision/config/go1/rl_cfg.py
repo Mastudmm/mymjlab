@@ -22,7 +22,12 @@ class DepthActorCriticCfg(RslRlModelCfg):
   # depth observation term's history_length (3 in the parkour env cfg).
   depth_history_num: int = 3
   obs_history_num: int = 1
-  # scan_shape is automatically derived
+  # width of the critic's height_scan branch. MUST equal the terrain_scan ray
+  # count: size (0.8, 0.8) / resolution 0.05 -> 17 x 17 = 289.
+  # 2026-10-26: this used to be omitted, so DepthActorCritic fell back to its
+  # stale default of 256 and the critic's [proprio | scan] split was off by 33
+  # dimensions — silently (no error, no crash), which polluted the value input.
+  scan_dim: int = 289
 
 
 def unitree_go1_parkour_runner_cfg() -> RslRlOnPolicyRunnerCfg:
