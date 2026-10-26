@@ -55,8 +55,21 @@ def apply_parkour_overrides(
   cfg.scene.terrain.terrain_generator = replace(terrain_cfg)
 
   # 地形列索引（与 PARKOUR_TERRAINS_CFG.sub_terrains 顺序一致）。
-  # 单地形任务：唯一列 0 = 矮墙(平台)（梅花桩/沟壑已移除，2026-10-19）。
-  wall_column = 0
+  #
+  # 2026-10-26 修复：单地形化之后 3 个"列"不再是 3 种地形，而是同一种墙地形
+  # 的 3 套独立随机布局（num_cols=3, 唯一 sub_terrain=platforms）。因此
+  # ``terrain_types`` 的取值仍是 0/1/2（每列各 1/3 的 env），此时任何
+  # ``exempt_terrain_types=(0,)`` 都只豁免 1/3 的 env——另外 2/3 会把"攀爬
+  # 时躯干贴墙"判成非法接触而瞬间终止（实测：illegal_contact 占全部终止的
+  # 83%，平均回合长度被压到 ~13 步，翻墙永远学不会）。
+  # 正确做法：豁免 **所有** 列。下面的 assert 把"单地形"这个前提钉死：将来
+  # 若恢复多地形，这里会立刻报错，提醒重新推导豁免列集合。
+  assert cfg.scene.terrain.terrain_generator is not None
+  _terrain_gen = cfg.scene.terrain.terrain_generator
+  assert len(_terrain_gen.sub_terrains) == 1, (
+    "接触豁免假设单地形（所有列都是墙）；恢复多地形后必须重新推导豁免列集合。"
+  )
+  wall_columns = tuple(range(_terrain_gen.num_cols))
 
   # ---- 跟踪奖励：B2 实验组 = EP 线性截断版（w=1.5，EP 同款）----
   # r = min(⟨v_xy_w, d̂_cmd_w⟩, v_cmd)：误差大时仍有稠密梯度，翻墙期持续
@@ -164,12 +177,14 @@ def apply_parkour_overrides(
   )
 
   # 躯干接触地形终止：墙列豁免（真垂直墙攀爬贴墙不可避免）。单地形任务下
-  # 所有 env 都在墙列——等效于全局停用躯干接触终止（攀爬贴墙属正常姿态）。
+  # 3 列全是墙 -> 豁免全部列 = 等效于停用躯干接触终止（攀爬贴墙属正常姿态）。
+  # 2026-10-26：原为 (wall_column,) = (0,)，只豁免 1/3 的 env（见文件上方
+  # terrain_types 的说明），是本轮训练 illegal_contact 占 83% 终止的根因。
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
     func=mdp.illegal_contact_excluding,
     params={
       "sensor_name": "nonfoot_ground_touch",
-      "exempt_terrain_types": (wall_column,),
+      "exempt_terrain_types": wall_columns,
     },
   )
 
@@ -215,14 +230,16 @@ def apply_parkour_overrides(
     params={"asset_cfg": SceneEntityCfg("robot"), "min_height": 0.15},
   )
 
-  # ---- 接触惩罚豁免：墙列攀爬贴墙不可避免。单地形下等效于全局豁免
-  # （头/大腿/小腿碰撞惩罚归零，攀爬贴墙不罚）。 ----
+  # ---- 接触惩罚豁免：墙列攀爬贴墙不可避免。单地形下 3 列全豁免
+  # （头/大腿/小腿碰撞惩罚归零，攀爬贴墙不罚）。----
+  # 2026-10-26：同样从 (0,) 改为全部列，否则 2/3 的 env 在攀爬时会被
+  # head/thigh/calf 碰撞惩罚反向劝退。
   for name in ("head_collision", "thigh_collision", "calf_collision"):
     term = cfg.rewards[name]
     term.func = mdp.contact_penalty_excluding
     term.params = {
       **term.params,
-      "exempt_terrain_types": (wall_column,),
+      "exempt_terrain_types": wall_columns,
     }
   # upright 豁免已按 wmp_go1 结构删除：攀爬期 upright 损失由奖励点覆盖，
   # 且防止"后仰刷 upright"的局部最优。
