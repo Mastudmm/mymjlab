@@ -101,10 +101,13 @@ def apply_parkour_overrides(
       weight=0.3,  # 1.0 -> 0.3（站立白拿 ~0.95/s，2026-10-25）
       params={"command_name": "twist", "std": math.sqrt(0.2)},
     ),
-    # 里程碑 bonus：主要任务报酬。单点入账 = bonus_value * dt = 20 分，
-    # 两条链 40 分 >> 站立 10 分（旧值 100 -> 每点仅 2 分，是"站着最优"
-    # 退化的直接原因之一）。hit_radius 必须 >= 航点 reach_radius(0.3)，
-    # 否则航点先切走、奖励点永远进不了计奖区（旧值 0.2 的坑）。
+    # 里程碑 bonus：主要任务报酬。单点入账 = bonus_value * dt = 8 分，
+    # 两条链 16 分 >> 站立 10 分。v8（2026-10-27）：1000 -> 400——v7 实证
+    # 40 分的通关尖峰让 value loss 在 0.001~11.6 间震荡、策略反复崩回；
+    # 降到 16 分在保留"通关是站立 1.6 倍"的同时把回报方差降 2.5 倍。
+    # 若仍震荡，下一档 200（单点 4 分，两链 8 分）。
+    # hit_radius 必须 >= 航点 reach_radius(0.3)，否则航点先切走、奖励点
+    # 永远进不了计奖区（旧值 0.2 的坑）。
     "reward_point_bonus": RewardTermCfg(
       func=mdp.reward_point_bonus,
       weight=1.0,
@@ -115,7 +118,7 @@ def apply_parkour_overrides(
         "min_forward_speed": 0.05,
         "speed_tol": 0.5,
         "command_threshold": 0.1,
-        "bonus_value": 1000.0,
+        "bonus_value": 400.0,
       },
     ),
     # 近墙区攀爬塑造：贴近(0.3)+昂首(0.3)+前爪上墙(0.5)，满值 ~1.1，
@@ -230,11 +233,12 @@ def apply_parkour_overrides(
       params={"sensor_names": ["feet_ground_contact"]},
     ),
     # ---- 步态对称（trot 先验）----
-    # 注意：攀爬本质是不对称动作，这两项在攀爬期是反向约束；若后期
-    # 攀爬仍受抑制，第一候选是降低这两个权重（v7 复盘结论）。
+    # v8（2026-10-27）：-0.2/-0.1 -> -0.05/-0.02。v7 好阶段（iter 4400）里
+    # action_mirror 是最重惩罚（-0.237/s），而攀爬本质不对称，这两项在
+    # 攀爬期是反向约束。保留小权重维持 trot 先验，不再压制攀爬姿态。
     "action_mirror": RewardTermCfg(
       func=vv_mdp.action_mirror,
-      weight=-0.2,
+      weight=-0.05,
       params={
         "asset_cfg": _ROBOT,
         "mirror_joints": [["FR.*", "RL.*"], ["FL.*", "RR.*"]],
@@ -242,7 +246,7 @@ def apply_parkour_overrides(
     ),
     "action_sync": RewardTermCfg(
       func=vv_mdp.action_sync,
-      weight=-0.1,
+      weight=-0.02,
       params={
         "asset_cfg": _ROBOT,
         "joint_groups": [(".*_hip_joint",), (".*_thigh_joint",), (".*_calf_joint",)],

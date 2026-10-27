@@ -70,10 +70,14 @@ def unitree_go1_parkour_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       value_loss_coef=1.0,
       use_clipped_value_loss=True,
       clip_param=0.2,
-      entropy_coef=0.01,
+      # v8（2026-10-27）：0.01 -> 0.02。v7 的 Policy/mean_std 在 0.17~1.17
+      # 间反复摆动（利用/探索失衡），提高熵奖励稳定探索。
+      entropy_coef=0.02,
       num_learning_epochs=5,
       num_mini_batches=4,
-      learning_rate=1.0e-3,
+      # v8：1e-3 -> 3e-4 作为续训起点（自适应 schedule 仍按 desired_kl
+      # 自动调节，这里只影响首批更新，避免从 4400 续训时的冲击）。
+      learning_rate=3.0e-4,
       schedule="adaptive",
       gamma=0.99,
       lam=0.95,
