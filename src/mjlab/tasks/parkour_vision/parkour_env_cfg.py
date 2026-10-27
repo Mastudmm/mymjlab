@@ -322,11 +322,13 @@ def apply_parkour_overrides(
       weight=0.0,  # 关闭（方向信息已由航点命令携带）
       params={"command_name": "twist", "threshold": 0.1},
     ),
-    # ---- 身体碰撞惩罚（2026-10-27 移除列豁免，用户决定）----
-    # 小腿/大腿/头部撞地形（含地面与墙）一律扣分。此前全列豁免让"跪地
-    # 行走"零代价——小腿大腿贴地滑行不受任何惩罚。攀爬贴墙也会被小罚
-    # （-0.3/-0.25），相对奖励点 8 分/点 可接受；若数据显示攀爬被明显
-    # 抑制，再考虑按接触高度区分墙/地。
+    # ---- 身体碰撞惩罚（2026-10-27 移除列豁免 + 力度门控，用户决定）----
+    # 小腿/大腿/头部撞地形一律扣分。此前全列豁免让"跪地行走"零代价。
+    # force_threshold 语义（开关见下方 sensor 循环）：只有最强接触力超过
+    # 阈值才算一次碰撞。0.2N 几乎等价于"任何接触"，故小腿/大腿改 5N
+    # （跪地承重是几十~上百 N，远超 5N；轻蹭在 5N 以下不罚）。
+    # 注意 head_ground_contact 仍未开 force 历史（history_length=0），
+    # 其阈值不生效、按 found（任何接触）计数——如需一致请一并开启。
     "head_collision": RewardTermCfg(
       func=mdp.contact_penalty_excluding,
       weight=-0.5,
@@ -341,7 +343,7 @@ def apply_parkour_overrides(
       weight=-0.3,
       params={
         "sensor_name": "thigh_ground_contact",
-        "force_threshold": 0.2,
+        "force_threshold": 5.0,  # 5N：跪地承重必超；轻蹭不罚
         "exempt_terrain_types": (),
       },
     ),
@@ -350,7 +352,7 @@ def apply_parkour_overrides(
       weight=-0.25,
       params={
         "sensor_name": "calf_ground_contact",
-        "force_threshold": 0.2,
+        "force_threshold": 5.0,  # 同上
         "exempt_terrain_types": (),
       },
     ),
@@ -490,22 +492,29 @@ def apply_parkour_overrides(
     noise=Unoise(n_min=-0.017, n_max=0.017),
   )
   # 深度传感器量程 4.0 -> 3.0（wmp_go1 近量程实机验证配置）。
+  #
+  # 碰撞类传感器统一改造成**真·力度门控**（2026-10-27，用户要求）：
+  # 这三个传感器原来虽然声明了 force 字段，但
+  #   (a) history_length=0 -> force_history is None
+  #       -> self_collision_cost / illegal_contact 回退到 found（任意接触计数）
+  #       -> 配置里的 force_threshold 被静默忽略；
+  #   (b) reduce="none" -> 官方注释 "fast, non-deterministic"：
+  #       多个接触对里**任取一个**上报，可能报的是零载荷接触，力值不可用。
+  # 因此必须同时补 history_length 与 maxforce，阈值判断才有意义。
+  _force_gated_sensors = {
+    "nonfoot_ground_touch",  # 机身 -> illegal_contact 终止（>5N 才算撞击）
+    "calf_ground_contact",  # 小腿 -> calf_collision 扣分
+    "thigh_ground_contact",  # 大腿 -> thigh_collision 扣分
+  }
   for sensor in cfg.scene.sensors:
     if sensor.name == "depth_camera":
       sensor.max_distance = 3.0
-    if sensor.name == "nonfoot_ground_touch":
-      # 机身接触终止需要**力度**门控（2026-10-27，用户要求 >5N 才终止）。
-      # 原配置只有 found（任意接触即终止），且 illegal_contact 的
-      # force_threshold 参数只在 force_history 存在时生效——不加这几行，
-      # 阈值会被静默忽略、退化成"碰一下就终止"。
-      #   fields:        加 force 通道
-      #   history_length: = decimation，覆盖一个控制步内的全部物理子步
-      #                   （瞬时冲击可能只出现在某个子步，不然会漏检）
-      #   reduce:        原始 "none" 文档写明"fast, non-deterministic"
-      #                   （不挑选最强接触），力值不可用于阈值判断；
-      #                   改 "maxforce" 取最强接触力，语义与">5N 视为撞击"一致
+    if sensor.name in _force_gated_sensors:
       sensor.fields = ("found", "force")
+      # = decimation(4)：覆盖一个控制步内的全部物理子步。瞬时冲击可能只
+      # 出现在某个子步，不记历史会漏检。
       sensor.history_length = cfg.decimation
+      # "maxforce" = 取最强接触力；"none" 的力值不可用于阈值判断。
       sensor.reduce = "maxforce"
 
   # ============================================================
