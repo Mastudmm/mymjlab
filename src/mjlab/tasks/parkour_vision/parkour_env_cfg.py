@@ -329,7 +329,7 @@ def apply_parkour_overrides(
     # 抑制，再考虑按接触高度区分墙/地。
     "head_collision": RewardTermCfg(
       func=mdp.contact_penalty_excluding,
-      weight=-1.0,
+      weight=-0.5,
       params={
         "sensor_name": "head_ground_contact",
         "force_threshold": 0.2,
@@ -367,16 +367,17 @@ def apply_parkour_overrides(
       func=envs_mdp.bad_orientation,
       params={"limit_angle": math.radians(85.0)},
     ),
-    # 躯干（机身）接触地形终止（2026-10-27 移除列豁免，用户决定）：
-    # 机身撞地 = 摔倒，立即重置（跪地行走的机身触地此前零代价）。
-    # 传感器不含脚/小腿/大腿/头（那三类分别走碰撞惩罚/头惩罚）。
-    # 风险：攀爬时若机身蹭到墙面也会终止——若数据显示攀爬被误杀，
-    # 需按接触高度/法向区分墙与地，而不是恢复列豁免。
+    # 躯干（机身）接触地形终止（2026-10-27 移除列豁免 + 力度门控）：
+    # 机身与地面/墙的接触力 > force_threshold(5 N) 才终止。轻蹭（贴墙滑过、
+    # 擦碰）不判死，真正的撞击（摔倒砸地）立即重置。
+    # 传感器不含脚/小腿/大腿/头（那三类分别走碰撞惩罚/头惩罚）；传感器已
+    # 在上面的 sensor 循环里开启 force 字段 + 子步历史，否则本阈值失效。
     "illegal_contact": TerminationTermCfg(
       func=mdp.illegal_contact_excluding,
       params={
         "sensor_name": "nonfoot_ground_touch",
         "exempt_terrain_types": (),
+        "force_threshold": 5.0,  # 牛顿；>5N 视为撞击
       },
     ),
     # 通关：越过最后一个奖励点 + margin（且 y 偏差不大防蹭线）。
@@ -492,6 +493,20 @@ def apply_parkour_overrides(
   for sensor in cfg.scene.sensors:
     if sensor.name == "depth_camera":
       sensor.max_distance = 3.0
+    if sensor.name == "nonfoot_ground_touch":
+      # 机身接触终止需要**力度**门控（2026-10-27，用户要求 >5N 才终止）。
+      # 原配置只有 found（任意接触即终止），且 illegal_contact 的
+      # force_threshold 参数只在 force_history 存在时生效——不加这几行，
+      # 阈值会被静默忽略、退化成"碰一下就终止"。
+      #   fields:        加 force 通道
+      #   history_length: = decimation，覆盖一个控制步内的全部物理子步
+      #                   （瞬时冲击可能只出现在某个子步，不然会漏检）
+      #   reduce:        原始 "none" 文档写明"fast, non-deterministic"
+      #                   （不挑选最强接触），力值不可用于阈值判断；
+      #                   改 "maxforce" 取最强接触力，语义与">5N 视为撞击"一致
+      sensor.fields = ("found", "force")
+      sensor.history_length = cfg.decimation
+      sensor.reduce = "maxforce"
 
   # ============================================================
   # 6. 事件（出生 / 相机；其余 DR 继承 go1 层）
