@@ -38,20 +38,36 @@ from mjlab.tasks.velocity_vision.mdp import UniformVelocityCommandCfg
 from mjlab.terrains.config import PARKOUR_TERRAINS_CFG
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
-# ---- 公共 SceneEntityCfg（集中定义，奖励表内引用）----
-_ROBOT = SceneEntityCfg("robot")
-_TRUNK = SceneEntityCfg("robot", body_names=("trunk",))
-_ALL_JOINTS = SceneEntityCfg("robot", joint_names=(".*",))
-_FEET_SITES = SceneEntityCfg("robot", site_names=("FR", "FL", "RR", "RL"))
-_FRONT_FEET = SceneEntityCfg("robot", site_names=("FR", "FL"))
-# gait_force 两项的足部顺序与上面不同（历史约定）：对角/相邻配对按此顺序。
-_GAIT_SITES = SceneEntityCfg("robot", site_names=("FL", "FR", "RL", "RR"))
 
-# ---- 单地形列豁免（2026-10-26 修复）----
-# 单地形化后 3 列是同一种墙的 3 套随机布局，terrain_types 仍取 0/1/2，
-# 任何"只豁免一列"的写法都会漏掉 2/3 的 env（曾导致 illegal_contact 占
-# 终止 85%）。接触类豁免一律用全部列。
-_WALL_COLUMNS = tuple(range(3))
+# ---- 公共 SceneEntityCfg 工厂（每个 term 必须拿独立实例）----
+# 为什么用工厂而不是共享常量：SceneEntityCfg.resolve() 会把解析出的 ids 写回
+# 自身（如 site_ids=[2,3,4,5]）。共享实例被第一个 term resolve 后，第二个
+# term 再 resolve 同一实例会走 names+ids 一致性校验，而校验里
+# computed_names(list) != names(tuple) 是纯类型比较（_normalize_to_list 不
+# 转换 tuple），必然 ValueError（2026-10-27 实证）。工厂保证实例唯一。
+def _robot():
+  return SceneEntityCfg("robot")
+
+
+def _trunk():
+  return SceneEntityCfg("robot", body_names=("trunk",))
+
+
+def _all_joints():
+  return SceneEntityCfg("robot", joint_names=(".*",))
+
+
+def _feet_sites():
+  return SceneEntityCfg("robot", site_names=("FR", "FL", "RR", "RL"))
+
+
+def _front_feet():
+  return SceneEntityCfg("robot", site_names=("FR", "FL"))
+
+
+def _gait_sites():
+  # gait_force 两项的足部顺序与上面不同（历史约定）：对角/相邻配对按此顺序。
+  return SceneEntityCfg("robot", site_names=("FL", "FR", "RL", "RR"))
 
 
 def apply_parkour_overrides(
@@ -114,7 +130,7 @@ def apply_parkour_overrides(
       params={
         "command_name": "twist",
         "hit_radius": 0.35,
-        "z_margin": 0.05, 
+        "z_margin": 0.05,
         "min_forward_speed": 0.05,
         "speed_tol": 0.5,
         "command_threshold": 0.1,
@@ -128,7 +144,7 @@ def apply_parkour_overrides(
       weight=0.5,
       params={
         "sensor_name": "feet_ground_contact",
-        "asset_cfg": _FRONT_FEET,
+        "asset_cfg": _front_feet(),
       },
     ),
     # ---- 姿态稳定器（站立白拿项，全部降权）----
@@ -137,14 +153,14 @@ def apply_parkour_overrides(
       weight=0.2,  # 1.0 -> 0.2（站立白拿 ~0.95/s）
       params={
         "std": math.sqrt(0.5),  # sqrt(0.2) 放宽：45° 前倾不重罚，攀爬姿态友好
-        "asset_cfg": _TRUNK,
+        "asset_cfg": _trunk(),
       },
     ),
     "pose": RewardTermCfg(
       func=vv_mdp.variable_posture,
       weight=0.2,  # 0.75(base) -> 0.25 -> 0.1（站立白拿 ~0.2/s）
       params={
-        "asset_cfg": _ALL_JOINTS,
+        "asset_cfg": _all_joints(),
         "command_name": "twist",
         "std_standing": {
           r".*(FR|FL|RR|RL)_(hip|thigh)_joint.*": 0.05,
@@ -180,7 +196,7 @@ def apply_parkour_overrides(
       func=vv_mdp.feet_clearance,
       weight=-0.25,
       params={
-        "asset_cfg": _FEET_SITES,
+        "asset_cfg": _feet_sites(),
         "command_name": "twist",
         "command_threshold": 0.05,
         "target_height": -0.145,  # 机体系目标摆动高度（Go1 ~10cm 离地）
@@ -198,7 +214,7 @@ def apply_parkour_overrides(
         "target_height": 0.15,
         "command_name": "twist",
         "command_threshold": 0.05,
-        "asset_cfg": _FEET_SITES,
+        "asset_cfg": _feet_sites(),
         "height_sensor_name": None,  # 用机体系相对高度，不用射线
       },
     ),
@@ -209,13 +225,13 @@ def apply_parkour_overrides(
         "sensor_name": "feet_ground_contact",
         "command_name": "twist",
         "command_threshold": 0.05,
-        "asset_cfg": _FEET_SITES,
+        "asset_cfg": _feet_sites(),
       },
     ),
     "feet_air_time_variance": RewardTermCfg(
       func=vv_mdp.feet_air_time_variance_penalty,
       weight=0.0,
-      params={"sensor_name": "feet_ground_contact", "asset_cfg": _ROBOT},
+      params={"sensor_name": "feet_ground_contact", "asset_cfg": _robot()},
     ),
     "soft_landing": RewardTermCfg(
       func=vv_mdp.soft_landing,
@@ -240,7 +256,7 @@ def apply_parkour_overrides(
       func=vv_mdp.action_mirror,
       weight=0.0,
       params={
-        "asset_cfg": _ROBOT,
+        "asset_cfg": _robot(),
         "mirror_joints": [["FR.*", "RL.*"], ["FL.*", "RR.*"]],
       },
     ),
@@ -248,7 +264,7 @@ def apply_parkour_overrides(
       func=vv_mdp.action_sync,
       weight=0.0,
       params={
-        "asset_cfg": _ROBOT,
+        "asset_cfg": _robot(),
         "joint_groups": [(".*_hip_joint",), (".*_thigh_joint",), (".*_calf_joint",)],
       },
     ),
@@ -259,7 +275,7 @@ def apply_parkour_overrides(
         "std": 0.1,
         "max_err": 0.2,
         "sensor_name": "feet_ground_contact",
-        "asset_cfg": _GAIT_SITES,
+        "asset_cfg": _gait_sites(),
         "pairs": [["FL", "RR"], ["FR", "RL"]],  # trot 对角同步
       },
     ),
@@ -270,7 +286,7 @@ def apply_parkour_overrides(
         "std": 0.1,
         "max_err": 0.2,
         "sensor_name": "feet_ground_contact",
-        "asset_cfg": _GAIT_SITES,
+        "asset_cfg": _gait_sites(),
         "pairs": [["FL", "FR"], ["RL", "RR"]],  # 相邻反同步
       },
     ),
@@ -279,13 +295,13 @@ def apply_parkour_overrides(
     "j_vel_l2": RewardTermCfg(func=envs_mdp.joint_vel_l2, weight=-0.0013),
     "dof_pos_limits": RewardTermCfg(func=envs_mdp.joint_pos_limits, weight=-1.0),
     "energy_save": RewardTermCfg(
-      func=vv_mdp.energy_saving, weight=-1e-06, params={"asset_cfg": _ROBOT}
+      func=vv_mdp.energy_saving, weight=-1e-06, params={"asset_cfg": _robot()}
     ),
     # ---- 机体角动量 / 高度 / 进度（当前关闭，保留旋钮）----
     "body_ang_vel": RewardTermCfg(
       func=vv_mdp.body_angular_velocity_penalty,
       weight=0.0,  # 关闭；打开即启用躯干角速度惩罚
-      params={"asset_cfg": _TRUNK},
+      params={"asset_cfg": _trunk()},
     ),
     "angular_momentum": RewardTermCfg(
       func=vv_mdp.angular_momentum_penalty,
@@ -297,7 +313,7 @@ def apply_parkour_overrides(
       weight=0.0,  # 关闭；打开用于惩罚蹲伏
       params={
         "target_height": 0.28,
-        "asset_cfg": _ROBOT,
+        "asset_cfg": _robot(),
         "sensor_name": "ray_base",
       },
     ),
@@ -306,17 +322,18 @@ def apply_parkour_overrides(
       weight=0.0,  # 关闭（方向信息已由航点命令携带）
       params={"command_name": "twist", "threshold": 0.1},
     ),
-    # ---- 身体碰撞惩罚（2026-10-27 注意：当前结构性为 0）----
-    # 单地形下 terrain 涵盖"墙"与"地面"，无法用列区分"攀爬贴墙（必需）"与
-    # "撞地（坏步态）"，故豁免全部列 => TB 中恒为 0（用户已知，去留待定：
-    #  A 保持 0 / B 改 exempt=() 激活 / C 删除本三项）。
+    # ---- 身体碰撞惩罚（2026-10-27 移除列豁免，用户决定）----
+    # 小腿/大腿/头部撞地形（含地面与墙）一律扣分。此前全列豁免让"跪地
+    # 行走"零代价——小腿大腿贴地滑行不受任何惩罚。攀爬贴墙也会被小罚
+    # （-0.3/-0.25），相对奖励点 8 分/点 可接受；若数据显示攀爬被明显
+    # 抑制，再考虑按接触高度区分墙/地。
     "head_collision": RewardTermCfg(
       func=mdp.contact_penalty_excluding,
       weight=-1.0,
       params={
         "sensor_name": "head_ground_contact",
         "force_threshold": 0.2,
-        "exempt_terrain_types": _WALL_COLUMNS,
+        "exempt_terrain_types": (),
       },
     ),
     "thigh_collision": RewardTermCfg(
@@ -325,7 +342,7 @@ def apply_parkour_overrides(
       params={
         "sensor_name": "thigh_ground_contact",
         "force_threshold": 0.2,
-        "exempt_terrain_types": _WALL_COLUMNS,
+        "exempt_terrain_types": (),
       },
     ),
     "calf_collision": RewardTermCfg(
@@ -334,7 +351,7 @@ def apply_parkour_overrides(
       params={
         "sensor_name": "calf_ground_contact",
         "force_threshold": 0.2,
-        "exempt_terrain_types": _WALL_COLUMNS,
+        "exempt_terrain_types": (),
       },
     ),
   }
@@ -350,18 +367,22 @@ def apply_parkour_overrides(
       func=envs_mdp.bad_orientation,
       params={"limit_angle": math.radians(85.0)},
     ),
-    # 躯干接触终止：攀爬贴墙必需，单地形下全列豁免 = 等效停用。
+    # 躯干（机身）接触地形终止（2026-10-27 移除列豁免，用户决定）：
+    # 机身撞地 = 摔倒，立即重置（跪地行走的机身触地此前零代价）。
+    # 传感器不含脚/小腿/大腿/头（那三类分别走碰撞惩罚/头惩罚）。
+    # 风险：攀爬时若机身蹭到墙面也会终止——若数据显示攀爬被误杀，
+    # 需按接触高度/法向区分墙与地，而不是恢复列豁免。
     "illegal_contact": TerminationTermCfg(
       func=mdp.illegal_contact_excluding,
       params={
         "sensor_name": "nonfoot_ground_touch",
-        "exempt_terrain_types": _WALL_COLUMNS,
+        "exempt_terrain_types": (),
       },
     ),
     # 通关：越过最后一个奖励点 + margin（且 y 偏差不大防蹭线）。
     "parkour_completed": TerminationTermCfg(
       func=mdp.parkour_completed,
-      params={"asset_cfg": _ROBOT, "margin": 0.4},
+      params={"asset_cfg": _robot(), "margin": 0.4},
     ),
     # 速度违反：倒退/停滞超阈值（高难度行才启用）。
     "vel_violate": TerminationTermCfg(
@@ -371,12 +392,12 @@ def apply_parkour_overrides(
     # 越界：横向偏离 / 倒退过远（绕行兜底）。
     "out_of_bounds": TerminationTermCfg(
       func=mdp.out_of_bounds,
-      params={"asset_cfg": _ROBOT, "max_y_offset": 3.5, "max_back_x": 3.5},
+      params={"asset_cfg": _robot(), "max_y_offset": 3.5, "max_back_x": 3.5},
     ),
     # 坠坑：掉进沟底（z < 0.15）的兜底。
     "fell_into_pit": TerminationTermCfg(
       func=mdp.base_height_below,
-      params={"asset_cfg": _ROBOT, "min_height": 0.15},
+      params={"asset_cfg": _robot(), "min_height": 0.15},
     ),
   }
 
