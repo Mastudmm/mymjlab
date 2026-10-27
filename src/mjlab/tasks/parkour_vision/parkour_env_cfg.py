@@ -114,7 +114,7 @@ def apply_parkour_overrides(
       params={
         "command_name": "twist",
         "hit_radius": 0.35,
-        "z_margin": 0.05,
+        "z_margin": 0.05, 
         "min_forward_speed": 0.05,
         "speed_tol": 0.5,
         "command_threshold": 0.1,
@@ -142,7 +142,7 @@ def apply_parkour_overrides(
     ),
     "pose": RewardTermCfg(
       func=vv_mdp.variable_posture,
-      weight=0.1,  # 0.75(base) -> 0.25 -> 0.1（站立白拿 ~0.2/s）
+      weight=0.2,  # 0.75(base) -> 0.25 -> 0.1（站立白拿 ~0.2/s）
       params={
         "asset_cfg": _ALL_JOINTS,
         "command_name": "twist",
@@ -178,7 +178,7 @@ def apply_parkour_overrides(
     ),
     "foot_clearance": RewardTermCfg(
       func=vv_mdp.feet_clearance,
-      weight=-1.25,
+      weight=-0.25,
       params={
         "asset_cfg": _FEET_SITES,
         "command_name": "twist",
@@ -192,7 +192,7 @@ def apply_parkour_overrides(
     # 相对 20 分 bonus 可接受，但若攀爬期拉扯明显可调低过抬系数。
     "foot_swing_height": RewardTermCfg(
       func=vv_mdp.feet_swing_height,
-      weight=-0.5,  # -0.125 -> -0.5（v5 抬脚包）
+      weight=-0.2,  # -0.125 -> -0.5（v5 抬脚包）
       params={
         "sensor_name": "feet_ground_contact",
         "target_height": 0.15,
@@ -214,7 +214,7 @@ def apply_parkour_overrides(
     ),
     "feet_air_time_variance": RewardTermCfg(
       func=vv_mdp.feet_air_time_variance_penalty,
-      weight=-0.1,
+      weight=0.0,
       params={"sensor_name": "feet_ground_contact", "asset_cfg": _ROBOT},
     ),
     "soft_landing": RewardTermCfg(
@@ -229,7 +229,7 @@ def apply_parkour_overrides(
     # 踝击拖步惩罚（EP feet_stumble）：脚尖横向冲击 > 垂直支撑时罚。
     "stumble": RewardTermCfg(
       func=vv_mdp.stumble_penalty,
-      weight=-0.2,
+      weight=0.0,
       params={"sensor_names": ["feet_ground_contact"]},
     ),
     # ---- 步态对称（trot 先验）----
@@ -238,7 +238,7 @@ def apply_parkour_overrides(
     # 攀爬期是反向约束。保留小权重维持 trot 先验，不再压制攀爬姿态。
     "action_mirror": RewardTermCfg(
       func=vv_mdp.action_mirror,
-      weight=-0.05,
+      weight=0.0,
       params={
         "asset_cfg": _ROBOT,
         "mirror_joints": [["FR.*", "RL.*"], ["FL.*", "RR.*"]],
@@ -246,7 +246,7 @@ def apply_parkour_overrides(
     ),
     "action_sync": RewardTermCfg(
       func=vv_mdp.action_sync,
-      weight=-0.02,
+      weight=0.0,
       params={
         "asset_cfg": _ROBOT,
         "joint_groups": [(".*_hip_joint",), (".*_thigh_joint",), (".*_calf_joint",)],
@@ -254,7 +254,7 @@ def apply_parkour_overrides(
     ),
     "gait_force_sync": RewardTermCfg(
       func=vv_mdp.gait_force_sync,
-      weight=2.5e-3,
+      weight=0.0,
       params={
         "std": 0.1,
         "max_err": 0.2,
@@ -265,7 +265,7 @@ def apply_parkour_overrides(
     ),
     "gait_force_async": RewardTermCfg(
       func=vv_mdp.gait_force_async,
-      weight=2.5e-3,
+      weight=0.0,
       params={
         "std": 0.1,
         "max_err": 0.2,
@@ -321,7 +321,7 @@ def apply_parkour_overrides(
     ),
     "thigh_collision": RewardTermCfg(
       func=mdp.contact_penalty_excluding,
-      weight=-1.2,
+      weight=-0.3,
       params={
         "sensor_name": "thigh_ground_contact",
         "force_threshold": 0.2,
@@ -330,7 +330,7 @@ def apply_parkour_overrides(
     ),
     "calf_collision": RewardTermCfg(
       func=mdp.contact_penalty_excluding,
-      weight=-0.5,
+      weight=-0.25,
       params={
         "sensor_name": "calf_ground_contact",
         "force_threshold": 0.2,
