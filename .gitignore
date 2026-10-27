@@ -21,3 +21,4 @@ chat/
 **/_build/*
 **/generated/*
 
+.cfgaudit/

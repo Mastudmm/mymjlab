@@ -21,9 +21,10 @@ def unitree_go1_parkour_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg = unitree_go1_rough_env_cfg(play=play)
   apply_parkour_overrides(cfg)
 
-  # Play / eval：关掉深度整帧随机失效（训练期才需要），否则部署演示时相机会
-  # 随机"瞎掉"。
+  # Play / eval：回合无限（base 的 play 覆盖被 parkour 层显式写出的 20 s
+  # 覆盖了，这里恢复）；关掉深度整帧随机失效（训练期才需要）。
   if play:
+    cfg.episode_length_s = int(1e9)
     cfg.observations["actor"].terms["depth"].params["dropout_prob"] = 0.0
 
   # Play 覆盖：保持 curriculum=True（课程模式下生成器是确定性的——每种地形

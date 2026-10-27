@@ -210,7 +210,30 @@ PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
   num_cols=3,
   curriculum=True,
   sub_terrains={
-    "platforms": terrain_gen.BoxStraightPlatformTerrainCfg(proportion=1.0),
+    # 2026-10-27：几何参数全部显式写出（原先走 dataclass 默认值，改墙高必须
+    # 翻 parkour_terrains.py 才知道有哪些旋钮）。这里是**唯一**该改墙的地方。
+    "platforms": terrain_gen.BoxStraightPlatformTerrainCfg(
+      proportion=1.0,
+      # 墙高阶梯：difficulty 0 -> 0.0 m，difficulty 1 -> 0.5 m（10 行线性插值），
+      # 再加 ±height_jitter 抖动。想要更高的墙就抬上限（上限会被
+      # clip 到 0.55 m，见 parkour_terrains.BoxStraightPlatformTerrainCfg）。
+      platform_height_range=(0.0, 0.5),
+      height_jitter=0.05,
+      # 墙沿 x 的厚度（可落脚顶面深度），每个 patch 随机采样。
+      platform_depth_range=(0.4, 1.2),
+      # 墙沿 y 的宽度：7.4-7.5 m 已接近 patch 全宽（8 m），机器人无法绕行。
+      platform_width_range=(7.4, 7.5),
+      # 第一面墙的中心 x（相对 patch 出生点），随机采样。
+      wall1_x_range=(2.0, 2.5),
+      # 两面墙之间的平地间距（边缘到边缘）。
+      wall_gap_range=(2.5, 2.9),
+      # 第二面墙右边缘上限：保证落地点与完成线留在 patch 内。
+      wall2_right_max=6.8,
+      border_width=0.25,
+      floor_thickness=0.5,
+      # 每个 patch 的奖励点数量上限（墙顶 1 点 + 落地 1 点）。
+      max_reward_points=2,
+    ),
   },
   add_lights=True,
 )
