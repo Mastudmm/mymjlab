@@ -152,6 +152,50 @@ def contact_penalty_excluding(
   return value * (~exempt).float()
 
 
+def contact_penalty_force_scaled(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  force_min: float = 5.0,
+  force_max: float = 50.0,
+  scale_min: float = 0.1,
+  scale_max: float = 2.0,
+) -> torch.Tensor:
+  """Slope-shaped body-contact penalty (2026-10-27, user spec).
+
+  Returns a **multiplier** in ``[0, scale_max]``; the reward manager multiplies
+  it by the term's weight, so the effective penalty is ``weight * multiplier``:
+
+  - 最强接触力 < ``force_min``: 0（轻蹭不罚）
+  - ``force_min`` .. ``force_max``: 线性上升，从 ``scale_min``(=0.1×weight)
+    到 ``scale_max``(=2×weight)
+  - >= ``force_max``: 饱和在 ``scale_max``（惩罚上限 = 2×weight）
+
+  与 ``self_collision_cost`` 的区别：后者按"超过阈值的子步数/接触数"计数，
+  是台阶式且与力度无关；这里用**峰值力度**做线性映射，从而"撞得越重罚得
+  越多"，且在阈值附近平滑过渡（避免策略在阈值边界抖动）。
+
+  取 ``maxforce`` 归约的传感器、``history_length = decimation`` 时，
+  ``force_history`` 覆盖一个控制步内全部子步，``amax`` 即该步的最强冲击。
+  """
+  sensor: ContactSensor = env.scene[sensor_name]
+  data = sensor.data
+
+  if data.force_history is None:
+    # 兜底：没有历史缓冲时退回 found（有接触 = 名义权重 1.0），
+    # 保证在传感器未开 force 的配置下不会静默变成"永不惩罚"。
+    assert data.found is not None
+    found = data.found
+    if found.dim() == 3:
+      found = found.squeeze(-1)
+    return (found > 0).any(dim=1).float()
+
+  # [B, N, H, 3] -> 每步、每传感器、每子步的力范数 -> 该步峰值 [B]
+  peak = torch.norm(data.force_history, dim=-1).amax(dim=(1, 2))
+  ratio = ((peak - force_min) / max(force_max - force_min, 1e-6)).clamp(0.0, 1.0)
+  scale = scale_min + ratio * (scale_max - scale_min)
+  return torch.where(peak >= force_min, scale, torch.zeros_like(scale))
+
+
 class reward_point_bonus:
   """One-time milestone bonus for traversing terrain reward points.
 

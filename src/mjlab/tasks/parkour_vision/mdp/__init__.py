@@ -19,6 +19,9 @@ from mjlab.tasks.parkour_vision.mdp.rewards import (
   contact_penalty_excluding as contact_penalty_excluding,
 )
 from mjlab.tasks.parkour_vision.mdp.rewards import (
+  contact_penalty_force_scaled as contact_penalty_force_scaled,
+)
+from mjlab.tasks.parkour_vision.mdp.rewards import (
   forward_progress as forward_progress,
 )
 from mjlab.tasks.parkour_vision.mdp.rewards import (
@@ -74,6 +77,7 @@ __all__ = [
   "track_goal_vel",
   "cheat_penalty",
   "contact_penalty_excluding",
+  "contact_penalty_force_scaled",
   "parkour_completed",
   "base_height_below",
   "out_of_bounds",

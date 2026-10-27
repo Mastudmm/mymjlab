@@ -322,38 +322,46 @@ def apply_parkour_overrides(
       weight=0.0,  # 关闭（方向信息已由航点命令携带）
       params={"command_name": "twist", "threshold": 0.1},
     ),
-    # ---- 身体碰撞惩罚（2026-10-27 移除列豁免 + 力度门控，用户决定）----
-    # 小腿/大腿/头部撞地形一律扣分。此前全列豁免让"跪地行走"零代价。
-    # force_threshold 语义（开关见下方 sensor 循环）：只有最强接触力超过
-    # 阈值才算一次碰撞。0.2N 几乎等价于"任何接触"，故小腿/大腿改 5N
-    # （跪地承重是几十~上百 N，远超 5N；轻蹭在 5N 以下不罚）。
-    # 注意 head_ground_contact 仍未开 force 历史（history_length=0），
-    # 其阈值不生效、按 found（任何接触）计数——如需一致请一并开启。
+    # ---- 身体碰撞惩罚：斜率型力度门控（2026-10-27，用户决定）----
+    # 头/大腿/小腿撞地形按**力度**扣分，撞得越重罚得越多：
+    #   force < 5N        : 不罚（轻蹭不算碰撞）
+    #   5N .. 50N         : 线性上升，0.1×weight -> 2.0×weight
+    #   >= 50N            : 饱和在 2.0×weight（用户指定的惩罚上限）
+    # 实现见 mdp.rewards.contact_penalty_force_scaled（返回的是倍数，
+    # 最终惩罚 = weight × 倍数）。传感器侧的 force 历史 / maxforce 归约
+    # 见下方 sensor 循环——缺一不可，否则 force_history 为 None 会退回
+    # found（任意接触即按 1.0×weight 计）。
     "head_collision": RewardTermCfg(
-      func=mdp.contact_penalty_excluding,
+      func=mdp.contact_penalty_force_scaled,
       weight=-0.5,
       params={
         "sensor_name": "head_ground_contact",
-        "force_threshold": 0.2,
-        "exempt_terrain_types": (),
+        "force_min": 5.0,
+        "force_max": 50.0,
+        "scale_min": 0.1,
+        "scale_max": 2.0,
       },
     ),
     "thigh_collision": RewardTermCfg(
-      func=mdp.contact_penalty_excluding,
+      func=mdp.contact_penalty_force_scaled,
       weight=-0.3,
       params={
         "sensor_name": "thigh_ground_contact",
-        "force_threshold": 5.0,  # 5N：跪地承重必超；轻蹭不罚
-        "exempt_terrain_types": (),
+        "force_min": 5.0,
+        "force_max": 50.0,
+        "scale_min": 0.1,
+        "scale_max": 2.0,
       },
     ),
     "calf_collision": RewardTermCfg(
-      func=mdp.contact_penalty_excluding,
+      func=mdp.contact_penalty_force_scaled,
       weight=-0.25,
       params={
         "sensor_name": "calf_ground_contact",
-        "force_threshold": 5.0,  # 同上
-        "exempt_terrain_types": (),
+        "force_min": 5.0,
+        "force_max": 50.0,
+        "scale_min": 0.1,
+        "scale_max": 2.0,
       },
     ),
   }
@@ -503,8 +511,9 @@ def apply_parkour_overrides(
   # 因此必须同时补 history_length 与 maxforce，阈值判断才有意义。
   _force_gated_sensors = {
     "nonfoot_ground_touch",  # 机身 -> illegal_contact 终止（>5N 才算撞击）
-    "calf_ground_contact",  # 小腿 -> calf_collision 扣分
-    "thigh_ground_contact",  # 大腿 -> thigh_collision 扣分
+    "calf_ground_contact",  # 小腿 -> calf_collision 斜率扣分
+    "thigh_ground_contact",  # 大腿 -> thigh_collision 斜率扣分
+    "head_ground_contact",  # 头部 -> head_collision 斜率扣分
   }
   for sensor in cfg.scene.sensors:
     if sensor.name == "depth_camera":
