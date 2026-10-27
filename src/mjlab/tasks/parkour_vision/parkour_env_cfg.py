@@ -322,24 +322,26 @@ def apply_parkour_overrides(
       weight=0.0,  # 关闭（方向信息已由航点命令携带）
       params={"command_name": "twist", "threshold": 0.1},
     ),
-    # ---- 身体碰撞惩罚：斜率型力度门控（2026-10-27，用户决定）----
-    # 头/大腿/小腿撞地形按**力度**扣分，撞得越重罚得越多：
-    #   force < 5N        : 不罚（轻蹭不算碰撞）
-    #   5N .. 50N         : 线性上升，0.1×weight -> 2.0×weight
-    #   >= 50N            : 饱和在 2.0×weight（用户指定的惩罚上限）
-    # 实现见 mdp.rewards.contact_penalty_force_scaled（返回的是倍数，
-    # 最终惩罚 = weight × 倍数）。传感器侧的 force 历史 / maxforce 归约
-    # 见下方 sensor 循环——缺一不可，否则 force_history 为 None 会退回
-    # found（任意接触即按 1.0×weight 计）。
+    # ---- 身体碰撞惩罚：光滑斜率型力度缩放（2026-10-27）----
+    # 头/大腿/小腿撞地形按**力度**扣分，撞得越重罚得越多，且**全程连续可导**：
+    #   scale(f) = 0.1 + 1.9 * (1 - exp(-f / 16.7))    （f = 该步峰值接触力）
+    #   最终惩罚 = weight × scale(f)
+    # 数值：0N->0.1×、5N->0.49×、20N->1.33×、50N->1.91×、100N->1.99×
+    # 说明:
+    # - 没有"阈值以下不罚"的跃变，也就不存在贴地蹭在阈值以下的可行白嫖区；
+    # - 严格上限 2×weight 与"处处有斜率"不可兼得（硬截断=零斜率平台），
+    #   故用指数饱和逼近：50N 已到 1.91×，实用上等同封顶但保持可导。
+    # 实现见 mdp.rewards.contact_penalty_force_scaled（返回倍数）。
+    # 传感器侧 force 历史 / maxforce 归约见下方 sensor 循环——缺一不可，
+    # 否则 force_history 为 None 会退回"有接触即 1.0×weight"。
     "head_collision": RewardTermCfg(
       func=mdp.contact_penalty_force_scaled,
       weight=-0.5,
       params={
         "sensor_name": "head_ground_contact",
-        "force_min": 5.0,
-        "force_max": 50.0,
         "scale_min": 0.1,
         "scale_max": 2.0,
+        "force_knee": 16.7,
       },
     ),
     "thigh_collision": RewardTermCfg(
@@ -347,10 +349,9 @@ def apply_parkour_overrides(
       weight=-0.3,
       params={
         "sensor_name": "thigh_ground_contact",
-        "force_min": 5.0,
-        "force_max": 50.0,
         "scale_min": 0.1,
         "scale_max": 2.0,
+        "force_knee": 16.7,
       },
     ),
     "calf_collision": RewardTermCfg(
@@ -358,10 +359,9 @@ def apply_parkour_overrides(
       weight=-0.25,
       params={
         "sensor_name": "calf_ground_contact",
-        "force_min": 5.0,
-        "force_max": 50.0,
         "scale_min": 0.1,
         "scale_max": 2.0,
+        "force_knee": 16.7,
       },
     ),
   }

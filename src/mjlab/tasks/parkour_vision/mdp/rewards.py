@@ -155,45 +155,52 @@ def contact_penalty_excluding(
 def contact_penalty_force_scaled(
   env: ManagerBasedRlEnv,
   sensor_name: str,
-  force_min: float = 5.0,
-  force_max: float = 50.0,
   scale_min: float = 0.1,
   scale_max: float = 2.0,
+  force_knee: float = 16.7,
 ) -> torch.Tensor:
-  """Slope-shaped body-contact penalty (2026-10-27, user spec).
+  """Body-contact penalty that grows SMOOTHLY with impact force.
 
-  Returns a **multiplier** in ``[0, scale_max]``; the reward manager multiplies
-  it by the term's weight, so the effective penalty is ``weight * multiplier``:
+  返回**惩罚倍数**（reward manager 再乘 weight，最终惩罚 = weight × 倍数）。
 
-  - 最强接触力 < ``force_min``: 0（轻蹭不罚）
-  - ``force_min`` .. ``force_max``: 线性上升，从 ``scale_min``(=0.1×weight)
-    到 ``scale_max``(=2×weight)
-  - >= ``force_max``: 饱和在 ``scale_max``（惩罚上限 = 2×weight）
+  设计要点（2026-10-27 修订，用户否决了分段/硬阈值写法）:
 
-  与 ``self_collision_cost`` 的区别：后者按"超过阈值的子步数/接触数"计数，
-  是台阶式且与力度无关；这里用**峰值力度**做线性映射，从而"撞得越重罚得
-  越多"，且在阈值附近平滑过渡（避免策略在阈值边界抖动）。
+  ``scale(f) = scale_min + (scale_max - scale_min) * (1 - exp(-f / force_knee))``
 
-  取 ``maxforce`` 归约的传感器、``history_length = decimation`` 时，
-  ``force_history`` 覆盖一个控制步内全部子步，``amax`` 即该步的最强冲击。
+  - 单一 C∞ 曲线：**处处**有正斜率 dscale/df > 0，没有分段、没有跳变，
+    也就不存在"某个力以下惩罚恒为 0"的可行白嫖区间（旧分段实现在 5N 处
+    从 0 跳到 0.1，策略可以贴地蹭在 5N 以下完全不挨罚）。
+  - f -> 0: 收敛到 ``scale_min``(=0.1×weight)，即"轻接触也罚一点点"。
+  - f -> ∞: 渐近收敛到 ``scale_max``(=2×weight)。**注意：严格的上限力
+    与"处处有斜率"在数学上不可兼得**——硬截断必然产生一段零斜率的平台。
+    这里用指数饱和近似：``force_knee=16.7`` 时 50N 已达 1.91×weight，
+    100N 达 1.99×weight，实际效果等同"50N 附近封顶"，但保持全程可导。
+  - 无接触时返回 0（物理事实：没碰到就没有碰撞惩罚，与力无关）。
+
+  传感器需满足：``fields=('found','force')``、``history_length=decimation``、
+  ``reduce='maxforce'``；此时 ``force_history`` 覆盖一个控制步内全部物理
+  子步，``amax`` 即该步最强冲击力。
   """
   sensor: ContactSensor = env.scene[sensor_name]
   data = sensor.data
 
-  if data.force_history is None:
-    # 兜底：没有历史缓冲时退回 found（有接触 = 名义权重 1.0），
-    # 保证在传感器未开 force 的配置下不会静默变成"永不惩罚"。
-    assert data.found is not None
-    found = data.found
-    if found.dim() == 3:
-      found = found.squeeze(-1)
-    return (found > 0).any(dim=1).float()
+  assert data.found is not None
+  contact = data.found
+  if contact.dim() == 3:
+    contact = contact.squeeze(-1)
+  # 是否有任何接触（0/1）；没有接触 -> 无惩罚
+  has_contact = (contact > 0).any(dim=1).float()
 
-  # [B, N, H, 3] -> 每步、每传感器、每子步的力范数 -> 该步峰值 [B]
+  if data.force_history is None:
+    # 兜底：传感器未开 force 历史时退回名义权重 1.0（不做力度缩放），
+    # 避免静默变成"永不惩罚"。
+    return has_contact
+
+  # [B, N, H, 3] -> 每步/每传感器/每子步力范数 -> 该步峰值 [B]
   peak = torch.norm(data.force_history, dim=-1).amax(dim=(1, 2))
-  ratio = ((peak - force_min) / max(force_max - force_min, 1e-6)).clamp(0.0, 1.0)
-  scale = scale_min + ratio * (scale_max - scale_min)
-  return torch.where(peak >= force_min, scale, torch.zeros_like(scale))
+  # 指数饱和：处处可导、单调、有界
+  scale = scale_min + (scale_max - scale_min) * (-torch.expm1(-peak / force_knee))
+  return scale * has_contact
 
 
 class reward_point_bonus:
