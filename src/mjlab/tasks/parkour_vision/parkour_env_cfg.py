@@ -134,14 +134,14 @@ def apply_parkour_overrides(
         "min_forward_speed": 0.05,
         "speed_tol": 0.5,
         "command_threshold": 0.1,
-        "bonus_value": 400.0,
+        "bonus_value": 100.0,
       },
     ),
     # 近墙区攀爬塑造：贴近(0.3)+昂首(0.3)+前爪上墙(0.5)，满值 ~1.1，
     # weight 0.5 -> 满值 0.55/s，低于 tracking，只负责搭梯子。
     "wall_climb_shaping": RewardTermCfg(
       func=mdp.wall_climb_shaping,
-      weight=0.5,
+      weight=0.0,
       params={
         "sensor_name": "feet_ground_contact",
         "asset_cfg": _front_feet(),
@@ -150,7 +150,7 @@ def apply_parkour_overrides(
     # ---- 姿态稳定器（站立白拿项，全部降权）----
     "upright": RewardTermCfg(
       func=vv_mdp.flat_orientation,
-      weight=0.2,  # 1.0 -> 0.2（站立白拿 ~0.95/s）
+      weight=0.5,  # 1.0 -> 0.2（站立白拿 ~0.95/s）
       params={
         "std": math.sqrt(0.5),  # sqrt(0.2) 放宽：45° 前倾不重罚，攀爬姿态友好
         "asset_cfg": _trunk(),
@@ -295,7 +295,7 @@ def apply_parkour_overrides(
     "j_vel_l2": RewardTermCfg(func=envs_mdp.joint_vel_l2, weight=-0.0013),
     "dof_pos_limits": RewardTermCfg(func=envs_mdp.joint_pos_limits, weight=-1.0),
     "energy_save": RewardTermCfg(
-      func=vv_mdp.energy_saving, weight=-1e-06, params={"asset_cfg": _robot()}
+      func=vv_mdp.energy_saving, weight=-1e-05, params={"asset_cfg": _robot()}
     ),
     # ---- 机体角动量 / 高度 / 进度（当前关闭，保留旋钮）----
     "body_ang_vel": RewardTermCfg(
