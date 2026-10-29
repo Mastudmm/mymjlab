@@ -174,9 +174,16 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
   per patch with a 2.5-2.9 m flat run between them. Heights follow the
   difficulty ladder (0.2 -> 0.5 m over the 10 rows) with per-wall jitter;
   thicknesses are randomized per patch (thin walls get hopped over, thick
-  walls get climbed). Two reward points, uniform with the other columns
-  (mid + terminal): the first wall's top center and the landing ground
-  past the second wall.
+  walls get climbed). SIX reward points form a low-high guide chain (user
+  decision 2026-10-29, anti "flea-jump" economics): two low-value points on
+  the approach before wall 1, the wall-1 top (high), two low-value points in
+  the gap run before wall 2, and the landing ground past wall 2 (high). Low
+  points pay ``low_bonus_ratio`` of the milestone value so that walking the
+  chain pays throughout, while a single leap can at most clip one bubble.
+  Approach points are ADAPTIVE: the spawn-to-wall1 span shrinks with wall
+  depth/position, so a patch may emit 1 or 0 approach points when the span
+  cannot fit them with 0.35 m spacing and 0.45 m wall standoff (counts
+  handle the variable length).
   """
 
   platform_height_range: tuple[float, float] = (0.0, 0.5)
@@ -205,9 +212,14 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
   """Flat border width around the patch, in meters."""
   floor_thickness: float = 0.5
   """Thickness of the ground slab below z=0, in meters."""
-  max_reward_points: int = 2
-  """Pre-allocation cap for per-(row, col) reward-point arrays — uniform
-  mid + terminal scheme (first wall top + second wall landing)."""
+  max_reward_points: int = 6
+  """Pre-allocation cap for per-(row, col) reward-point arrays — low-high
+  guide chain: up to 2 adaptive approach lows + wall-1 top + 2 gap lows +
+  landing (approach lows drop adaptively when the spawn-to-wall span is too
+  short)."""
+  low_bonus_ratio: float = 0.2
+  """Reward factor for low-value guide points, relative to a milestone
+  point's 1.0 (i.e. a guide point pays 20% of the milestone bonus)."""
 
   def function(
     self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
@@ -215,6 +227,9 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     body = spec.body("terrain")
     geometries: list[TerrainGeometry] = []
     reward_points: list[np.ndarray] = []
+    reward_point_factors: list[np.ndarray] = []
+    low = np.float32(self.low_bonus_ratio)
+    high = np.float32(1.0)
 
     def sample_height() -> float:
       h = _lerp_range(difficulty, self.platform_height_range)
@@ -237,6 +252,44 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     spawn_x = self.border_width + 0.5
     cy = self.size[1] / 2
 
+    # -- Low-high guide reward chain (x-ordered; anti "flea-jump" design) --
+    # Walking the chain pays at every guide point; a leap can at most clip
+    # ONE capture bubble (and only if it lands in contact, see
+    # reward_point_bonus's feet-on-ground gate).
+    left_edge1 = px1 - depth1 / 2
+    right_edge1 = px1 + depth1 / 2
+    left_edge2 = px2 - depth2 / 2
+
+    # Approach guide points before wall 1 (adaptive). Two hard constraints:
+    # every point keeps >= 0.45 m standoff from the wall face (so the robot
+    # can stand on it without its ~0.26 m half-length body clipping the
+    # wall) and >= 0.35 m spacing between points; the first point also
+    # stays >= 0.5 m clear of the spawn column (same clearance convention
+    # as the other reward points, spawn jitter is +/-0.2 m). Patches with a
+    # deep / close wall emit fewer approach points (counts handle the
+    # variable length downstream).
+    approach: list[float] = []
+    prev_x = spawn_x + 0.5
+    for x in (spawn_x + 0.5, left_edge1 - 0.45):
+      min_x = prev_x if not approach else prev_x + 0.35
+      if x >= min_x and x <= left_edge1 - 0.45:
+        approach.append(x)
+        prev_x = x
+    for x in approach:
+      reward_points.append(np.array([x, cy, 0.0]))
+      reward_point_factors.append(low)
+    # Milestone 1: wall-1 top center (high value).
+    reward_points.append(np.array([px1, cy, height1]))
+    reward_point_factors.append(high)
+    # Gap guide points in the 2.5-2.9 m run between the walls (always fits:
+    # gap - 0.6 - 0.45 >= 1.45 m > 0.35 m spacing).
+    for x in (right_edge1 + 0.6, left_edge2 - 0.45):
+      reward_points.append(np.array([x, cy, 0.0]))
+      reward_point_factors.append(low)
+    # Milestone 2: landing ground past wall 2 (high value, pays for CROSSING).
+    reward_points.append(np.array([px2 + depth2 / 2 + 0.5, cy, 0.0]))
+    reward_point_factors.append(high)
+
     # Ground slab (top at z=0).
     floor_geom = body.add_geom(
       type=mujoco.mjtGeom.mjGEOM_BOX,
@@ -245,9 +298,7 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     )
     geometries.append(TerrainGeometry(geom=floor_geom, color=_GRAY))
 
-    for wall_idx, (px, height, depth) in enumerate(
-      ((px1, height1, depth1), (px2, height2, depth2))
-    ):
+    for px, height, depth in ((px1, height1, depth1), (px2, height2, depth2)):
       # A zero-height wall (row 0 of the 0->0.5 ladder + negative jitter
       # clamps to 0) would be a zero-thickness box, which MuJoCo rejects at
       # compile time — skip the geom entirely, the floor slab IS the ground.
@@ -258,18 +309,13 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
           pos=(px, cy, height / 2),
         )
         geometries.append(TerrainGeometry(geom=platform_geom, color=_ORANGE))
-      # Uniform mid + terminal scheme: the FIRST wall pays at its top
-      # center (the mid-chain milestone), the SECOND wall pays at the
-      # landing ground past it (the terminal milestone: pays for CROSSING,
-      # not merely touching the top).
-      if wall_idx == 0:
-        reward_points.append(np.array([px, cy, height]))
-      else:
-        reward_points.append(np.array([px + depth / 2 + 0.5, cy, 0.0]))
 
     origin = np.array([spawn_x, cy, 0.0])
     return TerrainOutput(
-      origin=origin, geometries=geometries, reward_points=reward_points
+      origin=origin,
+      geometries=geometries,
+      reward_points=reward_points,
+      reward_point_factors=reward_point_factors,
     )
 
 

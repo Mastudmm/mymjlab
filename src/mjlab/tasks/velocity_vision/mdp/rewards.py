@@ -205,6 +205,42 @@ def feet_air_time(
   return reward
 
 
+def feet_air_time_over_penalty(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  threshold: float = 0.35,
+  command_name: str | None = None,
+  command_threshold: float = 0.5,
+) -> torch.Tensor:
+  """Penalize feet staying airborne LONGER than the gait swing window.
+
+  Companion to :func:`feet_air_time` (user decision 2026-10-29, anti
+  "flea-jump" economics): that term pays for swing-phase air time inside
+  ``[threshold_min, threshold_max]``; this one counts — per control step —
+  the feet whose current air time exceeds ``threshold`` (return the count;
+  the reward manager applies the NEGATIVE term weight). A normal trot has
+  swing ~0.125-0.35 s, so it is untouched; a ballistic leap has every foot
+  airborne well past the threshold, so every airborne foot pays every step
+  of the flight. Use the same ``threshold`` as the reward term's
+  ``threshold_max`` so the two form a clean window/penalty boundary.
+  """
+  sensor: ContactSensor = env.scene[sensor_name]
+  sensor_data = sensor.data
+  current_air_time = sensor_data.current_air_time
+  assert current_air_time is not None
+  over = current_air_time > threshold
+  reward = torch.sum(over.float(), dim=1)
+  if command_name is not None:
+    command = env.command_manager.get_command(command_name)
+    if command is not None:
+      linear_norm = torch.norm(command[:, :2], dim=1)
+      angular_norm = torch.abs(command[:, 2])
+      total_command = linear_norm + angular_norm
+      scale = (total_command > command_threshold).float()
+      reward *= scale
+  return reward
+
+
 def feet_clearance(
   env: ManagerBasedRlEnv,
   target_height: float,

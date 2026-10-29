@@ -33,17 +33,44 @@ def _generate(cfg_cls, difficulty: float):
   "cfg_cls,low_n,high_n",
   [
     (BoxStraightStepStonesTerrainCfg, 2, 2),
-    (BoxStraightPlatformTerrainCfg, 2, 2),
+    (BoxStraightPlatformTerrainCfg, 4, 6),
     (BoxStraightGapTerrainCfg, 2, 2),
   ],
 )
 def test_reward_point_count_scales_with_difficulty(cfg_cls, low_n, high_n):
-  """Low difficulty rows place fewer obstacles (and reward points)."""
+  """Low difficulty rows place fewer obstacles (and reward points).
+
+  BoxStraightPlatformTerrainCfg emits the low-high guide chain (2026-10-29):
+  up to 2 adaptive approach lows + wall-1 top + 2 gap lows + landing, so the
+  count varies in [4, 6] with wall geometry (counts handle the variable
+  length); difficulty no longer changes the COUNT, only heights."""
   low = _generate(cfg_cls, 0.1)
   high = _generate(cfg_cls, 0.9)
   assert low.reward_points is not None and high.reward_points is not None
-  assert len(low.reward_points) == low_n
-  assert len(high.reward_points) == high_n
+  assert low_n <= len(low.reward_points) <= high_n
+  assert low_n <= len(high.reward_points) <= high_n
+
+
+def test_platform_chain_structure():
+  """The platform guide chain is x-ordered with exactly TWO high-value
+  milestones (wall-1 top, landing) and low-value (0.2x) guide points."""
+  output = _generate(BoxStraightPlatformTerrainCfg, 0.5)
+  assert output.reward_points is not None
+  assert output.reward_point_factors is not None
+  pts = np.stack(output.reward_points)
+  fac = np.stack(output.reward_point_factors)
+  assert len(pts) == len(fac)
+  assert int((fac == 1.0).sum()) == 2
+  assert int((fac == 0.2).sum()) == len(pts) - 2
+  # Strictly x-ordered (chain semantics: spawn -> ... -> landing).
+  assert np.all(np.diff(pts[:, 0]) > 0)
+  # The two milestones are the wall-1 top (z == wall height) and the last
+  # point (landing); guide points sit on the ground (z == 0).
+  assert fac[0] == 0.2  # first approach point is a guide
+  assert fac[-1] == 1.0  # landing milestone terminates
+  assert pts[-1][2] == pytest.approx(0.0)  # landing is on the ground
+  guide_z = pts[fac < 0.9][:, 2]
+  assert np.all(guide_z == pytest.approx(0.0))
 
 
 def test_stone_gap_increases_with_difficulty():
@@ -110,14 +137,23 @@ def test_stone_top_height_increases_with_difficulty():
 
 
 def test_platform_height_increases_with_difficulty():
-  """The platform top (reward point z) follows the 0.0 -> 0.5 m ladder with
-  a ±0.05 m per-patch jitter (user spec 2026-10-16: start from 0 cm)."""
+  """The wall-1 top milestone (the first factor-1.0 point in the chain)
+  follows the 0.0 -> 0.5 m ladder with a ±0.05 m per-patch jitter (user spec
+  2026-10-16: start from 0 cm). Guide points sit on the ground regardless of
+  difficulty."""
   low = _generate(BoxStraightPlatformTerrainCfg, 0.0)
   high = _generate(BoxStraightPlatformTerrainCfg, 1.0)
   assert low.reward_points is not None and high.reward_points is not None
-  assert low.reward_points[0][2] == pytest.approx(0.0, abs=0.055)
-  assert high.reward_points[0][2] == pytest.approx(0.5, abs=0.055)
-  assert high.reward_points[0][2] > low.reward_points[0][2]
+  assert low.reward_point_factors is not None
+  assert high.reward_point_factors is not None
+  # Wall-1 top milestone = the first factor-1.0 point in the chain.
+  low_pts = np.stack(low.reward_points)
+  low_top = low_pts[np.stack(low.reward_point_factors) > 0.9][0]
+  high_pts = np.stack(high.reward_points)
+  high_top = high_pts[np.stack(high.reward_point_factors) > 0.9][0]
+  assert low_top[2] == pytest.approx(0.0, abs=0.055)
+  assert high_top[2] == pytest.approx(0.5, abs=0.055)
+  assert high_top[2] > low_top[2]
 
 
 def test_gap_reward_point_past_far_edge():
@@ -192,6 +228,20 @@ def test_parkour_generator_collects_reward_points():
 
   assert generator.reward_points is not None
   assert generator.reward_counts is not None
-  assert generator.reward_points.shape == (cfg.num_rows, cfg.num_cols, 2, 3)
+  assert generator.reward_point_factors is not None
+  assert generator.reward_points.shape == (cfg.num_rows, cfg.num_cols, 6, 3)
+  assert generator.reward_point_factors.shape == (
+    cfg.num_rows,
+    cfg.num_cols,
+    6,
+  )
   # Every curriculum patch places at least one obstacle (and reward point).
   assert (generator.reward_counts > 0).all()
+  # Every valid slot carries a value factor; each patch has exactly two
+  # milestone (1.0) points — the wall-1 top and the landing.
+  for row in range(cfg.num_rows):
+    for col in range(cfg.num_cols):
+      n = int(generator.reward_counts[row, col])
+      factors = generator.reward_point_factors[row, col, :n]
+      assert (factors == 1.0).sum() == 2
+      assert (factors > 0).all()

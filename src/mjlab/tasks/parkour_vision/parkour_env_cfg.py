@@ -122,19 +122,25 @@ def apply_parkour_overrides(
     # 40 分的通关尖峰让 value loss 在 0.001~11.6 间震荡、策略反复崩回；
     # 降到 16 分在保留"通关是站立 1.6 倍"的同时把回报方差降 2.5 倍。
     # 若仍震荡，下一档 200（单点 4 分，两链 8 分）。
-    # hit_radius 必须 >= 航点 reach_radius(0.3)，否则航点先切走、奖励点
-    # 永远进不了计奖区（旧值 0.2 的坑）。
+    # hit_radius 0.125（用户 2026-10-29：捕获区直径 25cm）+ 落地接触门控
+    # （feet_sensor_name）：跳跃顶点全脚悬空 -> 飞掠捕获区拿不到分，必须
+    # 落在点上结算。低值引导点按地形 reward_point_factors 打 0.2 折。
+    # 注意：0.125 < 航点 reach_radius(0.3)，航点会先切走——但 6 个点全部
+    # 共线于 cy，走向下一点的直线必然扫过当前点捕获泡（0.25m 泡在
+    # 0.5m/s 下有 ~0.5s 计奖窗口），lateral_track 压住横向漂移即可命中。
+    # 若下轮 reward_point_count 明显偏低，优先查横向漂移。
     "reward_point_bonus": RewardTermCfg(
       func=mdp.reward_point_bonus,
       weight=1.0,
       params={
         "command_name": "twist",
-        "hit_radius": 0.35,
+        "hit_radius": 0.125,
         "z_margin": 0.05,
         "min_forward_speed": 0.05,
         "speed_tol": 0.5,
         "command_threshold": 0.1,
         "bonus_value": 100.0,
+        "feet_sensor_name": "feet_ground_contact",
       },
     ),
     # 近墙区攀爬塑造：贴近(0.3)+昂首(0.3)+前爪上墙(0.5)，满值 ~1.1，
@@ -187,7 +193,23 @@ def apply_parkour_overrides(
       params={
         "sensor_name": "feet_ground_contact",
         "threshold_min": 0.125,
-        "threshold_max": 0.5,
+        # 0.5 -> 0.35（用户 2026-10-29）：奖励窗在 0.35s 处封顶，与下方的
+        # air_time_over_penalty 形成窗口/惩罚边界——正常步态摆动相
+        # (0.125~0.35s) 照常发钱，抛射式长滞空转罚。
+        "threshold_max": 0.35,
+        "command_name": "twist",
+        "command_threshold": 0.10,
+      },
+    ),
+    # 滞空超限惩罚：脚滞空 >0.35s 的每一步、每一只脚都计一次（weight 为负
+    # -> 罚）。弹跳步态全脚长滞空 -> 每步 4 脚满罚，直接对冲 air_time 奖励；
+    # 正常步态摆动相不受影响。权重与 air_time 对称（-0.475）。
+    "air_time_over_penalty": RewardTermCfg(
+      func=vv_mdp.feet_air_time_over_penalty,
+      weight=-0.475,
+      params={
+        "sensor_name": "feet_ground_contact",
+        "threshold": 0.35,
         "command_name": "twist",
         "command_threshold": 0.10,
       },

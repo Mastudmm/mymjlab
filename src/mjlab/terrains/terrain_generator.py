@@ -60,6 +60,11 @@ class TerrainOutput:
   sub-terrain local frame. None if this terrain has no reward points.
   ``TerrainGenerator`` collects these into per-(row, col) arrays for reward
   functions to index."""
+  reward_point_factors: list[np.ndarray] | None = None
+  """Per-point reward multipliers aligned with ``reward_points`` (same list
+  length, each scalar). 1.0 marks a full-value milestone, smaller values mark
+  low-value guide points (e.g. 0.2). None means every point defaults to 1.0
+  (uniform value, backward compatible with existing terrains)."""
 
 
 @dataclass
@@ -204,9 +209,15 @@ class TerrainGenerator:
       self.reward_counts = np.zeros(
         (self.cfg.num_rows, self.cfg.num_cols), dtype=np.int32
       )
+      # Per-point reward multipliers, default 1.0 so terrains that do not
+      # declare factors keep uniform point values.
+      self.reward_point_factors = np.ones(
+        (self.cfg.num_rows, self.cfg.num_cols, max_reward_points)
+      )
     else:
       self.reward_points = None
       self.reward_counts = None
+      self.reward_point_factors = None
 
   def compile(self, spec: mujoco.MjSpec) -> None:
     body = spec.worldbody.add_body(name="terrain")
@@ -376,6 +387,15 @@ class TerrainGenerator:
         self.reward_counts[sub_row, sub_col] = n
         for i, p in enumerate(output.reward_points[:n]):
           self.reward_points[sub_row, sub_col, i] = p + world_position
+        # Per-point value factors default to 1.0; a sub-terrain may override
+        # the first len(factors) slots (e.g. 0.2 for low-value guide points).
+        assert self.reward_point_factors is not None
+        self.reward_point_factors[sub_row, sub_col, :] = 1.0
+        if output.reward_point_factors:
+          m = min(len(output.reward_point_factors), n)
+          self.reward_point_factors[sub_row, sub_col, :m] = (
+            output.reward_point_factors[:m]
+          )
       else:
         self.reward_counts[sub_row, sub_col] = 0
 

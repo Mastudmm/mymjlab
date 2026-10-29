@@ -215,12 +215,21 @@ class reward_point_bonus:
     pit below the stones), and
   - the robot makes forward progress: body-x speed is positive (climbing is
     slow — the strict speed-tracking gate would deny the wall-top bonus) or
-    close to the commanded speed.
+    close to the commanded speed, and
+  - **the feet are in contact with the terrain** (the ``feet_sensor_name``
+    contact sensor reports any active foot contact). A ballistic leap has
+    zero foot contacts at its apex, so flying through the capture bubble
+    earns nothing — the robot must LAND on the point (user decision
+    2026-10-29, anti "flea-jump" economics).
 
-  Points only pay while the commanded speed exceeds ``command_threshold`` (no
-  bonus while standing). Each point pays at most once per episode (per-env
-  ``claimed`` buffer cleared on reset), naturally guiding the robot along the
-  obstacle chain. On terrains without reward points the reward is zero.
+  Each point pays ``bonus_value × factor`` where the factor comes from the
+  terrain's per-point ``reward_point_factors`` (1.0 for the wall-chain
+  milestones, ``low_bonus_ratio`` — typically 0.2 — for the low-value guide
+  points added before each milestone). Points only pay while the commanded
+  speed exceeds ``command_threshold`` (no bonus while standing). Each point
+  pays at most once per episode (per-env ``claimed`` buffer cleared on
+  reset), naturally guiding the robot along the obstacle chain. On terrains
+  without reward points the reward is zero.
   """
 
   def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
@@ -291,6 +300,7 @@ class reward_point_bonus:
     speed_tol: float = 0.5,
     command_threshold: float = 0.1,
     bonus_value: float = 1.0,
+    feet_sensor_name: str = "feet_ground_contact",
   ) -> torch.Tensor:
     if not self._has_points:
       return torch.zeros(env.num_envs, device=env.device)
@@ -310,6 +320,15 @@ class reward_point_bonus:
     )
     points = points_t[rows, cols]  # [B, max, 3]
     counts = counts_t[rows, cols]  # [B]
+    # Per-point value multipliers (1.0 milestone / low_bonus_ratio guide);
+    # default 1.0 when the terrain does not declare factors.
+    factors_t = terrain.reward_point_factors
+    if factors_t is not None:
+      factors = factors_t[rows, cols]  # [B, max]
+    else:
+      factors = torch.ones_like(counts, dtype=torch.float).unsqueeze(-1).expand(
+        -1, self._max_points
+      )
 
     base_pos_w = asset.data.root_link_pos_w  # [B, 3]
 
@@ -320,6 +339,18 @@ class reward_point_bonus:
     # Hit test (z): base must be ON/above the obstacle top — a robot on the
     # ground in front of a wall or in a pit below the stones earns nothing.
     high_enough = base_pos_w[:, 2:3] > points[..., 2] + z_margin  # [B, max]
+
+    # Hit test (contact): at least one foot in contact with the terrain RIGHT
+    # NOW. A ballistic leap has all feet airborne at its apex, so flying
+    # through the bubble pays nothing — the robot must land on the point.
+    feet_sensor = env.scene[feet_sensor_name]
+    feet_found = feet_sensor.data.found
+    assert feet_found is not None, (
+      f"feet sensor '{feet_sensor_name}' must request the 'found' field."
+    )
+    if feet_found.dim() == 3:
+      feet_found = feet_found.squeeze(-1)  # [B, num_feet]
+    feet_down = (feet_found > 0).any(dim=1)  # [B]
 
     # Forward-progress gate: climbing is slow, so accept any positive
     # forward speed OR a speed close to the command.
@@ -333,10 +364,18 @@ class reward_point_bonus:
 
     idx = torch.arange(self._max_points, device=env.device)
     valid = idx[None, :] < counts[:, None]  # [B, max]
-    hit = valid & near & high_enough & speed_ok[:, None] & moving[:, None]
+    hit = (
+      valid
+      & near
+      & high_enough
+      & feet_down[:, None]
+      & speed_ok[:, None]
+      & moving[:, None]
+    )
 
     newly = hit & (~self.claimed)
-    reward = newly.sum(dim=1).float() * bonus_value  # [B]
+    # Payout scales with each point's value factor (milestone vs guide).
+    reward = (newly.float() * factors).sum(dim=1) * bonus_value  # [B]
 
     self.claimed |= hit
     env.extras["log"]["Metrics/reward_point_count_mean"] = (

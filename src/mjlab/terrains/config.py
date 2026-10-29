@@ -231,8 +231,9 @@ PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
       wall2_right_max=6.8,
       border_width=0.25,
       floor_thickness=0.5,
-      # 每个 patch 的奖励点数量上限（墙顶 1 点 + 落地 1 点）。
-      max_reward_points=2,
+      # 每个 patch 的奖励点数量上限（低-高引导链：接近段 0-2 低值点 +
+      # 墙1顶 + 墙间 2 低值点 + 落地；接近点随几何自适应增减）。
+      max_reward_points=6,
     ),
   },
   add_lights=True,
