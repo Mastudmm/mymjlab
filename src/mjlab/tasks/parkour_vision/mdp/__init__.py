@@ -13,6 +13,9 @@ from mjlab.tasks.parkour_vision.mdp.observations import (
   depth_camera_normalized as depth_camera_normalized,
 )
 from mjlab.tasks.parkour_vision.mdp.rewards import (
+  base_vertical_vel_l2 as base_vertical_vel_l2,
+)
+from mjlab.tasks.parkour_vision.mdp.rewards import (
   cheat_penalty as cheat_penalty,
 )
 from mjlab.tasks.parkour_vision.mdp.rewards import (
@@ -70,6 +73,7 @@ from mjlab.tasks.parkour_vision.mdp.waypoint_command import (
 __all__ = [
   "reward_point_bonus",
   "wall_climb_shaping",
+  "base_vertical_vel_l2",
   "forward_progress",
   "heading_alignment",
   "lateral_track",

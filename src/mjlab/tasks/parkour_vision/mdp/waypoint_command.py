@@ -181,6 +181,21 @@ class WaypointVelocityCommand(CommandTerm):
     dist_xy = torch.norm(delta, dim=-1)
     dir_w = delta / dist_xy.clamp(min=1e-6).unsqueeze(-1)
 
+    # Exhausted-chain override (user fix 2026-10-31): once the LAST waypoint
+    # is behind the robot, pointing the command back at it creates a limit
+    # cycle around the finish point (the direction flips each time the robot
+    # crosses the point), so a slow policy never crosses the success line
+    # (last_point + margin) and idles there forever in play (infinite episode
+    # length). Freeze the direction to the chain axis (+x) instead, so the
+    # robot keeps walking forward and parkour_completed fires. Measured
+    # before the fix (AMP lerp=0.8 checkpoint, 2500 play steps): 4/4 envs
+    # spent ~2000 steps circling the finish with ZERO resets.
+    exhausted = (self.waypoint_idx >= idx_max) & (base_pos[:, 0] > wp[:, 0])
+    if bool(exhausted.any()):
+      forward = torch.zeros_like(dir_w)
+      forward[:, 0] = 1.0
+      dir_w = torch.where(exhausted.unsqueeze(-1), forward, dir_w)
+
     # Yaw rate: P controller on the heading error toward the waypoint
     # (same pattern as UniformVelocityCommand's heading_command mode).
     target_heading = torch.atan2(dir_w[:, 1], dir_w[:, 0])

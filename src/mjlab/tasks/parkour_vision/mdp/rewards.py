@@ -326,8 +326,10 @@ class reward_point_bonus:
     if factors_t is not None:
       factors = factors_t[rows, cols]  # [B, max]
     else:
-      factors = torch.ones_like(counts, dtype=torch.float).unsqueeze(-1).expand(
-        -1, self._max_points
+      factors = (
+        torch.ones_like(counts, dtype=torch.float)
+        .unsqueeze(-1)
+        .expand(-1, self._max_points)
       )
 
     base_pos_w = asset.data.root_link_pos_w  # [B, 3]
@@ -570,3 +572,34 @@ def track_linear_velocity_clipped(
   clipped = torch.clip(actual, lower, upper)
   xy_error = torch.sum(torch.square(command[:, :2] - clipped), dim=1)
   return torch.exp(-xy_error / std**2)
+
+
+def base_vertical_vel_l2(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize trunk vertical velocity (world-frame vz squared).
+
+  Anti "hopping gait" term (user decision 2026-10-31). Before it, NOTHING in
+  the task constrained vz: the waypoint command carries no z, tracking
+  ignores vz by construction, no termination checks it, and every posture/
+  gait penalty that could resist bouncing was weight 0. Combined with
+  ``feet_air_time`` paying per control step for feet airborne inside
+  (0.125, 0.35) s — which a 4-feet flight phase earns ~40% more of than a
+  trot — hopping was a pure reward arbitrage. Measured (2500 play steps,
+  v12 checkpoint): mean |vz| 0.65 m/s, all-feet-airborne on 43% of steps.
+
+  Calibration of the default weight (see parkour_env_cfg):
+  - hopping gait: RMS vz ~0.7-0.8 -> vz^2 ~0.5-0.64 -> cost ~0.25-0.32/s at
+    weight -0.5, i.e. at/above the ~0.22/s air-time advantage of hopping, so
+    the bounce no longer pays;
+  - healthy trot: vz^2 ~0.05-0.10 -> cost ~0.03-0.05/s, negligible;
+  - wall climb push-off: vz ~0.3-0.5 for 1-2 s -> ~0.05-0.25 total per climb,
+    small against the 2-point milestone bonus, so climbing stays profitable.
+
+  Returns the per-env mean of vz^2 over the tracked links (shape [B]).
+  """
+  del asset_cfg  # kept for cfg-table symmetry; the trunk IS the root link
+  asset: Entity = env.scene["robot"]
+  vz = asset.data.root_link_lin_vel_w[:, 2]
+  return torch.square(vz)

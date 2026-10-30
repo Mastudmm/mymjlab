@@ -96,7 +96,7 @@ def apply_parkour_overrides(
   cfg.scale_rewards_by_dt = True
 
   # ============================================================
-  # 1. 奖励表（整表替换，28 项全部显式）
+  # 1. 奖励表（整表替换，29 项全部显式）
   # ------------------------------------------------------------
   # 预算设计（2026-10-25 再平衡，rate/s @20s 回合）：
   #   站立 ≈ +0.49/s（10 分） << 行走 ≈ +1.3/s（26 分） << 通关 ≈ 66 分
@@ -110,6 +110,19 @@ def apply_parkour_overrides(
       func=mdp.track_goal_vel,
       weight=1.5,
       params={"command_name": "twist"},
+    ),
+    # 机体竖直速度 L2 罚（用户决定 2026-10-31，反"一跳一跳"步态）：
+    # 修复前任务内没有任何 vz 约束（命令无 z、跟踪不罚 vz、无 vz 终止、
+    # 体态/步态罚项全 0），而 feet_air_time 按步支付 (0.125, 0.35)s 滞空，
+    # 4 足腾空的跳跃步态比 trot 多赚 ~40%，跳跃成为纯奖励套利。实测
+    # （v12 checkpoint，2500 play 步）：平均 |vz| 0.65 m/s、43% 的步处于
+    # 4 足全腾空。权重 -0.5 的标定：跳跃 vz²≈0.5-0.64 -> 罚 ~0.25-0.32/s
+    # （≥ 跳跃的 ~0.22/s air_time 套利额，跳跃不再划算）；健康 trot
+    # vz²≈0.05-0.10 -> 罚 ~0.03-0.05/s 可忽略；爬墙蹬伸 vz 0.3-0.5 仅
+    # 1-2 s -> 全程 ~0.05-0.25，相对 2 分/点的里程碑奖励可忽略，不伤攀爬。
+    "base_vz_l2": RewardTermCfg(
+      func=mdp.base_vertical_vel_l2,
+      weight=-0.5,
     ),
     # 偏航角速度跟踪：站立白拿项，已降权为稳定器。
     "track_angular_velocity": RewardTermCfg(
@@ -158,7 +171,7 @@ def apply_parkour_overrides(
       func=vv_mdp.flat_orientation,
       weight=0.5,  # 1.0 -> 0.2（站立白拿 ~0.95/s）
       params={
-        "std": math.sqrt(0.4),  # sqrt(0.2) 放宽：45° 前倾不重罚，攀爬姿态友好
+        "std": math.sqrt(0.36),  # sqrt(0.2) 放宽：45° 前倾不重罚，攀爬姿态友好
         "asset_cfg": _trunk(),
       },
     ),
