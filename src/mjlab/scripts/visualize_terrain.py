@@ -85,6 +85,7 @@ class _AppState(TypedDict):
   cols: int
   difficulty_range: tuple[float, float]
   robot_handles: list[Any]
+  reward_handles: list[Any]
   terrain_origins: np.ndarray | None
 
 
@@ -109,6 +110,7 @@ def main():
     "cols": 1,
     "difficulty_range": (0.0, 1.0),
     "robot_handles": [],
+    "reward_handles": [],
     "terrain_origins": None,
   }
 
@@ -306,6 +308,35 @@ def main():
       "/terrain",
       terrain_mesh,
     )
+
+    # Reward-point markers (2026-10-30): the parkour chain (approach guides,
+    # wall tops, landing, finish tail) is invisible in the raw mesh, so draw
+    # one sphere per VALID reward point — red = milestone (factor 1.0),
+    # blue = low-value guide. Without the count gate, the unused slots of
+    # the pre-allocated (rows, cols, max_points, 3) array would all pile up
+    # at the world origin.
+    for h in state["reward_handles"]:
+      h.remove()
+    state["reward_handles"] = []
+    reward_points = generator.reward_points
+    reward_counts = generator.reward_counts
+    reward_factors = generator.reward_point_factors
+    if reward_points is not None and reward_counts is not None:
+      for row in range(reward_points.shape[0]):
+        for col in range(reward_points.shape[1]):
+          for i in range(int(reward_counts[row, col])):
+            point = reward_points[row, col, i]
+            is_milestone = (
+              reward_factors is not None and reward_factors[row, col, i] >= 0.9
+            )
+            state["reward_handles"].append(
+              server.scene.add_icosphere(
+                f"/reward_points/{row}-{col}-{i}",
+                radius=0.08,
+                position=tuple(point),
+                color=(255, 60, 60) if is_milestone else (60, 90, 255),
+              )
+            )
 
     # Trigger robot update.
     update_robots()

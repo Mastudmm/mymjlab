@@ -125,7 +125,7 @@ def apply_parkour_overrides(
     # hit_radius 0.125（用户 2026-10-29：捕获区直径 25cm）+ 落地接触门控
     # （feet_sensor_name）：跳跃顶点全脚悬空 -> 飞掠捕获区拿不到分，必须
     # 落在点上结算。低值引导点按地形 reward_point_factors 打 0.2 折。
-    # 注意：0.125 < 航点 reach_radius(0.3)，航点会先切走——但 6 个点全部
+    # 注意：0.125 < 航点 reach_radius(0.3)，航点会先切走——但 7 个点全部
     # 共线于 cy，走向下一点的直线必然扫过当前点捕获泡（0.25m 泡在
     # 0.5m/s 下有 ~0.5s 计奖窗口），lateral_track 压住横向漂移即可命中。
     # 若下轮 reward_point_count 明显偏低，优先查横向漂移。
@@ -358,7 +358,7 @@ def apply_parkour_overrides(
     # 否则 force_history 为 None 会退回"有接触即 1.0×weight"。
     "head_collision": RewardTermCfg(
       func=mdp.contact_penalty_force_scaled,
-      weight=-0.5,
+      weight=-0.75,
       params={
         "sensor_name": "head_ground_contact",
         "scale_min": 0.1,
@@ -368,11 +368,11 @@ def apply_parkour_overrides(
     ),
     "thigh_collision": RewardTermCfg(
       func=mdp.contact_penalty_force_scaled,
-      weight=-0.3,
+      weight=-0.5,
       params={
         "sensor_name": "thigh_ground_contact",
         "scale_min": 0.1,
-        "scale_max": 2.0,
+        "scale_max": 3.0,
         "force_knee": 16.7,
       },
     ),
@@ -382,7 +382,7 @@ def apply_parkour_overrides(
       params={
         "sensor_name": "calf_ground_contact",
         "scale_min": 0.1,
-        "scale_max": 2.0,
+        "scale_max": 3.0,
         "force_knee": 16.7,
       },
     ),

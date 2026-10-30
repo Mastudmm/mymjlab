@@ -171,19 +171,27 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
   """TWO raised platforms ("low walls") on flat ground, chained along +x.
 
   Layout mirrors wmp_go1's ``climb`` terrain: two near-full-width wall groups
-  per patch with a 2.5-2.9 m flat run between them. Heights follow the
-  difficulty ladder (0.2 -> 0.5 m over the 10 rows) with per-wall jitter;
-  thicknesses are randomized per patch (thin walls get hopped over, thick
-  walls get climbed). SIX reward points form a low-high guide chain (user
-  decision 2026-10-29, anti "flea-jump" economics): two low-value points on
-  the approach before wall 1, the wall-1 top (high), two low-value points in
-  the gap run before wall 2, and the landing ground past wall 2 (high). Low
-  points pay ``low_bonus_ratio`` of the milestone value so that walking the
-  chain pays throughout, while a single leap can at most clip one bubble.
-  Approach points are ADAPTIVE: the spawn-to-wall1 span shrinks with wall
-  depth/position, so a patch may emit 1 or 0 approach points when the span
-  cannot fit them with 0.35 m spacing and 0.45 m wall standoff (counts
-  handle the variable length).
+  per patch with a flat run between them, and the second wall pushed as far
+  right as the patch allows (wmp_go1 pins its right edge AT the 8 m unit
+  boundary; here ``wall2_right_max`` keeps the finish guide and the success
+  line inside the patch, termination line <= 8.0 m). Wall-1 position is
+  sampled by LEFT edge so the spawn acceleration runway is guaranteed
+  regardless of the sampled depth. Heights follow the difficulty ladder
+  (0.0 -> 0.5 m over the 10 rows) with per-wall jitter; thicknesses are
+  randomized per patch (thin walls get hopped over, thick walls get climbed).
+
+  SEVEN reward points form a low-high guide chain (user decisions
+  2026-10-29/30, anti "flea-jump" economics): two low-value points on the
+  approach before wall 1, the wall-1 top (high), two low-value points in the
+  gap run before wall 2, the landing ground just past wall 2 (high — pays
+  for CROSSING), and a finish guide one meter farther out (low) as the chain
+  TAIL: ``parkour_completed`` fires margin (0.4 m) past the tail, ending the
+  episode near the patch edge. Low points pay ``low_bonus_ratio`` of the
+  milestone value so that walking the chain pays throughout, while a single
+  leap can at most clip one bubble. Approach points are ADAPTIVE: a patch
+  may emit 1 or 0 approach points when the spawn-to-wall1 span cannot fit
+  them with 0.35 m spacing and 0.45 m wall standoff (counts handle the
+  variable length).
   """
 
   platform_height_range: tuple[float, float] = (0.0, 0.5)
@@ -198,25 +206,43 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
   platform_width_range: tuple[float, float] = (7.4, 7.5)
   """Platform extent along y. Patch-full-width (no side gaps) so the robot
   physically cannot walk around the platform; it must climb or jump over."""
-  wall1_x_range: tuple[float, float] = (2.0, 2.5)
-  """First wall center x within the patch, randomized per patch."""
+  wall1_left_x_range: tuple[float, float] = (2.3, 2.7)
+  """First wall LEFT-edge x within the patch, randomized per patch.
+
+  Sampling the left edge (not the center) makes the spawn acceleration
+  runway independent of the sampled depth: with spawn at border_width + 0.5
+  (0.75 m) the runway is 1.55-1.95 m (1.35 m worst case with the +/-0.2 m
+  reset jitter). The old center-based sampling could put the wall face
+  0.45 m from spawn — the robot hit the first wall before building speed
+  (user fix 2026-10-30)."""
   wall_gap_range: tuple[float, float] = (2.5, 2.9)
   """Edge-to-edge flat gap between the two walls (wmp_go1 climb: 2.5-2.9 m).
-  The second wall is clamped so its landing reward point stays reachable
-  before the patch border."""
-  wall2_right_max: float = 6.8
-  """Upper bound for the second wall's right edge; keeps the landing point
-  (edge + 0.5 m) and the success-termination line (landing + 0.4 m margin)
-  inside the walkable patch."""
+  This is the NATURAL gap used to place wall 2; when the wall-2 clamp below
+  binds (fat wall draws), the realized gap compresses down to ~1.5 m."""
+  wall2_right_max: float = 6.6
+  """Upper bound for the second wall's right edge. wmp_go1 pins wall 2's
+  right edge AT the 8 m unit boundary; here the bound keeps the finish guide
+  (edge + finish_offset) and the success-termination line (guide + 0.4 m
+  margin) inside the patch, so the course spans ~95% of the map and the
+  termination line stays <= 8.0 m (user fix 2026-10-30: the old 6.8 cap left
+  0.7-2.4 m of unused ground past the finish)."""
+  landing_offset: float = 0.5
+  """Landing milestone x-offset past the second wall's right edge (HIGH
+  value: pays for CROSSING the wall; user decision 2026-10-30)."""
+  finish_offset: float = 1.0
+  """Finish guide x-offset past the second wall's right edge. Chain TAIL:
+  ``parkour_completed`` fires margin (0.4 m) past it, so the wall-to-finish
+  distance doubles vs the old landing-only chain (user decision 2026-10-30).
+  LOW value (0.2) keeps the two-milestones-per-patch economics intact."""
   border_width: float = 0.25
   """Flat border width around the patch, in meters."""
   floor_thickness: float = 0.5
   """Thickness of the ground slab below z=0, in meters."""
-  max_reward_points: int = 6
+  max_reward_points: int = 7
   """Pre-allocation cap for per-(row, col) reward-point arrays — low-high
   guide chain: up to 2 adaptive approach lows + wall-1 top + 2 gap lows +
-  landing (approach lows drop adaptively when the spawn-to-wall span is too
-  short)."""
+  landing milestone + finish guide (approach lows drop adaptively when the
+  spawn-to-wall span is too short)."""
   low_bonus_ratio: float = 0.2
   """Reward factor for low-value guide points, relative to a milestone
   point's 1.0 (i.e. a guide point pays 20% of the milestone bonus)."""
@@ -228,8 +254,11 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     geometries: list[TerrainGeometry] = []
     reward_points: list[np.ndarray] = []
     reward_point_factors: list[np.ndarray] = []
-    low = np.float32(self.low_bonus_ratio)
-    high = np.float32(1.0)
+    # 0-d arrays (not np.float32 scalars): TerrainOutput declares the factor
+    # list as list[np.ndarray], and the generator assigns these into a float
+    # array — a 0-d ndarray type-checks and behaves identically at runtime.
+    low = np.asarray(self.low_bonus_ratio, dtype=np.float32)
+    high = np.asarray(1.0, dtype=np.float32)
 
     def sample_height() -> float:
       h = _lerp_range(difficulty, self.platform_height_range)
@@ -241,11 +270,16 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     depth1 = rng.uniform(*self.platform_depth_range)
     depth2 = rng.uniform(*self.platform_depth_range)
     width = _lerp_range(difficulty, self.platform_width_range)
-    px1 = rng.uniform(*self.wall1_x_range)
+    # Wall 1 is placed by LEFT edge so the spawn runway holds for any depth.
+    left1 = rng.uniform(*self.wall1_left_x_range)
+    px1 = left1 + depth1 / 2
     gap = rng.uniform(*self.wall_gap_range)
-    # Clamp the second wall so landing point + success margin stay on the patch.
+    # Natural wall-2 position from the sampled gap, then clamped so its RIGHT
+    # edge (and the finish guide + termination line past it) stays on the
+    # patch. When the clamp binds it compresses the WALL GAP: worst case
+    # 1.5 m (fattest wall draws), typical 2.5 m (= wmp_go1's minimum).
     px2 = min(
-      px1 + depth1 / 2 + gap + depth2 / 2,
+      left1 + depth1 + gap + depth2 / 2,
       self.wall2_right_max - depth2 / 2,
     )
 
@@ -256,8 +290,8 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     # Walking the chain pays at every guide point; a leap can at most clip
     # ONE capture bubble (and only if it lands in contact, see
     # reward_point_bonus's feet-on-ground gate).
-    left_edge1 = px1 - depth1 / 2
-    right_edge1 = px1 + depth1 / 2
+    left_edge1 = left1
+    right_edge1 = left1 + depth1
     left_edge2 = px2 - depth2 / 2
 
     # Approach guide points before wall 1 (adaptive). Two hard constraints:
@@ -265,9 +299,9 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     # can stand on it without its ~0.26 m half-length body clipping the
     # wall) and >= 0.35 m spacing between points; the first point also
     # stays >= 0.5 m clear of the spawn column (same clearance convention
-    # as the other reward points, spawn jitter is +/-0.2 m). Patches with a
-    # deep / close wall emit fewer approach points (counts handle the
-    # variable length downstream).
+    # as the other reward points, spawn jitter is +/-0.2 m). With the
+    # current wall1_left_x_range (>= 2.3 m) both points always fit; the
+    # adaptive filter stays as a guard for future range edits.
     approach: list[float] = []
     prev_x = spawn_x + 0.5
     for x in (spawn_x + 0.5, left_edge1 - 0.45):
@@ -281,14 +315,25 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     # Milestone 1: wall-1 top center (high value).
     reward_points.append(np.array([px1, cy, height1]))
     reward_point_factors.append(high)
-    # Gap guide points in the 2.5-2.9 m run between the walls (always fits:
-    # gap - 0.6 - 0.45 >= 1.45 m > 0.35 m spacing).
+    # Gap guide points in the run between the walls. The realized gap is
+    # >= 1.5 m even in the worst clamped draw, so the two points keep
+    # >= 0.45 m spacing (> 0.35 m minimum).
     for x in (right_edge1 + 0.6, left_edge2 - 0.45):
       reward_points.append(np.array([x, cy, 0.0]))
       reward_point_factors.append(low)
-    # Milestone 2: landing ground past wall 2 (high value, pays for CROSSING).
-    reward_points.append(np.array([px2 + depth2 / 2 + 0.5, cy, 0.0]))
+    # Milestone 2: landing ground just past wall 2 (HIGH value, pays for
+    # CROSSING; user decision 2026-10-30 keeps this milestone at 1.0).
+    right_edge2 = px2 + depth2 / 2
+    reward_points.append(np.array([right_edge2 + self.landing_offset, cy, 0.0]))
     reward_point_factors.append(high)
+    # Finish guide (chain TAIL, user decision 2026-10-30): one more meter
+    # out, so the ending bonus sits twice as far from wall 2 as before and
+    # the success line (tail + parkour_completed margin 0.4) lands right at
+    # the patch edge (<= 8.0 m). LOW value keeps the two-milestones-per-patch
+    # economics; the termination reads the tail's POSITION only, so its 0.2
+    # factor does not affect when the episode ends.
+    reward_points.append(np.array([right_edge2 + self.finish_offset, cy, 0.0]))
+    reward_point_factors.append(low)
 
     # Ground slab (top at z=0).
     floor_geom = body.add_geom(
