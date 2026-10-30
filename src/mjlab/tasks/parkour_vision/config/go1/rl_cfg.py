@@ -79,7 +79,12 @@ def unitree_go1_parkour_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       # 自动调节，这里只影响首批更新，避免从 4400 续训时的冲击）。
       learning_rate=3.0e-4,
       schedule="adaptive",
-      gamma=0.99,
+      # γ=0.996（用户 2026-10-30）：视野 1/(1-γ) = 250 步 = 5s（v11 的 0.99
+      # 只有 2s）。H2 里程碑在 450 步外的现值从 1.1 分升到 100×0.996^450 ≈
+      # 16.5 分，翻完墙"继续走"的净现值由 ≈0 转正——削弱"领完就自杀"的
+      # 动机。代价：GAE 方差变大、critic 回归更难，前中期 value loss 走高、
+      # std 有膨胀风险，总轮数需求约 +10~30%（5h/5000 预算内可控）。
+      gamma=0.996,
       lam=0.95,
       desired_kl=0.01,
       max_grad_norm=1.0,

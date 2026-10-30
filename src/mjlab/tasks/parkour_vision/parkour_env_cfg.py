@@ -158,13 +158,13 @@ def apply_parkour_overrides(
       func=vv_mdp.flat_orientation,
       weight=0.5,  # 1.0 -> 0.2（站立白拿 ~0.95/s）
       params={
-        "std": math.sqrt(0.5),  # sqrt(0.2) 放宽：45° 前倾不重罚，攀爬姿态友好
+        "std": math.sqrt(0.4),  # sqrt(0.2) 放宽：45° 前倾不重罚，攀爬姿态友好
         "asset_cfg": _trunk(),
       },
     ),
     "pose": RewardTermCfg(
       func=vv_mdp.variable_posture,
-      weight=0.2,  # 0.75(base) -> 0.25 -> 0.1（站立白拿 ~0.2/s）
+      weight=0.5,  # 0.75(base) -> 0.25 -> 0.1（站立白拿 ~0.2/s）
       params={
         "asset_cfg": _all_joints(),
         "command_name": "twist",
@@ -179,8 +179,8 @@ def apply_parkour_overrides(
         },
         "std_running": {
           r".*(FR|FL|RR|RL)_hip_joint.*": 0.375,
-          r".*(FR|FL|RR|RL)_thigh_joint.*": 0.45,
-          r".*(FR|FL|RR|RL)_calf_joint.*": 0.75,
+          r".*(FR|FL|RR|RL)_thigh_joint.*": 0.4,
+          r".*(FR|FL|RR|RL)_calf_joint.*": 0.65,
         },
         "walking_threshold": 0.10,
         "running_threshold": 1.25,
@@ -209,7 +209,7 @@ def apply_parkour_overrides(
       weight=-0.475,
       params={
         "sensor_name": "feet_ground_contact",
-        "threshold": 0.35,
+        "threshold": 0.5,
         "command_name": "twist",
         "command_threshold": 0.10,
       },
