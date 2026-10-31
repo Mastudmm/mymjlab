@@ -191,9 +191,9 @@ def apply_parkour_overrides(
           r".*(FR|FL|RR|RL)_calf_joint.*": 0.625,
         },
         "std_running": {
-          r".*(FR|FL|RR|RL)_hip_joint.*": 0.375,
+          r".*(FR|FL|RR|RL)_hip_joint.*": 0.35,
           r".*(FR|FL|RR|RL)_thigh_joint.*": 0.4,
-          r".*(FR|FL|RR|RL)_calf_joint.*": 0.65,
+          r".*(FR|FL|RR|RL)_calf_joint.*": 0.635,
         },
         "walking_threshold": 0.10,
         "running_threshold": 1.25,
