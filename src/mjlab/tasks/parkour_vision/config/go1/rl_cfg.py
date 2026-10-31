@@ -169,7 +169,7 @@ def unitree_go1_parkour_amp_runner_cfg() -> RslRlAmpOnPolicyRunnerCfg:
     # 风格奖励幅度系数：只缩放 r_style 幅度，不影响判别器训练强度。
     amp_reward_coef=0.1,
     # 混合系数：0.98 = 名义 98% 任务 + 2% 风格；实际占比见 docstring。
-    amp_task_reward_lerp=0.89,
+    amp_task_reward_lerp=0.92,
     # 判别器结构沿用 velocity_amp。
     amp_discr_hidden_dims=(512, 256),
     # 启动即核对 env AMP 观测维度/顺序 vs 数据集，错位立即报错。

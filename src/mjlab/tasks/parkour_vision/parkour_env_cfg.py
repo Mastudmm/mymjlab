@@ -122,7 +122,7 @@ def apply_parkour_overrides(
     # 1-2 s -> 全程 ~0.05-0.25，相对 2 分/点的里程碑奖励可忽略，不伤攀爬。
     "base_vz_l2": RewardTermCfg(
       func=mdp.base_vertical_vel_l2,
-      weight=-0.5,
+      weight=-0.75,
     ),
     # 偏航角速度跟踪：站立白拿项，已降权为稳定器。
     "track_angular_velocity": RewardTermCfg(
