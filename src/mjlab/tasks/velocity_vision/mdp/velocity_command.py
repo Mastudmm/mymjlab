@@ -10,6 +10,7 @@ import torch
 
 from mjlab.entity import Entity
 from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
+from mjlab.terrains.terrain_generator import resolve_curriculum_column_names
 from mjlab.utils.lab_api.math import (
   matrix_from_quat,
   quat_apply,
@@ -41,8 +42,12 @@ class UniformVelocityCommand(CommandTerm):
     self._terrain_name_per_col: list[str] | None = None
     terrain = getattr(env.scene, "terrain", None)
     terrain_generator_cfg = None if terrain is None else terrain.cfg.terrain_generator
-    if terrain_generator_cfg is not None and bool(getattr(terrain_generator_cfg, "curriculum", False)):
-      self._terrain_name_per_col = self._resolve_curriculum_column_terrain_names(terrain_generator_cfg)
+    if terrain_generator_cfg is not None and bool(
+      getattr(terrain_generator_cfg, "curriculum", False)
+    ):
+      self._terrain_name_per_col = self._resolve_curriculum_column_terrain_names(
+        terrain_generator_cfg
+      )
     elif self.cfg.terrain_command_ranges:
       print(
         "[UniformVelocityCommand] terrain_command_ranges is set but terrain curriculum mapping is unavailable "
@@ -136,8 +141,11 @@ class UniformVelocityCommand(CommandTerm):
       # 以概率 rel_cardinal_heading_envs 将部分 env 的 heading_target
       # 覆盖为离散主方向（0/90/180/270 度）
       if self.cfg.rel_cardinal_heading_envs > 0.0:
-        cardinal_mask = torch.rand(len(env_ids), device=self.device) < self.cfg.rel_cardinal_heading_envs
-        #掩码，确定谁被抽到 TorF
+        cardinal_mask = (
+          torch.rand(len(env_ids), device=self.device)
+          < self.cfg.rel_cardinal_heading_envs
+        )
+        # 掩码，确定谁被抽到 TorF
         num_cardinal = int(cardinal_mask.sum().item())
         if num_cardinal > 0:
           cardinal_values = torch.tensor(
@@ -145,7 +153,9 @@ class UniformVelocityCommand(CommandTerm):
             dtype=self.heading_target.dtype,
             device=self.device,
           )
-          choice_idx = torch.randint(0, cardinal_values.numel(), (num_cardinal,), device=self.device)
+          choice_idx = torch.randint(
+            0, cardinal_values.numel(), (num_cardinal,), device=self.device
+          )
           self.heading_target[env_ids[cardinal_mask]] = cardinal_values[choice_idx]
       # 以概率 rel_heading_envs 决定每个 env 是否为 heading 环境
       self.is_heading_env[env_ids] = r.uniform_(0.0, 1.0) <= self.cfg.rel_heading_envs
@@ -159,11 +169,11 @@ class UniformVelocityCommand(CommandTerm):
     # 其他: 混合
     if self.cfg.rel_pure_x_envs > 0 or self.cfg.rel_pure_y_envs > 0:
       pure_probs = torch.rand(len(env_ids), device=self.device)
-      
+
       # 纯 X 方向：将 y 方向速度置为 0
       pure_x_mask = pure_probs < self.cfg.rel_pure_x_envs
       self.vel_command_b[env_ids[pure_x_mask], 1] = 0.0
-      
+
       # 纯 Y 方向：将 x 方向速度置为 0
       pure_y_mask = (pure_probs >= self.cfg.rel_pure_x_envs) & (
         pure_probs < (self.cfg.rel_pure_x_envs + self.cfg.rel_pure_y_envs)
@@ -200,24 +210,16 @@ class UniformVelocityCommand(CommandTerm):
     self._ang_vel_min[env_ids] = float(ranges.ang_vel_z[0])
     self._ang_vel_max[env_ids] = float(ranges.ang_vel_z[1])
 
-  def _resolve_curriculum_column_terrain_names(self, terrain_generator_cfg) -> list[str]:
-    """Build column->terrain_name mapping using the same allocation logic as TerrainGenerator curriculum mode."""
-    sub_terrain_names = list(terrain_generator_cfg.sub_terrains.keys())
-    proportions = np.array(
-      [sub_cfg.proportion for sub_cfg in terrain_generator_cfg.sub_terrains.values()],
-      dtype=np.float64,
-    )
-    if proportions.sum() <= 0.0:
-      raise ValueError("Terrain proportions sum to zero; cannot resolve curriculum terrain columns.")
-    proportions = proportions / proportions.sum()
-    cumulative = np.cumsum(proportions)
+  def _resolve_curriculum_column_terrain_names(
+    self, terrain_generator_cfg
+  ) -> list[str]:
+    """Build column->terrain_name mapping for curriculum terrains.
 
-    num_cols = int(terrain_generator_cfg.num_cols)
-    terrain_name_per_col: list[str] = []
-    for col in range(num_cols):
-      sub_index = int(np.min(np.where(col / num_cols + 0.001 < cumulative)[0]))
-      terrain_name_per_col.append(sub_terrain_names[sub_index])
-    return terrain_name_per_col
+    Delegates to the shared resolver in terrain_generator (single source of
+    the cumulative-proportion allocation formula — the SAME formula the
+    generator itself uses to lay out columns).
+    """
+    return resolve_curriculum_column_names(terrain_generator_cfg)
 
   def _update_command(self) -> None:
 
@@ -385,7 +387,12 @@ class UniformVelocityCommandCfg(CommandTermCfg):
   # 例如 0.5 表示 50% 采样 cardinal_heading_values，50% 按 ranges.heading 均匀采样。
   rel_cardinal_heading_envs: float = 0.0
   # 默认主方向：0°, 90°, 180°, 270°（弧度）
-  cardinal_heading_values: tuple[float, ...] = (0.0, math.pi / 2.0, math.pi, -math.pi / 2.0)
+  cardinal_heading_values: tuple[float, ...] = (
+    0.0,
+    math.pi / 2.0,
+    math.pi,
+    -math.pi / 2.0,
+  )
   rel_pure_x_envs: float = 0.0
   rel_pure_y_envs: float = 0.0
   init_velocity_prob: float = 0.0

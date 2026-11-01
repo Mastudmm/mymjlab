@@ -204,10 +204,13 @@ PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
   size=(8.0, 8.0),
   border_width=20.0,
   num_rows=10,
-  # 单地形任务（用户决定 2026-10-19）：只保留翻越高墙（矮墙/平台），梅花桩
-  # 与沟壑已移除——聚焦单一障碍类型更适配当前 MLP+CNN 网络结构。
-  # 保留 3 列：同难度行有 3 个独立随机布局的墙 patch，增加 patch 多样性。
-  num_cols=3,
+  # 五列任务（用户定版 2026-11-01）：每列一种地形，等比例各占一列。
+  # 列序由 sub_terrains 的书写顺序决定（cumulative proportion 分配，见
+  # terrain_generator.resolve_curriculum_column_names）：
+  #   col0=platforms  col1=platform_gap  col2=crawl
+  #   col3=pyramid_stairs(逆台阶,中心高台)  col4=pyramid_stairs_inv(正台阶,坑底)
+  # 出生在哪列可由 TerrainEntityCfg.spawn_terrain_names 过滤（与布局解耦）。
+  num_cols=5,
   curriculum=True,
   sub_terrains={
     # 2026-10-27：几何参数全部显式写出（原先走 dataclass 默认值，改墙高必须
@@ -246,6 +249,71 @@ PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
       # 墙1顶 + 墙间 2 低值点 + 落地里程碑 + 终点引导点 = 7 点，
       # 2026-10-30 由 6 扩到 7）。
       max_reward_points=7,
+    ),
+    # col1：高台+跨缝（用户定版 2026-11-01，同日修订）：两块**完全相同**的
+    # 高台（高度/深度/宽度全共享一次采样），顶面之间 0->0.3 m 的真缝（挖到
+    # 坑底，必须跳）。台1 左缘推远到 2.8-3.1 m（出生加速跑道 2.05-2.35 m），
+    # 台深 1.2-1.6 m 保证上台后到缝前有足空间加速（用户 2026-11-01）。
+    # bonus 链 5 点：3 低（上台前30cm / 下台后30cm / 终点100cm）+
+    # 2 高（上台后 / 跨gap后）。
+    "platform_gap": terrain_gen.BoxStraightPlatformGapTerrainCfg(
+      proportion=1.0,
+      platform_height_range=(0.0, 0.5),
+      height_jitter=0.05,
+      platform_depth_range=(1.2, 1.6),
+      platform_width_range=(7.4, 7.5),
+      wall1_left_x_range=(2.8, 3.1),
+      gap_range=(0.0, 0.3),
+      pit_depth_range=(0.5, 1.0),
+      approach_offset=0.30,
+      cross_offset=0.25,
+      descend_offset=0.30,
+      finish_offset=1.0,
+      border_width=0.25,
+      max_reward_points=5,
+    ),
+    # col2：低趴过横杆（wmp_go1 crawl 量纲）：2 根全宽悬空横杆，净高
+    # 0.42->0.27 m 随难度收紧，杆顶 >=1.27 m 跳不过去，只能趴低钻。
+    # bonus 链 5 点：3 低（杆1前30cm / 两杆间 / 终点100cm）+
+    # 2 高（过杆1后 / 过杆2后，各 30cm）。
+    "crawl": terrain_gen.BoxStraightCrawlBarsTerrainCfg(
+      proportion=1.0,
+      clearance_range=(0.42, 0.27),
+      bar_height=1.0,
+      bar_thickness_range=(0.2, 0.5),
+      bar_width=7.5,
+      bar1_left_x_range=(3.2, 3.6),
+      bar2_left_x_range=(5.8, 6.2),
+      approach_offset=0.30,
+      pass_offset=0.30,
+      finish_offset=1.0,
+      border_width=0.25,
+      floor_thickness=0.5,
+      max_reward_points=5,
+    ),
+    # col3/col4：mjlab 原生金字塔台阶（用户定版 2026-11-01：原生量纲，
+    # 步高 1cm 起步 -> 21cm，步宽 0.3-0.34 m 每 patch 随机）。
+    # 出生在 patch 中心 platform 上：
+    #   pyramid_stairs      中心是顶台 -> 任意方向都是下台阶（逆台阶）；
+    #   pyramid_stairs_inv  中心是坑底 -> 任意方向都是上台阶（正台阶）。
+    # 两列无 reward_points -> 命令走 heading 模式（见 waypoint_command）。
+    "pyramid_stairs": terrain_gen.BoxPyramidStairsTerrainCfg(
+      proportion=1.0,
+      step_height_range=(0.01, 0.21),
+      step_width_range=(0.3, 0.34),
+      step_width_mode="random",
+      platform_width=3.0,
+      border_width=1.0,
+      stair_lip_enabled=False,
+    ),
+    "pyramid_stairs_inv": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+      proportion=1.0,
+      step_height_range=(0.01, 0.21),
+      step_width_range=(0.3, 0.34),
+      step_width_mode="random",
+      platform_width=3.0,
+      border_width=1.0,
+      stair_lip_enabled=False,
     ),
   },
   add_lights=True,

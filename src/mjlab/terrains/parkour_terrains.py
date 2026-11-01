@@ -465,3 +465,303 @@ class BoxStraightGapTerrainCfg(SubTerrainCfg):
     return TerrainOutput(
       origin=origin, geometries=geometries, reward_points=reward_points
     )
+
+
+@dataclass(kw_only=True)
+class BoxStraightPlatformGapTerrainCfg(SubTerrainCfg):
+  """Two EQUAL-height platforms chained along +x with a true gap between them.
+
+  Layout (user spec 2026-11-01): spawn runway -> platform 1 (climb up) -> a
+  full-width PIT gap (0 -> 0.3 m, difficulty-interpolated) -> platform 2 at
+  the SAME height -> ground -> finish. Both platforms share one height sample
+  from the same 0 -> 0.5 m ladder as ``BoxStraightPlatformTerrainCfg`` so the
+  climb skill transfers; the gap exposes a deep pit floor, so crossing REQUIRES
+  a jump/stride and falling in is a hard fail (body-contact / orientation
+  terminations catch the fall — the task registers no pit-height termination).
+
+  FIVE reward points form the low-high guide chain (3 low @ 0.2 + 2 high @
+  1.0): 0.3 m before the climb, platform-1 top (milestone), just past the gap
+  on platform 2 (milestone — pays for CROSSING), 0.3 m after the descent, and
+  the finish guide 1.0 m out as the chain TAIL (``parkour_completed`` fires
+  margin past it). Full-width platforms (no side bypass) and a guaranteed
+  spawn runway mirror the platform terrain conventions.
+  """
+
+  platform_height_range: tuple[float, float] = (0.0, 0.5)
+  """Shared platform height above ground (both platforms EQUAL). Lower bound
+  at difficulty 0, upper at 1 — the SAME ladder as the platform terrain."""
+  height_jitter: float = 0.05
+  """Per-patch uniform jitter added on top of the ladder height, in meters
+  (clamped to [0.0, 0.55])."""
+  platform_depth_range: tuple[float, float] = (1.2, 1.6)
+  """Platform extent along x (landable top surface). ONE shared sample for
+  BOTH platforms — identical size and shape (user request 2026-11-01) — and
+  deep enough that the robot has room to climb up, stabilize and ACCELERATE
+  on the top before reaching the gap (user request 2026-11-01)."""
+  platform_width_range: tuple[float, float] = (7.4, 7.5)
+  """Platform extent along y — patch-full-width so the gap cannot be bypassed
+  sideways."""
+  wall1_left_x_range: tuple[float, float] = (2.8, 3.1)
+  """Platform 1 LEFT-edge x, sampled per patch. Pushed farther from the spawn
+  than the platform terrain's (2.3, 2.7) (user request 2026-11-01: the flat
+  acceleration runway before the climb is 2.05-2.35 m, worst 1.85 m with the
+  +/-0.2 m reset jitter). Budget check: worst case left1=3.1 + depth=1.6 +
+  gap=0.3 + depth=1.6 = right2=6.6 -> finish 7.6, success line 8.0 (same
+  bound as the platform terrain)."""
+  gap_range: tuple[float, float] = (0.0, 0.3)
+  """Edge-to-edge gap between the two platform tops (user spec: 0 cm -> 30 cm
+  with difficulty). The gap is a TRUE hole down to the pit floor."""
+  pit_depth_range: tuple[float, float] = (0.5, 1.0)
+  """Pit floor depth below z=0 under the gap, randomized per patch — deep
+  enough that falling in cannot be walked off (0.5 m walls on both sides)."""
+  approach_offset: float = 0.30
+  """Low guide point x-offset BEFORE platform 1's left edge (user: 上台前
+  30 cm)."""
+  cross_offset: float = 0.25
+  """High milestone x-offset past the gap onto platform 2 (clamped to the
+  platform top so the capture bubble always lands on solid surface)."""
+  descend_offset: float = 0.30
+  """Low guide point x-offset AFTER platform 2's right edge (user: 下台后
+  30 cm)."""
+  finish_offset: float = 1.0
+  """Finish guide x-offset past platform 2 (user: 终点 100 cm); chain TAIL —
+  ``parkour_completed`` fires 0.4 m past it."""
+  border_width: float = 0.25
+  """Solid ring width around the patch closing the pit sides, in meters."""
+  max_reward_points: int = 5
+  """Pre-allocation cap: approach low + platform-1 top + past-gap high +
+  descend low + finish tail."""
+  low_bonus_ratio: float = 0.2
+  """Reward factor for low-value guide points (milestones pay 1.0)."""
+
+  def function(
+    self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
+  ) -> TerrainOutput:
+    body = spec.body("terrain")
+    geometries: list[TerrainGeometry] = []
+    reward_points: list[np.ndarray] = []
+    reward_point_factors: list[np.ndarray] = []
+    low = np.asarray(self.low_bonus_ratio, dtype=np.float32)
+    high = np.asarray(1.0, dtype=np.float32)
+
+    height = _lerp_range(difficulty, self.platform_height_range)
+    height = float(
+      np.clip(height + rng.uniform(-self.height_jitter, self.height_jitter), 0.0, 0.55)
+    )
+    gap = _lerp_range(difficulty, self.gap_range)
+    pit_depth = rng.uniform(*self.pit_depth_range)
+
+    spawn_x = self.border_width + 0.5
+    cy = self.size[1] / 2
+
+    left1 = rng.uniform(*self.wall1_left_x_range)
+    # ONE shared depth sample: the two platforms are IDENTICAL in size and
+    # shape (user request 2026-11-01) — same depth, same full width, and the
+    # same height sample above.
+    depth = rng.uniform(*self.platform_depth_range)
+    right1 = left1 + depth
+    left2 = right1 + gap
+    right2 = left2 + depth
+
+    # -- Low-high guide reward chain (x-ordered; 3 low + 2 high) --
+    reward_points.append(np.array([left1 - self.approach_offset, cy, 0.0]))
+    reward_point_factors.append(low)
+    reward_points.append(np.array([(left1 + right1) / 2, cy, height]))
+    reward_point_factors.append(high)
+    # Past-gap milestone: clamp the offset to half the platform depth so the
+    # capture bubble (hit_radius <= 0.125) always sits ON platform 2's top.
+    cross_x = left2 + min(self.cross_offset, depth / 2)
+    reward_points.append(np.array([cross_x, cy, height]))
+    reward_point_factors.append(high)
+    reward_points.append(np.array([right2 + self.descend_offset, cy, 0.0]))
+    reward_point_factors.append(low)
+    reward_points.append(np.array([right2 + self.finish_offset, cy, 0.0]))
+    reward_point_factors.append(low)
+
+    # -- Geometry --
+    # Pit floor: ONLY under the gap strip (slabs elsewhere reach below it, so
+    # there is no crawlspace under the ground boxes).
+    floor_h = 0.1
+    pit_geom = body.add_geom(
+      type=mujoco.mjtGeom.mjGEOM_BOX,
+      size=(
+        (left2 - right1) / 2,
+        (self.size[1] - 2 * self.border_width) / 2,
+        floor_h / 2,
+      ),
+      pos=((right1 + left2) / 2, cy, -pit_depth - floor_h / 2),
+    )
+    geometries.append(TerrainGeometry(geom=pit_geom, color=_PIT_FLOOR))
+
+    # Border ring closing the pit sides (down to the pit floor, top at z=0).
+    if self.border_width > 0.0:
+      border_boxes = make_border(
+        body,
+        self.size,
+        (self.size[0] - 2 * self.border_width, self.size[1] - 2 * self.border_width),
+        pit_depth,
+        (self.size[0] / 2, self.size[1] / 2, -pit_depth / 2),
+      )
+      for box in border_boxes:
+        geometries.append(TerrainGeometry(geom=box, color=_GRAY))
+
+    # Ground slabs: spawn-side ground up to platform 1, landing-side ground
+    # after platform 2 (top at z=0). The strip between them is the pit. Each
+    # slab reaches DOWN to the pit floor's bottom (pit_depth + floor_h), so
+    # the pit walls are the slab sides all the way down — no hidden cave
+    # under the ground for a fallen robot to walk into. Inner width only:
+    # the border ring already occupies the patch perimeter.
+    slab_depth = pit_depth + floor_h
+    inner_len_y = self.size[1] - 2 * self.border_width
+    inner_right = self.size[0] - self.border_width
+    slab_spans = ((self.border_width, right1), (left2, inner_right))
+    for x0, x1 in slab_spans:
+      length = x1 - x0
+      if length <= 1e-3:
+        continue
+      slab = body.add_geom(
+        type=mujoco.mjtGeom.mjGEOM_BOX,
+        size=(length / 2, inner_len_y / 2, slab_depth / 2),
+        pos=((x0 + x1) / 2, cy, -slab_depth / 2),
+      )
+      geometries.append(TerrainGeometry(geom=slab, color=_GRAY))
+
+    # The two equal-height platforms (a near-zero height would be a
+    # zero-thickness box — MuJoCo rejects that; the slab IS the surface).
+    if height > 1e-3:
+      # Identical platforms: one shared (depth, height) sample, two centers.
+      for px in ((left1 + right1) / 2, (left2 + right2) / 2):
+        platform_geom = body.add_geom(
+          type=mujoco.mjtGeom.mjGEOM_BOX,
+          size=(
+            depth / 2,
+            _lerp_range(difficulty, self.platform_width_range) / 2,
+            height / 2,
+          ),
+          pos=(px, cy, height / 2),
+        )
+        geometries.append(TerrainGeometry(geom=platform_geom, color=_ORANGE))
+
+    origin = np.array([spawn_x, cy, 0.0])
+    return TerrainOutput(
+      origin=origin,
+      geometries=geometries,
+      reward_points=reward_points,
+      reward_point_factors=reward_point_factors,
+    )
+
+
+@dataclass(kw_only=True)
+class BoxStraightCrawlBarsTerrainCfg(SubTerrainCfg):
+  """Two full-width overhead bars the robot must crawl UNDER, chained along +x.
+
+  Layout mirrors wmp_go1's ``crawl`` terrain (terrain.py): each patch carries
+  two floating bars spanning the full inner width. A bar's underside sits at
+  the ``clearance`` (0.42 -> 0.27 m, difficulty-interpolated — wmp_go1's
+  validated quantities) and extends 1.0 m upward, so jumping over is
+  impossible and passing REQUIRES a low-profile crouch. Bar thickness along x
+  is randomized per bar; the robot walks on flat ground the whole way.
+
+  FIVE reward points (3 low @ 0.2 + 2 high @ 1.0, same cadence as the gap
+  terrain): 0.3 m before bar 1, 0.3 m past bar 1 (milestone), mid-run, 0.3 m
+  past bar 2 (milestone), and the finish guide 1.0 m out as the chain TAIL.
+  All points sit on the ground (z=0) — the z-margin gate of
+  ``reward_point_bonus`` is trivially satisfied there.
+  """
+
+  clearance_range: tuple[float, float] = (0.42, 0.27)
+  """Bar underside height above ground. Difficulty 0 -> 0.42 m (mild crouch),
+  difficulty 1 -> 0.27 m (real low crawl) — wmp_go1 quantities."""
+  bar_height: float = 1.0
+  """Bar vertical extent (from the underside upward, in meters). With the
+  worst-case clearance the bar top is >= 1.27 m — no jump-over."""
+  bar_thickness_range: tuple[float, float] = (0.2, 0.5)
+  """Bar extent along x, randomized per bar (thin bars are hopped under,
+  thick bars force a sustained crouch)."""
+  bar_width: float = 7.5
+  """Bar extent along y — patch-full-width (8 m patch minus borders), so the
+  bars cannot be bypassed sideways."""
+  bar1_left_x_range: tuple[float, float] = (3.2, 3.6)
+  """Bar 1 LEFT-edge x, sampled per patch (spawn runway >= 2.45 m)."""
+  bar2_left_x_range: tuple[float, float] = (5.8, 6.2)
+  """Bar 2 LEFT-edge x, sampled per patch. Worst case (left 6.2 + thickness
+  0.5) keeps the finish guide (right + 1.0) and the success line (guide +
+  0.4 m margin) inside the patch (<= 7.75 m inner edge)."""
+  approach_offset: float = 0.30
+  """Low guide point x-offset before bar 1."""
+  pass_offset: float = 0.30
+  """High milestone x-offset past each bar (user cadence: 过杆后 30 cm)."""
+  finish_offset: float = 1.0
+  """Finish guide x-offset past bar 2; chain TAIL."""
+  border_width: float = 0.25
+  """Flat border width around the patch, in meters."""
+  floor_thickness: float = 0.5
+  """Thickness of the ground slab below z=0, in meters."""
+  max_reward_points: int = 5
+  """Pre-allocation cap: approach low + bar-1 pass + mid-run low + bar-2 pass
+  + finish tail."""
+  low_bonus_ratio: float = 0.2
+  """Reward factor for low-value guide points (milestones pay 1.0)."""
+
+  def function(
+    self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
+  ) -> TerrainOutput:
+    body = spec.body("terrain")
+    geometries: list[TerrainGeometry] = []
+    reward_points: list[np.ndarray] = []
+    reward_point_factors: list[np.ndarray] = []
+    low = np.asarray(self.low_bonus_ratio, dtype=np.float32)
+    high = np.asarray(1.0, dtype=np.float32)
+
+    clearance = _lerp_range(difficulty, self.clearance_range)
+    spawn_x = self.border_width + 0.5
+    cy = self.size[1] / 2
+
+    # Two bars, each sampled independently (left edge + x thickness).
+    left1 = rng.uniform(*self.bar1_left_x_range)
+    thick1 = rng.uniform(*self.bar_thickness_range)
+    left2 = rng.uniform(*self.bar2_left_x_range)
+    thick2 = rng.uniform(*self.bar_thickness_range)
+    right1 = left1 + thick1
+    right2 = left2 + thick2
+
+    # -- Low-high guide reward chain (x-ordered; 3 low + 2 high, all z=0) --
+    reward_points.append(np.array([left1 - self.approach_offset, cy, 0.0]))
+    reward_point_factors.append(low)
+    reward_points.append(np.array([right1 + self.pass_offset, cy, 0.0]))
+    reward_point_factors.append(high)
+    reward_points.append(np.array([(right1 + left2) / 2, cy, 0.0]))
+    reward_point_factors.append(low)
+    reward_points.append(np.array([right2 + self.pass_offset, cy, 0.0]))
+    reward_point_factors.append(high)
+    reward_points.append(np.array([right2 + self.finish_offset, cy, 0.0]))
+    reward_point_factors.append(low)
+
+    # -- Geometry --
+    # Ground slab (top at z=0) across the whole patch.
+    floor_geom = body.add_geom(
+      type=mujoco.mjtGeom.mjGEOM_BOX,
+      size=(self.size[0] / 2, self.size[1] / 2, self.floor_thickness / 2),
+      pos=(self.size[0] / 2, self.size[1] / 2, -self.floor_thickness / 2),
+    )
+    geometries.append(TerrainGeometry(geom=floor_geom, color=_GRAY))
+
+    # The two floating bars: static boxes from `clearance` up (MuJoCo static
+    # geoms need no support structure). Distinct color: NOT the climb walls'
+    # orange — the depth camera must tell "go under" from "go over".
+    bar_color = (0.55, 0.30, 0.75, 1.0)
+    for px, thick in (((left1 + right1) / 2, thick1), ((left2 + right2) / 2, thick2)):
+      bar_geom = body.add_geom(
+        type=mujoco.mjtGeom.mjGEOM_BOX,
+        size=(thick / 2, self.bar_width / 2, self.bar_height / 2),
+        pos=(px, cy, clearance + self.bar_height / 2),
+      )
+      geometries.append(TerrainGeometry(geom=bar_geom, color=bar_color))
+
+    origin = np.array([spawn_x, cy, 0.0])
+    return TerrainOutput(
+      origin=origin,
+      geometries=geometries,
+      reward_points=reward_points,
+      reward_point_factors=reward_point_factors,
+    )

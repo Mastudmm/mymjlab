@@ -137,6 +137,38 @@ class TerrainGeneratorCfg:
   """If True, adds a directional light above the terrain grid."""
 
 
+def resolve_curriculum_column_names(
+  generator_cfg: TerrainGeneratorCfg,
+) -> list[str]:
+  """Resolve the column -> sub-terrain name mapping for curriculum terrains.
+
+  Single source of truth for curriculum column allocation. Mirrors
+  :meth:`TerrainGenerator._generate_curriculum_terrains`: columns are assigned
+  to sub-terrains by cumulative normalized proportion, so column ``col``
+  belongs to the first sub-terrain whose cumulative share exceeds
+  ``col / num_cols``. Consumers that need to know which terrain a column
+  represents (per-terrain command modes, spawn filtering) MUST call this
+  helper instead of reimplementing the formula — a drift between the two
+  would silently mislabel terrain columns.
+  """
+  names = list(generator_cfg.sub_terrains.keys())
+  proportions = np.array(
+    [sub_cfg.proportion for sub_cfg in generator_cfg.sub_terrains.values()],
+    dtype=np.float64,
+  )
+  if proportions.sum() <= 0.0:
+    raise ValueError(
+      "Terrain proportions sum to zero; cannot resolve curriculum columns."
+    )
+  proportions /= proportions.sum()
+  cumulative = np.cumsum(proportions)
+  num_cols = int(generator_cfg.num_cols)
+  return [
+    names[int(np.min(np.where(col / num_cols + 0.001 < cumulative)[0]))]
+    for col in range(num_cols)
+  ]
+
+
 class TerrainGenerator:
   """Generates procedural terrain grids with configurable difficulty.
 
@@ -283,20 +315,14 @@ class TerrainGenerator:
       self.terrain_origins[sub_row, sub_col] = spawn_origin
 
   def _generate_curriculum_terrains(self, spec: mujoco.MjSpec) -> None:
-    # Normalize the proportions of the sub-terrains.
-    proportions = np.array(
-      [sub_cfg.proportion for sub_cfg in self.cfg.sub_terrains.values()]
+    # Column allocation: reuse the shared resolver so the command term's and
+    # the terrain entity's column->terrain-name mapping can never drift from
+    # what is actually generated here.
+    sub_names = list(self.cfg.sub_terrains.keys())
+    sub_indices = np.array(
+      [sub_names.index(name) for name in resolve_curriculum_column_names(self.cfg)],
+      dtype=np.int32,
     )
-    proportions /= np.sum(proportions)
-
-    sub_indices = []
-    for index in range(self.cfg.num_cols):
-      sub_index = np.min(
-        np.where(index / self.cfg.num_cols + 0.001 < np.cumsum(proportions))[0]
-      )
-      sub_indices.append(sub_index)
-    sub_indices = np.array(sub_indices, dtype=np.int32)
-
     sub_terrains_cfgs = list(self.cfg.sub_terrains.values())
 
     for sub_col in range(self.cfg.num_cols):
@@ -393,9 +419,9 @@ class TerrainGenerator:
         self.reward_point_factors[sub_row, sub_col, :] = 1.0
         if output.reward_point_factors:
           m = min(len(output.reward_point_factors), n)
-          self.reward_point_factors[sub_row, sub_col, :m] = (
-            output.reward_point_factors[:m]
-          )
+          self.reward_point_factors[sub_row, sub_col, :m] = output.reward_point_factors[
+            :m
+          ]
       else:
         self.reward_counts[sub_row, sub_col] = 0
 

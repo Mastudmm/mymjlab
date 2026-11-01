@@ -3,14 +3,21 @@
 import mujoco
 import numpy as np
 import pytest
+import torch
 
 from mjlab.terrains.config import PARKOUR_TERRAINS_CFG
 from mjlab.terrains.parkour_terrains import (
+  BoxStraightCrawlBarsTerrainCfg,
   BoxStraightGapTerrainCfg,
+  BoxStraightPlatformGapTerrainCfg,
   BoxStraightPlatformTerrainCfg,
   BoxStraightStepStonesTerrainCfg,
 )
-from mjlab.terrains.terrain_generator import TerrainGenerator
+from mjlab.terrains.terrain_generator import (
+  TerrainGenerator,
+  TerrainGeneratorCfg,
+  resolve_curriculum_column_names,
+)
 
 SIZE = (8.0, 8.0)
 
@@ -18,6 +25,8 @@ ALL_PARKOUR_CFGS = [
   BoxStraightStepStonesTerrainCfg,
   BoxStraightPlatformTerrainCfg,
   BoxStraightGapTerrainCfg,
+  BoxStraightPlatformGapTerrainCfg,
+  BoxStraightCrawlBarsTerrainCfg,
 ]
 
 
@@ -226,7 +235,12 @@ def test_step_stone_solids_do_not_overlap(difficulty):
 
 
 def test_parkour_generator_collects_reward_points():
-  """The generator fills per-(row, col) reward-point arrays for the preset."""
+  """The generator fills per-(row, col) reward-point arrays for the preset.
+
+  Five-column layout (2026-11-01): the first three columns are bonus terrains
+  (platforms=7, platform_gap=5, crawl=5 points; each with exactly TWO
+  factor-1.0 milestones), the last two are the point-less native stairs
+  (heading-mode columns)."""
   cfg = PARKOUR_TERRAINS_CFG
   spec = mujoco.MjSpec()
   generator = TerrainGenerator(cfg)
@@ -241,17 +255,32 @@ def test_parkour_generator_collects_reward_points():
     cfg.num_cols,
     7,
   )
-  # Every curriculum patch places at least one obstacle (and reward point).
-  assert (generator.reward_counts > 0).all()
-  # Every valid slot carries a value factor; each patch has exactly two
-  # milestone (1.0) points — the wall-1 top and the landing (the finish
-  # guide tail is a 0.2 low-value point, 2026-10-30).
+  # Column -> terrain-name mapping matches the written sub_terrains order.
+  names = resolve_curriculum_column_names(cfg)
+  assert names == [
+    "platforms",
+    "platform_gap",
+    "crawl",
+    "pyramid_stairs",
+    "pyramid_stairs_inv",
+  ]
+  expected_counts = {
+    "platforms": 7,
+    "platform_gap": 5,
+    "crawl": 5,
+    "pyramid_stairs": 0,
+    "pyramid_stairs_inv": 0,
+  }
   for row in range(cfg.num_rows):
-    for col in range(cfg.num_cols):
+    for col, name in enumerate(names):
       n = int(generator.reward_counts[row, col])
-      factors = generator.reward_point_factors[row, col, :n]
-      assert (factors == 1.0).sum() == 2
-      assert (factors > 0).all()
+      assert n == expected_counts[name], (row, col, name, n)
+      if n > 0:
+        factors = generator.reward_point_factors[row, col, :n]
+        # Each bonus patch carries exactly two milestone (1.0) points; the
+        # remaining guide points are low-value (0.2).
+        assert (factors == 1.0).sum() == 2
+        assert (factors > 0).all()
 
 
 def _platform_walls(output):
@@ -321,3 +350,258 @@ def test_platform_layout_budget(difficulty):
     # The whole chain remains x-ordered and inside the patch.
     assert np.all(np.diff(pts[:, 0]) > 0)
     assert pts[:, 0].max() < SIZE[0] - cfg.border_width
+
+
+# ---------------------------------------------------------------------------
+# 2026-11-01 terrain expansion: platform_gap, crawl bars, native stairs.
+# ---------------------------------------------------------------------------
+
+
+def test_platform_gap_chain_structure():
+  """The gap-terrain guide chain (user spec 2026-11-01): exactly 5 points —
+  3 low (approach / descend / finish) + 2 high (platform-1 top / past-gap) —
+  x-ordered, with the z pattern [ground, top, top, ground, ground]."""
+  output = _generate(BoxStraightPlatformGapTerrainCfg, 0.5)
+  assert output.reward_points is not None
+  assert output.reward_point_factors is not None
+  pts = np.stack(output.reward_points)
+  fac = np.stack(output.reward_point_factors)
+  assert len(pts) == 5
+  assert int((fac == 1.0).sum()) == 2
+  assert int((fac == 0.2).sum()) == 3
+  assert np.all(np.diff(pts[:, 0]) > 0)
+  # z pattern: approach ground, both platform-top milestones, then ground.
+  assert pts[0][2] == pytest.approx(0.0)
+  assert pts[1][2] == pytest.approx(pts[2][2])
+  assert pts[1][2] > 0.1
+  assert pts[3][2] == pytest.approx(0.0)
+  assert pts[4][2] == pytest.approx(0.0)
+  # Cadence: low, high, high, low, low.
+  assert fac[0] == 0.2 and fac[1] == 1.0 and fac[2] == 1.0
+  assert fac[3] == 0.2 and fac[4] == 0.2
+
+
+def test_platform_gap_equal_heights_and_gap_ladder():
+  """Both platforms are IDENTICAL (one shared height AND depth sample — user
+  request 2026-11-01), and the edge-to-edge gap interpolates 0 -> 0.3 m with
+  difficulty (user spec: 0 -> 30 cm)."""
+  for difficulty, expected_gap in ((0.5, 0.15), (0.9, 0.27)):
+    output = _generate(BoxStraightPlatformGapTerrainCfg, difficulty)
+    (cx1, d1), (cx2, d2) = _platform_walls(output)
+    # Identical platforms: same depth (and same full width).
+    assert d1 == pytest.approx(d2)
+    tops = sorted(
+      round(g.geom.pos[2] * 2, 6)
+      for g in output.geometries
+      if g.geom is not None
+      and g.color is not None
+      and tuple(g.color) == (0.85, 0.55, 0.15, 1.0)
+    )
+    assert len(tops) == 2 and tops[0] == tops[1]
+    gap = (cx2 - d2 / 2) - (cx1 + d1 / 2)
+    assert gap == pytest.approx(expected_gap)
+    # Farther spawn runway (user request 2026-11-01): left edge >= 2.8 m.
+    assert cx1 - d1 / 2 >= 2.8 - 1e-6
+    # On-top acceleration runway = the shared platform depth (>= 1.2 m).
+    assert d1 >= 1.2 - 1e-6
+    # The past-gap milestone sits ON platform 2's top (inside its span).
+    pts = np.stack(output.reward_points)
+    assert cx2 - d2 / 2 - 1e-6 <= pts[2][0] <= cx2 + d2 / 2 + 1e-6
+    assert pts[2][2] == pytest.approx(tops[0])
+    # Descend low + finish tail are past platform 2's right edge.
+    right2 = cx2 + d2 / 2
+    assert pts[3][0] == pytest.approx(right2 + 0.30)
+    assert pts[4][0] == pytest.approx(right2 + 1.00)
+    # Success line (finish + parkour_completed margin 0.4) stays inside.
+    assert pts[4][0] + 0.4 <= SIZE[0] + 1e-6
+
+
+def test_platform_gap_layout_budget():
+  """Layout budget over many random draws (2026-11-01 revision): the farther
+  wall position + deeper identical platforms must still keep the whole chain
+  and the success line inside the patch for EVERY sampling draw."""
+  cfg = BoxStraightPlatformGapTerrainCfg(size=SIZE)
+  for seed in range(30):
+    spec = mujoco.MjSpec()
+    spec.worldbody.add_body(name="terrain")
+    rng = np.random.default_rng(seed)
+    output = cfg.function(1.0, spec, rng)  # difficulty 1.0 = worst case
+    assert output.reward_points is not None
+    pts = np.stack(output.reward_points)
+    (cx1, d1), (cx2, d2) = _platform_walls(output)
+    # Identical platforms at max difficulty too.
+    assert d1 == pytest.approx(d2)
+    right2 = cx2 + d2 / 2
+    assert right2 <= 6.6 + 1e-6
+    assert pts[-1][0] + 0.4 <= SIZE[0] + 1e-6
+    assert np.all(np.diff(pts[:, 0]) > 0)
+
+
+def test_platform_gap_pit_has_no_cave():
+  """The gap is a true hole down to a deep pit floor; the ground slabs reach
+  BELOW the pit floor so a fallen robot cannot walk under the ground."""
+  output = _generate(BoxStraightPlatformGapTerrainCfg, 0.7)
+  gray = [
+    g.geom
+    for g in output.geometries
+    if g.geom is not None
+    and g.color is not None
+    and tuple(g.color) == (0.1, 0.1, 0.1, 1.0)
+  ]
+  # Pit floor box only (dark _PIT_FLOOR): top sits in [-1.0, -0.5] m.
+  assert len(gray) == 1
+  pit_top = gray[0].pos[2] + gray[0].size[2]
+  assert -1.0 <= pit_top <= -0.5
+  # Slabs (gray _GRAY, deeper than the border ring): bottom == pit bottom.
+  slabs = [
+    g.geom
+    for g in output.geometries
+    if g.geom is not None
+    and g.color is not None
+    and tuple(g.color) == (0.35, 0.35, 0.35, 1.0)
+    and g.geom.size[2] * 2 > 0.7  # deeper than the border ring boxes
+  ]
+  assert len(slabs) == 2
+  for slab in slabs:
+    assert slab.pos[2] - slab.size[2] == pytest.approx(pit_top - 0.1)
+
+
+def test_crawl_chain_structure():
+  """The crawl-terrain guide chain (user cadence 2026-11-01): exactly 5 points
+  on the ground — low, HIGH, low, HIGH, low — x-ordered around the two bars."""
+  output = _generate(BoxStraightCrawlBarsTerrainCfg, 0.5)
+  assert output.reward_points is not None
+  assert output.reward_point_factors is not None
+  pts = np.stack(output.reward_points)
+  fac = np.stack(output.reward_point_factors)
+  assert len(pts) == 5
+  assert np.all(np.diff(pts[:, 0]) > 0)
+  assert np.all(pts[:, 2] == pytest.approx(0.0))
+  assert list(fac) == [0.2, 1.0, 0.2, 1.0, 0.2]
+
+  bars = sorted(
+    (
+      g.geom
+      for g in output.geometries
+      if g.geom is not None
+      and g.color is not None
+      and tuple(g.color) == (0.55, 0.30, 0.75, 1.0)
+    ),
+    key=lambda geom: geom.pos[0],
+  )
+  assert len(bars) == 2
+  left1 = bars[0].pos[0] - bars[0].size[0]
+  right1 = bars[0].pos[0] + bars[0].size[0]
+  left2 = bars[1].pos[0] - bars[1].size[0]
+  right2 = bars[1].pos[0] + bars[1].size[0]
+  assert pts[0][0] == pytest.approx(left1 - 0.30)
+  assert pts[1][0] == pytest.approx(right1 + 0.30)
+  assert pts[2][0] == pytest.approx((right1 + left2) / 2)
+  assert pts[3][0] == pytest.approx(right2 + 0.30)
+  assert pts[4][0] == pytest.approx(right2 + 1.00)
+  # Success line stays inside the patch.
+  assert pts[4][0] + 0.4 <= SIZE[0] + 1e-6
+
+
+def test_crawl_clearance_ladder():
+  """Bar underside (clearance) falls 0.42 -> 0.27 m with difficulty (wmp_go1
+  quantities); the 1.0 m bar body keeps the top >= 1.27 m (no jump-over)."""
+  for difficulty, clearance in ((0.0, 0.42), (0.5, 0.345), (1.0, 0.27)):
+    output = _generate(BoxStraightCrawlBarsTerrainCfg, difficulty)
+    bars = [
+      g.geom
+      for g in output.geometries
+      if g.geom is not None
+      and g.color is not None
+      and tuple(g.color) == (0.55, 0.30, 0.75, 1.0)
+    ]
+    assert len(bars) == 2
+    for bar in bars:
+      bottom = bar.pos[2] - bar.size[2]
+      assert bottom == pytest.approx(clearance)
+      top = bar.pos[2] + bar.size[2]
+      assert top >= 1.27
+      # Full-width bars: no side bypass.
+      assert bar.size[1] * 2 == pytest.approx(7.5)
+
+
+def test_parkour_columns_resolve_in_written_order():
+  """The shared column resolver maps the five preset columns in the
+  sub_terrains' written order (the command's and entity's terrain dispatch
+  depend on this exact mapping)."""
+  names = resolve_curriculum_column_names(PARKOUR_TERRAINS_CFG)
+  assert names == [
+    "platforms",
+    "platform_gap",
+    "crawl",
+    "pyramid_stairs",
+    "pyramid_stairs_inv",
+  ]
+
+
+def test_spawn_terrain_names_filter():
+  """``spawn_terrain_names`` restricts env terrain_types to the matching
+  columns (sampling decoupled from the grid layout); ``None`` keeps the
+  historical index round-robin."""
+  from mjlab.terrains.primitive_terrains import (
+    BoxFlatTerrainCfg,
+    BoxPyramidStairsTerrainCfg,
+  )
+  from mjlab.terrains.terrain_entity import TerrainEntity, TerrainEntityCfg
+
+  gen_cfg = TerrainGeneratorCfg(
+    size=(4.0, 4.0),
+    border_width=1.0,
+    num_rows=2,
+    num_cols=2,
+    curriculum=True,
+    add_lights=False,
+    sub_terrains={
+      "flat": BoxFlatTerrainCfg(proportion=1.0),
+      "stairs": BoxPyramidStairsTerrainCfg(
+        proportion=1.0,
+        step_height_range=(0.05, 0.1),
+        step_width_range=(0.3, 0.4),
+        platform_width=1.5,
+        border_width=0.5,
+        stair_lip_enabled=False,
+      ),
+    },
+  )
+
+  filtered = TerrainEntity(
+    TerrainEntityCfg(
+      terrain_type="generator",
+      terrain_generator=gen_cfg,
+      num_envs=32,
+      spawn_terrain_names=("stairs",),
+    ),
+    device="cpu",
+  )
+  # Every env spawns on the stairs column (col 1); levels stay random rows.
+  assert torch.all(filtered.terrain_types == 1)
+  assert filtered.terrain_levels.shape == (32,)
+
+  historical = TerrainEntity(
+    TerrainEntityCfg(
+      terrain_type="generator",
+      terrain_generator=gen_cfg,
+      num_envs=32,
+    ),
+    device="cpu",
+  )
+  assert torch.equal(
+    historical.terrain_types,
+    torch.div(torch.arange(32), 32 / 2, rounding_mode="floor").to(torch.long),
+  )
+
+  with pytest.raises(ValueError, match="matched no terrain column"):
+    TerrainEntity(
+      TerrainEntityCfg(
+        terrain_type="generator",
+        terrain_generator=gen_cfg,
+        num_envs=8,
+        spawn_terrain_names=("nonexistent",),
+      ),
+      device="cpu",
+    )

@@ -30,6 +30,13 @@ def parkour_completed(
   letting the robot idle until the time limit. Terrain curriculum then
   decides the next patch (passing this distance threshold also satisfies the
   move-up condition).
+
+  Point-less terrain columns (the native stairs, 2026-11-01) can NEVER
+  complete a chain: their reward-point slots in the pre-allocated array stay
+  (0,0,0), so without the ``counts > 0`` gate this term would degenerate into
+  "is the robot near the WORLD ORIGIN" — envs on patches laid out near the
+  world origin would be terminated as "completed" at spawn (the grid is
+  centered at the origin, so several patches straddle x=0/y=0).
   """
   asset = env.scene[asset_cfg.name]
   terrain = env.scene.terrain
@@ -53,7 +60,8 @@ def parkour_completed(
   base_pos = asset.data.root_link_pos_w
   passed_x = base_pos[:, 0] > last_point[:, 0] + margin
   near_y = (base_pos[:, 1] - last_point[:, 1]).abs() < max_y_offset
-  return passed_x & near_y
+  # Only envs whose patch actually HAS a chain can complete it.
+  return passed_x & near_y & (counts > 0)
 
 
 def vel_violate(
@@ -81,21 +89,6 @@ def vel_violate(
   terrain = env.scene.terrain
   assert terrain is not None
   return violated & (terrain.terrain_levels > min_level)
-
-
-def base_height_below(
-  env: ManagerBasedRlEnv,
-  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-  min_height: float = -0.3,
-) -> torch.Tensor:
-  """Failure termination: the base fell into a pit / trench.
-
-  Robots that drop into the stone-pit (2 m) or trench (1.5 m) may land on
-  their feet at the pit floor without triggering the non-foot contact or
-  orientation terminations; catch them by base height.
-  """
-  asset = env.scene[asset_cfg.name]
-  return asset.data.root_link_pos_w[:, 2] < min_height
 
 
 def _exempt_mask(env: ManagerBasedRlEnv, exempt_terrain_types: tuple[int, ...]):

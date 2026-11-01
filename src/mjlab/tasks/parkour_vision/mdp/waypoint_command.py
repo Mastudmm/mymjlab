@@ -34,6 +34,7 @@ from the first reward point on every episode reset.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -44,6 +45,7 @@ from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
 from mjlab.tasks.velocity_vision.mdp.velocity_command import (
   UniformVelocityCommandCfg,
 )
+from mjlab.terrains.terrain_generator import resolve_curriculum_column_names
 from mjlab.utils.lab_api.math import quat_apply_inverse, wrap_to_pi
 
 if TYPE_CHECKING:
@@ -68,20 +70,66 @@ class WaypointVelocityCommand(CommandTerm):
       self._max_points = 0
       self._has_points = False
 
+    # -- Per-terrain command-mode dispatch (2026-11-01) --
+    # Terrain columns listed in cfg.heading_terrain_names are POINT-LESS
+    # terrains (e.g. the native stairs): the waypoint chain cannot exist
+    # there, so those envs run mjlab's native heading mode instead (body-x
+    # speed + P-controlled yaw toward a per-episode heading target). The
+    # command buffer layout [vx, vy, wz] is IDENTICAL for both modes, so the
+    # observation pipeline, tracking rewards and AMP are untouched.
+    self._heading_cols: torch.Tensor | None = None
+    if terrain is not None and self.cfg.heading_terrain_names:
+      generator_cfg = terrain.cfg.terrain_generator
+      if generator_cfg is not None and bool(
+        getattr(generator_cfg, "curriculum", False)
+      ):
+        column_names = resolve_curriculum_column_names(generator_cfg)
+        cols = [
+          col
+          for col, name in enumerate(column_names)
+          if name in self.cfg.heading_terrain_names
+        ]
+        if cols:
+          self._heading_cols = torch.tensor(cols, dtype=torch.long, device=self.device)
+        else:
+          # Tolerant fallback (backward compatibility): a terrain generator
+          # without the named columns (e.g. the old platforms-only preset)
+          # simply runs waypoint mode everywhere. Same convention as
+          # UniformVelocityCommand's terrain_command_ranges warning.
+          print(
+            "[WaypointVelocityCommand] heading_terrain_names "
+            f"{self.cfg.heading_terrain_names} match no column in the current "
+            f"terrain grid (available: {column_names}); heading mode disabled."
+          )
+
     # Body-frame command [vx, vy, wz], same layout as UniformVelocityCommand
     # so the observation pipeline (generated_commands) is unchanged.
     self.vel_command_b = torch.zeros(self.num_envs, 3, device=self.device)
-    # Commanded speed magnitude, sampled once per episode from ranges.lin_vel_x.
+    # Commanded speed magnitude, sampled once per episode from ranges.lin_vel_x
+    # (waypoint envs) or cfg.heading_speed_range (heading envs).
     self.speed = torch.zeros(self.num_envs, device=self.device)
-    # Per-env waypoint chain state.
+    # Per-env waypoint chain state (waypoint envs only; heading envs keep the
+    # chain parked at index 0 where the advancement loop is a no-op).
     self.waypoint_idx = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
     self.waypoint_time = torch.zeros(self.num_envs, device=self.device)
+    # World-frame heading target for heading-mode envs (sampled per episode).
+    self.heading_target = torch.zeros(self.num_envs, device=self.device)
     self.is_standing_env = torch.zeros(
       self.num_envs, dtype=torch.bool, device=self.device
     )
 
     self.metrics["dist_to_waypoint"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["waypoint_progress"] = torch.zeros(self.num_envs, device=self.device)
+
+  def _heading_mask(self) -> torch.Tensor:
+    """Boolean mask [num_envs]: True on envs whose terrain column runs the
+    heading command mode. Derived from terrain_types every call (cheap gather)
+    so it stays correct even if the entity ever reassigns columns."""
+    if self._heading_cols is None:
+      return torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+    terrain = self._env.scene.terrain
+    assert terrain is not None
+    return torch.isin(terrain.terrain_types, self._heading_cols)
 
   @property
   def command(self) -> torch.Tensor:
@@ -124,8 +172,16 @@ class WaypointVelocityCommand(CommandTerm):
     if len(env_ids) == 0:
       return
     r = torch.empty(len(env_ids), device=self.device)
-    self.speed[env_ids] = r.uniform_(*self.cfg.ranges.lin_vel_x)
+    # Speed magnitude: waypoint envs sample the (curriculum-controlled)
+    # forward range; heading envs sample their own (static) range.
+    heading = self._heading_mask()[env_ids]
+    waypoint_speed = r.uniform_(*self.cfg.ranges.lin_vel_x)
+    heading_speed = r.uniform_(*self.cfg.heading_speed_range)
+    self.speed[env_ids] = torch.where(heading, heading_speed, waypoint_speed)
     self.is_standing_env[env_ids] = r.uniform_(0.0, 1.0) <= self.cfg.rel_standing_envs
+    # Heading targets: sampled for every env but consumed only by heading
+    # envs (waypoint envs aim at their waypoints instead).
+    self.heading_target[env_ids] = r.uniform_(*self.cfg.heading_range)
     # resampling_time_range is (1e9, 1e9), so this only fires on episode
     # reset: restart the waypoint chain from the first reward point.
     # NOTE: do NOT touch the command buffer here — the base pose (xpos/xquat)
@@ -214,8 +270,29 @@ class WaypointVelocityCommand(CommandTerm):
     dir_b = quat_apply_inverse(self.robot.data.root_link_quat_w, dir3_w)
     self.vel_command_b[:, :2] = dir_b[:, :2] * self.speed.unsqueeze(-1)
     self.vel_command_b[:, 2] = wz
-    # Envs without reward points get no command.
-    self.vel_command_b[counts == 0] = 0.0
+
+    # -- Heading-mode override (point-less terrain columns, e.g. stairs) --
+    # mjlab's native heading command semantics (UniformVelocityCommand):
+    # body-x speed from the static per-terrain range, zero lateral speed,
+    # yaw rate from a P controller on the heading error toward the sampled
+    # world-frame target. The waypoint math above computed garbage for these
+    # envs (their waypoint slot is the unfilled (0,0,0) array position), so
+    # this override REPLACES their whole command.
+    heading = self._heading_mask()
+    if bool(heading.any()):
+      heading_err = wrap_to_pi(self.heading_target - self.robot.data.heading_w)
+      wz_heading = torch.clip(
+        self.cfg.heading_control_stiffness * heading_err,
+        min=self.cfg.ranges.ang_vel_z[0],
+        max=self.cfg.ranges.ang_vel_z[1],
+      )
+      self.vel_command_b[heading, 0] = self.speed[heading]
+      self.vel_command_b[heading, 1] = 0.0
+      self.vel_command_b[heading, 2] = wz_heading[heading]
+
+    # Envs without reward points that are NOT in heading mode get no command
+    # (historical behavior for point-less terrains).
+    self.vel_command_b[(counts == 0) & ~heading] = 0.0
 
   def _effective_timeout(self, dist_xy: torch.Tensor) -> torch.Tensor:
     """Effective per-waypoint time budget (seconds).
@@ -258,11 +335,22 @@ class WaypointVelocityCommand(CommandTerm):
       row = int(terrain.terrain_levels[batch].item())
       col = int(terrain.terrain_types[batch].item())
       count = int(counts_t[row, col].item())
+      base = base_pos_ws[batch].detach().cpu().numpy()
       if count == 0:
+        # Heading-mode columns: draw the commanded heading direction (green
+        # ray) instead of a waypoint sphere.
+        if bool(self._heading_mask()[batch].item()):
+          yaw = float(self.heading_target[batch].item())
+          target = base + 0.6 * np.array([np.cos(yaw), np.sin(yaw), 0.0])
+          visualizer.add_arrow(
+            base + np.array([0.0, 0.0, 0.1]),
+            target + np.array([0.0, 0.0, 0.1]),
+            color=(0.2, 0.8, 0.3, 0.7),
+            width=0.02,
+          )
         continue
       idx = min(int(self.waypoint_idx[batch].item()), count - 1)
       wp = points_t[row, col, idx].detach().cpu().numpy()
-      base = base_pos_ws[batch].detach().cpu().numpy()
       visualizer.add_sphere(wp, 0.12, (0.9, 0.25, 0.25, 0.9))
       visualizer.add_arrow(
         base + np.array([0.0, 0.0, 0.1]),
@@ -288,6 +376,19 @@ class WaypointVelocityCommandCfg(CommandTermCfg):
   waypoint_timeout: float = 10.0
   timeout_speed_factor: float = 1.3
   rel_standing_envs: float = 0.05
+  # -- Per-terrain heading-mode dispatch (2026-11-01) --
+  # Sub-terrain names (keys of terrain_generator.sub_terrains) whose columns
+  # run mjlab's native heading command instead of the waypoint chain. These
+  # should be POINT-LESS terrains (no reward points), e.g. the native stairs.
+  heading_terrain_names: tuple[str, ...] = ()
+  # Speed magnitude range sampled per episode for heading-mode envs (static —
+  # deliberately NOT coupled to the waypoint speed curriculum).
+  heading_speed_range: tuple[float, float] = (0.2, 0.5)
+  # World-frame heading target sampling range for heading-mode envs. Full
+  # (−π, +π] = omnidirectional (mjlab native default, user decision
+  # 2026-11-01); use a narrower forward-biased range to keep robots roughly
+  # along the patch axis.
+  heading_range: tuple[float, float] = (-math.pi, math.pi)
 
   def __post_init__(self):
     if self.reach_radius <= 0.0:
@@ -299,6 +400,10 @@ class WaypointVelocityCommandCfg(CommandTermCfg):
       )
     if self.ranges.ang_vel_z[0] >= self.ranges.ang_vel_z[1]:
       raise ValueError("ranges.ang_vel_z must be an increasing pair.")
+    if self.heading_speed_range[0] > self.heading_speed_range[1]:
+      raise ValueError("heading_speed_range must be an increasing pair.")
+    if self.heading_range[0] >= self.heading_range[1]:
+      raise ValueError("heading_range must be an increasing pair.")
 
   def build(self, env: ManagerBasedRlEnv) -> WaypointVelocityCommand:
     return WaypointVelocityCommand(self, env)

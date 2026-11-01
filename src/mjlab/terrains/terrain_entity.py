@@ -8,7 +8,11 @@ import numpy as np
 import torch
 
 from mjlab.entity import Entity, EntityCfg
-from mjlab.terrains.terrain_generator import TerrainGenerator, TerrainGeneratorCfg
+from mjlab.terrains.terrain_generator import (
+  TerrainGenerator,
+  TerrainGeneratorCfg,
+  resolve_curriculum_column_names,
+)
 from mjlab.utils import spec_config as spec_cfg
 
 _DEFAULT_SUN_LIGHT = spec_cfg.LightCfg(
@@ -53,6 +57,14 @@ class TerrainEntityCfg(EntityCfg):
   max_init_terrain_level: int | None = None
   """Maximum initial difficulty level (row index) for environment placement in
   curriculum mode. None uses all available rows."""
+  spawn_terrain_names: tuple[str, ...] | None = None
+  """Restrict which sub-terrain columns environments spawn on (curriculum
+  mode). None (default) uses ALL columns with the historical round-robin
+  assignment; a tuple of sub-terrain names (keys of
+  ``terrain_generator.sub_terrains``) samples every env's column uniformly at
+  random from the matching columns — decoupling spawn sampling from the grid
+  layout. Used to train/evaluate on a subset of terrain types (e.g. a single
+  named terrain for play)."""
   num_envs: int = 1
   """Number of parallel environments to create. This will get overridden by the
   scene configuration if specified there."""
@@ -247,9 +259,14 @@ class TerrainEntity(Entity):
     self.terrain_levels[env_ids] = torch.randint(
       0, num_rows, (num_envs,), device=self._device
     )
-    self.terrain_types[env_ids] = torch.randint(
-      0, num_cols, (num_envs,), device=self._device
-    )
+    spawn_cols = self._resolve_spawn_columns(num_cols)
+    if spawn_cols is None:
+      self.terrain_types[env_ids] = torch.randint(
+        0, num_cols, (num_envs,), device=self._device
+      )
+    else:
+      choice = torch.randint(0, len(spawn_cols), (num_envs,), device=self._device)
+      self.terrain_types[env_ids] = spawn_cols[choice]
     self.env_origins[env_ids] = self.terrain_origins[
       self.terrain_levels[env_ids], self.terrain_types[env_ids]
     ]
@@ -326,6 +343,35 @@ class TerrainEntity(Entity):
               group=3,
             )
 
+  def _resolve_spawn_columns(self, num_cols: int) -> torch.Tensor | None:
+    """Allowed column indices from ``cfg.spawn_terrain_names``.
+
+    Returns None when the filter is unset (all columns, historical behavior);
+    otherwise a 1-D tensor of column indices whose resolved terrain name is in
+    the filter. Raises early on unknown names or an empty result so a typo in
+    the cfg fails loudly at startup instead of silently spawning nowhere.
+    """
+    if self.cfg.spawn_terrain_names is None:
+      return None
+    generator_cfg = self.cfg.terrain_generator
+    if generator_cfg is None:
+      raise ValueError(
+        "spawn_terrain_names requires terrain_type='generator' with a "
+        "terrain_generator cfg."
+      )
+    column_names = resolve_curriculum_column_names(generator_cfg)
+    allowed = [
+      col
+      for col, name in enumerate(column_names)
+      if name in self.cfg.spawn_terrain_names
+    ]
+    if not allowed:
+      raise ValueError(
+        f"spawn_terrain_names {self.cfg.spawn_terrain_names} matched no "
+        f"terrain column (available: {column_names})."
+      )
+    return torch.tensor(allowed, dtype=torch.long, device=self._device)
+
   def _compute_env_origins_curriculum(
     self, num_envs: int, origins: torch.Tensor
   ) -> torch.Tensor:
@@ -338,11 +384,20 @@ class TerrainEntity(Entity):
     self.terrain_levels = torch.randint(
       0, max_init_level + 1, (num_envs,), device=self._device
     )
-    self.terrain_types = torch.div(
-      torch.arange(num_envs, device=self._device),
-      (num_envs / num_cols),
-      rounding_mode="floor",
-    ).to(torch.long)
+    spawn_cols = self._resolve_spawn_columns(num_cols)
+    if spawn_cols is None:
+      # Historical behavior: envs are evenly distributed over all columns by
+      # their index (round-robin).
+      self.terrain_types = torch.div(
+        torch.arange(num_envs, device=self._device),
+        (num_envs / num_cols),
+        rounding_mode="floor",
+      ).to(torch.long)
+    else:
+      # Spawn filter (spawn_terrain_names): sample each env's column uniformly
+      # from the allowed columns only — sampling decoupled from the layout.
+      choice = torch.randint(0, len(spawn_cols), (num_envs,), device=self._device)
+      self.terrain_types = spawn_cols[choice]
     env_origins = torch.zeros(num_envs, 3, device=self._device)
     env_origins[:] = origins[self.terrain_levels, self.terrain_types]
     return env_origins

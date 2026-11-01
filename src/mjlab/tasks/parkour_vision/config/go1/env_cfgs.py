@@ -7,6 +7,7 @@ from mjlab.tasks.parkour_vision.parkour_env_cfg import apply_parkour_overrides
 from mjlab.tasks.velocity_vision.config.go1.env_cfgs import (
   unitree_go1_rough_env_cfg,
 )
+from mjlab.terrains.config import PARKOUR_TERRAINS_CFG
 
 
 def unitree_go1_parkour_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
@@ -15,8 +16,8 @@ def unitree_go1_parkour_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   复用 ``unitree_go1_rough_env_cfg`` 的全部 Go1 特化（robot、depth_camera、
   terrain_scan、contact sensors、foot friction、camera DR、reward std、
   terminations 等），仅叠加 parkour 任务专属覆盖（见
-  :func:`apply_parkour_overrides`）：翻墙地形（单地形）、奖励点 bonus、
-  航点命令（WaypointVelocityCommand）。
+  :func:`apply_parkour_overrides`）：地形预设（PARKOUR_TERRAINS_CFG）、
+  奖励点 bonus、航点命令（WaypointVelocityCommand）。
   """
   cfg = unitree_go1_rough_env_cfg(play=play)
   apply_parkour_overrides(cfg)
@@ -30,14 +31,17 @@ def unitree_go1_parkour_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # Play 覆盖：保持 curriculum=True（课程模式下生成器是确定性的——每种地形
   # 独占一列、行=难度递增；若置 False 会切成随机模式，patch 随机抽地形+难度，
   # 布局就乱了）。env 的初始难度行由 max_init_terrain_level 控制。
+  # 行/列数引用 PARKOUR_TERRAINS_CFG 而非硬编码：2026-11-01 五列化时这里
+  # 残留的 num_cols=3 曾把 play 网格压回 3 列，按比例分配公式直接跳过了
+  # crawl 列（cumulative 0.668 > 0.6）——play 里看不到横杆地形的根因。
   if (
     play
     and cfg.scene.terrain is not None
     and cfg.scene.terrain.terrain_generator is not None
   ):
     cfg.scene.terrain.terrain_generator.curriculum = True
-    cfg.scene.terrain.terrain_generator.num_rows = 10
-    cfg.scene.terrain.terrain_generator.num_cols = 3
-    cfg.scene.terrain.terrain_generator.border_width = 10.0
+    cfg.scene.terrain.terrain_generator.num_rows = PARKOUR_TERRAINS_CFG.num_rows
+    cfg.scene.terrain.terrain_generator.num_cols = PARKOUR_TERRAINS_CFG.num_cols
+    cfg.scene.terrain.terrain_generator.border_width = PARKOUR_TERRAINS_CFG.border_width
 
   return cfg

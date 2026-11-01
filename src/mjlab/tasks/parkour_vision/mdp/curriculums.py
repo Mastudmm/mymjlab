@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
 import torch
 
 from mjlab.tasks.parkour_vision.mdp.waypoint_command import (
@@ -26,6 +27,41 @@ _STATE: dict[int, dict[str, float]] = {}
 # Separate accumulator for waypoint_timeout_schedule (shared keys with _STATE
 # would collide with commands_vel_score on the same env).
 _TIMEOUT_STATE: dict[int, dict[str, float]] = {}
+
+
+def _waypoint_env_mask(env: ManagerBasedRlEnv) -> torch.Tensor | None:
+  """Boolean mask [num_envs]: True on envs whose current terrain patch has
+  reward points (the waypoint/command curriculum group).
+
+  Point-less columns (the native stairs) run the heading command mode with a
+  STATIC speed range: they must neither contribute to nor dilute the
+  waypoint-group curricula (wmp_go1 keeps per-terrain-group curricula for
+  exactly this reason). Returns None when the terrain has no reward-point
+  array at all (no mixed-terrain setup; historical behavior).
+  """
+  terrain = env.scene.terrain
+  if terrain is None or terrain.reward_counts is None:
+    return None
+  counts = terrain.reward_counts[terrain.terrain_levels, terrain.terrain_types]
+  return counts > 0
+
+
+def _waypoint_fraction(env: ManagerBasedRlEnv) -> float:
+  """Fraction of terrain columns that carry reward points.
+
+  Scales the curricula's "at least num_envs episodes" evaluation threshold
+  down to the waypoint group's share of the envs, so a mixed 3/5 waypoint
+  grid reaches its evaluation just as often per wall-clock time as the old
+  all-waypoint grid.
+  """
+  terrain = env.scene.terrain
+  if terrain is None or terrain.reward_counts is None:
+    return 1.0
+  num_cols = terrain.reward_counts.shape[1]
+  # Columns with ANY nonzero count across rows carry reward points. (np.any
+  # with an axis trips pyright's numpy-stub overloads; sum>0 is equivalent.)
+  waypoint_cols = int((np.asarray(terrain.reward_counts > 0).sum(axis=0) > 0).sum())
+  return waypoint_cols / max(num_cols, 1)
 
 
 def commands_vel_score(
@@ -63,6 +99,14 @@ def commands_vel_score(
     env_ids[env.episode_length_buf[env_ids] > 0] if zero_step_reset_guard else env_ids
   )
   if len(env_ids) > 0:
+    # Waypoint group only (2026-11-01): heading-mode columns (stairs) run a
+    # static speed range — mixing their tracking scores into this accumulator
+    # would couple/dilute the waypoint group's speed curriculum.
+    wp_mask = _waypoint_env_mask(env)
+    if wp_mask is not None:
+      env_ids = env_ids[wp_mask[env_ids]]
+
+  if len(env_ids) > 0:
     reward_manager = env.reward_manager
     # Episode sums are already weight- and dt-scaled by the reward manager.
     episode_sums = reward_manager._episode_sums[reward_term_name][env_ids]
@@ -83,7 +127,7 @@ def commands_vel_score(
     state["sum"] += float(normalized.sum().item())
     state["count"] += float(len(env_ids))
 
-    if state["count"] >= env.num_envs:
+    if state["count"] >= env.num_envs * _waypoint_fraction(env):
       score = state["sum"] / state["count"]
       state["last_score"] = score
       state["sum"] = 0.0
@@ -141,6 +185,14 @@ def waypoint_timeout_schedule(
     env_ids[env.episode_length_buf[env_ids] > 0] if zero_step_reset_guard else env_ids
   )
   if len(env_ids) > 0:
+    # Waypoint group only (2026-11-01): heading-mode columns have no reward
+    # points; their (always-zero) pass rate would dilute the accumulator and
+    # the timeout budget could never shrink.
+    wp_mask = _waypoint_env_mask(env)
+    if wp_mask is not None:
+      env_ids = env_ids[wp_mask[env_ids]]
+
+  if len(env_ids) > 0:
     reward_manager = env.reward_manager
     bonus_cfg = reward_manager.get_term_cfg(bonus_term_name)
     claimed = bonus_cfg.func.claimed[env_ids]  # [n, max_points]
@@ -158,7 +210,7 @@ def waypoint_timeout_schedule(
     state["sum"] += float(rate.sum().item())
     state["count"] += float(len(env_ids))
 
-    if state["count"] >= env.num_envs:
+    if state["count"] >= env.num_envs * _waypoint_fraction(env):
       pass_rate = state["sum"] / state["count"]
       state["last_rate"] = pass_rate
       state["sum"] = 0.0
@@ -180,6 +232,7 @@ def terrain_levels_by_pass_rate(
   bonus_term_name: str = "reward_point_bonus",
   promote_rate: float = 0.5,
   demote_rate: float = 0.0,
+  stairs_promote_dist: float = 2.5,
   zero_step_reset_guard: bool = True,
 ) -> torch.Tensor:
   """Terrain-difficulty curriculum driven by the reward-point pass rate.
@@ -199,11 +252,20 @@ def terrain_levels_by_pass_rate(
   - pass rate <= ``demote_rate``: move it down one row;
   - in between: stay.
 
+  Point-less terrain columns (the native stairs, 2026-11-01) have NO pass
+  rate — left here they would read 0 every episode and be demoted to row 0
+  forever. They run a separate DISTANCE ladder instead: an env whose base
+  moved more than ``stairs_promote_dist`` (2.5 m) from its spawn origin over
+  the episode is promoted; never demoted (slow stair climbing is legitimate
+  progress, not failure). Spawn is at the patch center for the pyramid
+  stairs, so 2.5 m crosses the full stair ring.
+
   The pass rate is read from ``reward_point_bonus``'s per-env ``claimed``
   buffer (claimed points / valid points of the env's current terrain patch).
   This is only valid because the curriculum manager computes BEFORE the reward
   manager resets that buffer inside ``_reset_idx`` (same contract as
-  :func:`waypoint_timeout_schedule`).
+  :func:`waypoint_timeout_schedule`); the base position read for the distance
+  ladder is likewise the END-of-episode pose (pre-reset).
 
   Note the ordering with resets: ``terrain.update_env_origins`` changes the
   env's terrain (row, col) and its origin, so the NEXT episode starts on the
@@ -226,21 +288,40 @@ def terrain_levels_by_pass_rate(
   if len(env_ids) == 0:
     return torch.mean(terrain.terrain_levels.float())
 
-  reward_manager = env.reward_manager
-  bonus_cfg = reward_manager.get_term_cfg(bonus_term_name)
-  claimed = bonus_cfg.func.claimed[env_ids]  # [n, max_points]
   counts_t = terrain.reward_counts
   assert counts_t is not None, (
     "terrain_levels_by_pass_rate requires terrain with reward points."
   )
   counts = counts_t[terrain.terrain_levels[env_ids], terrain.terrain_types[env_ids]]
+
+  # -- Group split (2026-11-01): waypoint columns vs point-less columns. --
+  wp_ids = env_ids[counts > 0]
+  stairs_ids = env_ids[counts == 0]
+
+  if len(stairs_ids) > 0:
+    # Distance ladder for point-less columns: promote on displacement from
+    # the spawn origin (read pre-reset, i.e. the ended episode's pose);
+    # never demote.
+    robot = env.scene["robot"]
+    base_pos = robot.data.root_link_pos_w[stairs_ids][:, :2]
+    spawn = env.scene.env_origins[stairs_ids][:, :2]
+    dist = torch.norm(base_pos - spawn, dim=-1)
+    move_up = dist > stairs_promote_dist
+    terrain.update_env_origins(stairs_ids, move_up, torch.zeros_like(move_up))
+
+  if len(wp_ids) == 0:
+    return torch.mean(terrain.terrain_levels.float())
+
+  reward_manager = env.reward_manager
+  bonus_cfg = reward_manager.get_term_cfg(bonus_term_name)
+  claimed = bonus_cfg.func.claimed[wp_ids]  # [n, max_points]
   idx = torch.arange(claimed.shape[1], device=env.device)
-  valid = idx[None, :] < counts[:, None]
+  valid = idx[None, :] < counts[counts > 0][:, None]
   n_claimed = (claimed & valid).sum(dim=1).float()
   pass_rate = n_claimed / valid.sum(dim=1).clamp(min=1).float()
 
   move_up = pass_rate >= promote_rate
   move_down = (pass_rate <= demote_rate) & (~move_up)
-  terrain.update_env_origins(env_ids, move_up, move_down)
+  terrain.update_env_origins(wp_ids, move_up, move_down)
 
   return torch.mean(terrain.terrain_levels.float())

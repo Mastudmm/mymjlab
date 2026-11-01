@@ -402,8 +402,11 @@ def apply_parkour_overrides(
   }
 
   # ============================================================
-  # 2. 终止表（整表替换，7 项全部显式）
+  # 2. 终止表（整表替换，6 项全部显式）
   # ============================================================
+  # 2026-11-01（用户决定）：fell_into_pit 取消注册并删除——当前地形集无坑
+  # 可兜底（platform_gap 的跨缝坑由碰撞/倾倒终止或超时接住），且绝对世界
+  # 系 z 阈值会误杀逆台阶列的坑底出生（origin z 低至 ≈ -1.26 m）。
   cfg.terminations = {
     "time_out": TerminationTermCfg(func=envs_mdp.time_out, time_out=True),
     # 倾角终止 85°：60-85° 攀爬俯仰放行，真翻倒立即重置（v7 恢复；
@@ -439,11 +442,6 @@ def apply_parkour_overrides(
     "out_of_bounds": TerminationTermCfg(
       func=mdp.out_of_bounds,
       params={"asset_cfg": _robot(), "max_y_offset": 3.5, "max_back_x": 3.5},
-    ),
-    # 坠坑：掉进沟底（z < 0.15）的兜底。
-    "fell_into_pit": TerminationTermCfg(
-      func=mdp.base_height_below,
-      params={"asset_cfg": _robot(), "min_height": 0.15},
     ),
   }
 
@@ -507,6 +505,13 @@ def apply_parkour_overrides(
     waypoint_timeout=10.0,  # 基础限时，由 waypoint_timeout 课程收紧
     timeout_speed_factor=1.3,  # 可行性下限系数
     rel_standing_envs=0.05,  # 5% 概率零指令（站立）
+    # -- 台阶列 heading 模式（2026-11-01 用户定版）--
+    # 无奖励点的原生台阶列跑 mjlab 原生 heading 命令：速度幅值（静态范围，
+    # 不参与航点提速课程）+ 朝向目标 P 控；heading 全向 ±π。bonus 列
+    # （platforms / platform_gap / crawl）保持航点模式不变。
+    heading_terrain_names=("pyramid_stairs", "pyramid_stairs_inv"),
+    heading_speed_range=(0.2, 0.5),
+    heading_range=(-math.pi, math.pi),
     debug_vis=True,
   )
 

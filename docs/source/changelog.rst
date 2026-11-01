@@ -8,6 +8,28 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added two straight-line parkour terrains: ``BoxStraightPlatformGapTerrainCfg``
+  (two EQUAL-height platforms chained along +x with a true 0-0.3 m pit gap that
+  must be jumped, five-point low-high bonus chain) and
+  ``BoxStraightCrawlBarsTerrainCfg`` (two full-width overhead bars to crawl
+  under, wmp_go1 clearances 0.42->0.27 m, five-point bonus chain).
+- Added native stairs columns (``BoxPyramidStairsTerrainCfg`` /
+  ``BoxInvertedPyramidStairsTerrainCfg``) to ``PARKOUR_TERRAINS_CFG`` — the
+  preset is now five columns, one terrain type each.
+- Added per-terrain command-mode dispatch to ``WaypointVelocityCommand``:
+  point-less terrain columns run mjlab's native heading command (speed range +
+  P-controlled yaw toward a per-episode heading target) via
+  ``heading_terrain_names`` / ``heading_speed_range`` / ``heading_range``,
+  while bonus columns keep the waypoint chain. The command buffer layout is
+  unchanged.
+- Added ``TerrainEntityCfg.spawn_terrain_names``: restrict which sub-terrain
+  columns environments spawn on (uniform sampling over the matching columns),
+  decoupling spawn sampling from the grid layout; ``None`` keeps the
+  historical round-robin.
+- Added the shared ``resolve_curriculum_column_names`` helper (single source
+  of the curriculum column-allocation formula) used by the terrain generator,
+  the velocity command, and the terrain entity.
+
 - Added straight-line parkour terrains (``BoxStraightStepStonesTerrainCfg``,
   ``BoxStraightPlatformTerrainCfg``, ``BoxStraightGapTerrainCfg``): obstacle
   chains laid along the patch's +x axis — plum-blossom stone clusters over a
@@ -31,6 +53,17 @@ Added
 Changed
 ^^^^^^^
 
+- The parkour terrain preset is now five columns (platforms / platform_gap /
+  crawl / native stairs up / native stairs down); the parkour curricula split
+  by terrain group — reward-point columns follow the pass-rate ladder, the
+  point-less stairs columns follow a distance ladder (>2.5 m from spawn
+  promotes, never demotes) — and ``parkour_completed`` no longer fires on
+  point-less columns.
+- Removed the ``fell_into_pit`` termination (``base_height_below``) from the
+  parkour task per user decision: the current terrain set has no pit to catch,
+  and the absolute world-z threshold would false-trigger on the inverted
+  stairs' deep-pit spawn. Gap-pit falls are caught by body-contact /
+  orientation terminations or the episode timeout.
 - The parkour vision task no longer registers the handcrafted direction
   rewards (``forward_progress``, ``lateral_track``, ``heading_alignment``,
   ``cheat``): the waypoint command itself carries the direction toward the

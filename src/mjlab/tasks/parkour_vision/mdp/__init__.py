@@ -49,9 +49,6 @@ from mjlab.tasks.parkour_vision.mdp.terminations import (
   bad_orientation_excluding as bad_orientation_excluding,
 )
 from mjlab.tasks.parkour_vision.mdp.terminations import (
-  base_height_below as base_height_below,
-)
-from mjlab.tasks.parkour_vision.mdp.terminations import (
   illegal_contact_excluding as illegal_contact_excluding,
 )
 from mjlab.tasks.parkour_vision.mdp.terminations import (
@@ -83,7 +80,6 @@ __all__ = [
   "contact_penalty_excluding",
   "contact_penalty_force_scaled",
   "parkour_completed",
-  "base_height_below",
   "out_of_bounds",
   "bad_orientation_excluding",
   "illegal_contact_excluding",
