@@ -144,7 +144,7 @@ def apply_parkour_overrides(
     # 若下轮 reward_point_count 明显偏低，优先查横向漂移。
     "reward_point_bonus": RewardTermCfg(
       func=mdp.reward_point_bonus,
-      weight=1.0,
+      weight=1.25,
       params={
         "command_name": "twist",
         "hit_radius": 0.125,
@@ -177,7 +177,7 @@ def apply_parkour_overrides(
     ),
     "pose": RewardTermCfg(
       func=vv_mdp.variable_posture,
-      weight=0.5,  # 0.75(base) -> 0.25 -> 0.1（站立白拿 ~0.2/s）
+      weight=0.45,  # 0.75(base) -> 0.25 -> 0.1（站立白拿 ~0.2/s）
       params={
         "asset_cfg": _all_joints(),
         "command_name": "twist",
@@ -191,9 +191,9 @@ def apply_parkour_overrides(
           r".*(FR|FL|RR|RL)_calf_joint.*": 0.625,
         },
         "std_running": {
-          r".*(FR|FL|RR|RL)_hip_joint.*": 0.35,
-          r".*(FR|FL|RR|RL)_thigh_joint.*": 0.4,
-          r".*(FR|FL|RR|RL)_calf_joint.*": 0.635,
+          r".*(FR|FL|RR|RL)_hip_joint.*": 0.325,
+          r".*(FR|FL|RR|RL)_thigh_joint.*": 0.424,
+          r".*(FR|FL|RR|RL)_calf_joint.*": 0.65,
         },
         "walking_threshold": 0.10,
         "running_threshold": 1.25,
@@ -202,7 +202,7 @@ def apply_parkour_overrides(
     # ---- 步态 shaping（走/跑质量）----
     "air_time": RewardTermCfg(
       func=vv_mdp.feet_air_time,
-      weight=0.475,
+      weight=0.1,
       params={
         "sensor_name": "feet_ground_contact",
         "threshold_min": 0.125,
@@ -219,7 +219,7 @@ def apply_parkour_overrides(
     # 正常步态摆动相不受影响。权重与 air_time 对称（-0.475）。
     "air_time_over_penalty": RewardTermCfg(
       func=vv_mdp.feet_air_time_over_penalty,
-      weight=-0.475,
+      weight=-0.1,
       params={
         "sensor_name": "feet_ground_contact",
         "threshold": 0.5,
@@ -243,10 +243,10 @@ def apply_parkour_overrides(
     # 相对 20 分 bonus 可接受，但若攀爬期拉扯明显可调低过抬系数。
     "foot_swing_height": RewardTermCfg(
       func=vv_mdp.feet_swing_height,
-      weight=-0.2,  # -0.125 -> -0.5（v5 抬脚包）
+      weight=-0.0,  # -0.125 -> -0.5（v5 抬脚包）
       params={
         "sensor_name": "feet_ground_contact",
-        "target_height": 0.15,
+        "target_height": 0.1,
         "command_name": "twist",
         "command_threshold": 0.05,
         "asset_cfg": _feet_sites(),
