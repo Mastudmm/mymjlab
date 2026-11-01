@@ -26,6 +26,10 @@ Added
   columns environments spawn on (uniform sampling over the matching columns),
   decoupling spawn sampling from the grid layout; ``None`` keeps the
   historical round-robin.
+- Added ``TerrainEntityCfg.init_terrain_level`` and the matching play flag
+  ``--terrain-level N``: pin every env to an exact difficulty row (clamped to
+  the last row) for play/eval on a specific difficulty without climbing the
+  curriculum ladder from row 0.
 - Added the shared ``resolve_curriculum_column_names`` helper (single source
   of the curriculum column-allocation formula) used by the terrain generator,
   the velocity command, and the terrain entity.
@@ -53,6 +57,11 @@ Added
 Changed
 ^^^^^^^
 
+- Promoted the descent point just past wall 1 in the platform terrain chain
+  from a low-value guide (0.2) to a milestone (1.0, user decision
+  2026-11-01): after banking the wall-1-top bonus the robot could camp/lie
+  on the wall top because the next payment was only worth 20%. The chain is
+  now 3 milestones + 4 guides (9.5 points per full chain at bonus_value=100).
 - The parkour terrain preset is now five columns (platforms / platform_gap /
   crawl / native stairs up / native stairs down); the parkour curricula split
   by terrain group — reward-point columns follow the pass-rate ladder, the

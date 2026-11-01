@@ -39,6 +39,12 @@ class PlayConfig:
   seed: int | None = None
   no_terminations: bool = False
   """Disable all termination conditions (useful for viewing motions with dummy agents)."""
+  terrain_level: int | None = None
+  """Pin every env to this terrain difficulty row (curriculum-generator
+  tasks). For the parkour preset (10 rows): 0 = easiest, 9 = hardest, e.g.
+  --terrain-level 5 verifies the robot on MEDIUM difficulty without climbing
+  the ladder from row 0. None keeps the task default. The terrain curriculum
+  may still move envs off this row after episode resets, same as training."""
   live_plot: bool = False
   """Show a live matplotlib window (base vel + 12 leg joints) during play."""
   plot_env: int = 0
@@ -151,6 +157,18 @@ def run_play(task_id: str, cfg: PlayConfig):
 
   if cfg.num_envs is not None:
     env_cfg.scene.num_envs = cfg.num_envs
+  if cfg.terrain_level is not None:
+    # Pin the spawn difficulty row (curriculum-generator tasks only). The
+    # TerrainEntity clamps the row to the last one and skips uniform sampling.
+    terrain_cfg = env_cfg.scene.terrain
+    if terrain_cfg is None or terrain_cfg.terrain_generator is None:
+      print(
+        "[WARN]: --terrain-level requires a generator terrain "
+        "(terrain_type='generator'); ignoring it for this task."
+      )
+    else:
+      terrain_cfg.init_terrain_level = cfg.terrain_level
+      print(f"[INFO]: Spawning every env on terrain difficulty row {cfg.terrain_level}")
   if cfg.video_height is not None:
     env_cfg.viewer.height = cfg.video_height
   if cfg.video_width is not None:

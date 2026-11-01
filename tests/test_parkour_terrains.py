@@ -62,24 +62,28 @@ def test_reward_point_count_scales_with_difficulty(cfg_cls, low_n, high_n):
 
 
 def test_platform_chain_structure():
-  """The platform guide chain is x-ordered with exactly TWO high-value
-  milestones (wall-1 top, landing) and a LOW-value finish guide as the
-  chain tail (2026-10-30): parkour_completed reads the tail's position, so
-  the ending bonus sits finish_offset past wall 2 without inflating the
-  milestone payout."""
+  """The platform guide chain is x-ordered with exactly THREE high-value
+  milestones (wall-1 top, descent landing past wall 1, landing past wall 2)
+  and a LOW-value finish guide as the chain tail (2026-10-30; descent point
+  promoted 2026-11-01 to pay for JUMPING DOWN — the old low-value point let
+  the robot camp on the wall top after banking milestone 1)."""
   output = _generate(BoxStraightPlatformTerrainCfg, 0.5)
   assert output.reward_points is not None
   assert output.reward_point_factors is not None
   pts = np.stack(output.reward_points)
   fac = np.stack(output.reward_point_factors)
   assert len(pts) == len(fac) == 7
-  assert int((fac == 1.0).sum()) == 2
-  assert int((fac == 0.2).sum()) == len(pts) - 2
+  assert int((fac == 1.0).sum()) == 3
+  assert int((fac == 0.2).sum()) == len(pts) - 3
   # Strictly x-ordered (chain semantics: spawn -> ... -> finish guide).
   assert np.all(np.diff(pts[:, 0]) > 0)
-  # The two milestones are the wall-1 top (z == wall height) and the landing
-  # (second to last); the finish guide tail sits on the ground (z == 0).
+  # The milestones are the wall-1 top (z == wall height) and the descent
+  # landing + landing (both on the ground); the finish guide tail sits on
+  # the ground (z == 0).
   assert fac[0] == 0.2  # first approach point is a guide
+  assert fac[2] == 1.0  # wall-1 top milestone
+  assert fac[3] == 1.0  # descent milestone past wall 1 (anti wall-top camping)
+  assert pts[3][2] == pytest.approx(0.0)  # descent milestone is on the ground
   assert fac[-2] == 1.0  # landing milestone pays for crossing wall 2
   assert fac[-1] == 0.2  # finish guide tail (low value)
   assert pts[-2][2] == pytest.approx(0.0)  # landing is on the ground
@@ -271,15 +275,21 @@ def test_parkour_generator_collects_reward_points():
     "pyramid_stairs": 0,
     "pyramid_stairs_inv": 0,
   }
+  # Milestones (factor 1.0) per terrain: platforms has THREE since the
+  # descent point past wall 1 was promoted (user decision 2026-11-01);
+  # gap/crawl keep two.
+  expected_milestones = {
+    "platforms": 3,
+    "platform_gap": 2,
+    "crawl": 2,
+  }
   for row in range(cfg.num_rows):
     for col, name in enumerate(names):
       n = int(generator.reward_counts[row, col])
       assert n == expected_counts[name], (row, col, name, n)
       if n > 0:
         factors = generator.reward_point_factors[row, col, :n]
-        # Each bonus patch carries exactly two milestone (1.0) points; the
-        # remaining guide points are low-value (0.2).
-        assert (factors == 1.0).sum() == 2
+        assert (factors == 1.0).sum() == expected_milestones[name]
         assert (factors > 0).all()
 
 
@@ -605,3 +615,48 @@ def test_spawn_terrain_names_filter():
       ),
       device="cpu",
     )
+
+
+def test_init_terrain_level_pin():
+  """``init_terrain_level`` pins EVERY env to exactly that difficulty row
+  (clamped to the last row); ``None`` keeps uniform sampling within
+  ``[0, max_init_terrain_level]`` (2026-11-01 play/eval feature)."""
+  import torch
+
+  from mjlab.terrains.primitive_terrains import BoxFlatTerrainCfg
+  from mjlab.terrains.terrain_entity import TerrainEntity, TerrainEntityCfg
+
+  gen_cfg = TerrainGeneratorCfg(
+    size=(4.0, 4.0),
+    border_width=1.0,
+    num_rows=4,
+    num_cols=1,
+    curriculum=True,
+    add_lights=False,
+    sub_terrains={"flat": BoxFlatTerrainCfg(proportion=1.0)},
+  )
+
+  def build(**kwargs):
+    return TerrainEntity(
+      TerrainEntityCfg(
+        terrain_type="generator",
+        terrain_generator=gen_cfg,
+        num_envs=16,
+        **kwargs,
+      ),
+      device="cpu",
+    )
+
+  # Pinned row: every env starts on exactly row 2 (medium of 4).
+  pinned = build(init_terrain_level=2)
+  assert torch.all(pinned.terrain_levels == 2)
+
+  # Clamped to the last row when out of range.
+  clamped = build(init_terrain_level=99)
+  assert torch.all(clamped.terrain_levels == 3)
+
+  # None: historical behavior — levels inside [0, max_init_terrain_level]
+  # (with max_init_terrain_level=1: only rows 0/1 may appear).
+  sampled = build(max_init_terrain_level=1)
+  assert sampled.terrain_levels.min() >= 0
+  assert sampled.terrain_levels.max() <= 1

@@ -56,7 +56,15 @@ class TerrainEntityCfg(EntityCfg):
   "plane" terrain or when no sub-terrain origins exist."""
   max_init_terrain_level: int | None = None
   """Maximum initial difficulty level (row index) for environment placement in
-  curriculum mode. None uses all available rows."""
+  curriculum mode. None uses all available rows. Envs sample their initial row
+  UNIFORMLY from [0, max_init_terrain_level]."""
+  init_terrain_level: int | None = None
+  """Pin EVERY environment to exactly this difficulty row (curriculum mode).
+  None (default) keeps the historical uniform sampling from
+  ``[0, max_init_terrain_level]``. Useful for play/eval: verify the robot on a
+  SPECIFIC difficulty (e.g. the middle row) without climbing the ladder from
+  row 0. Clamped to the last row; the terrain curriculum may still move envs
+  off this row after episode resets (same as during training)."""
   spawn_terrain_names: tuple[str, ...] | None = None
   """Restrict which sub-terrain columns environments spawn on (curriculum
   mode). None (default) uses ALL columns with the historical round-robin
@@ -381,9 +389,17 @@ class TerrainEntity(Entity):
     else:
       max_init_level = min(self.cfg.max_init_terrain_level, num_rows - 1)
     self.max_terrain_level = num_rows
-    self.terrain_levels = torch.randint(
-      0, max_init_level + 1, (num_envs,), device=self._device
-    )
+    if self.cfg.init_terrain_level is not None:
+      # Pinned difficulty row (play/eval): every env starts on EXACTLY this
+      # row instead of sampling uniformly from [0, max_init_terrain_level].
+      init_level = min(self.cfg.init_terrain_level, num_rows - 1)
+      self.terrain_levels = torch.full(
+        (num_envs,), init_level, dtype=torch.long, device=self._device
+      )
+    else:
+      self.terrain_levels = torch.randint(
+        0, max_init_level + 1, (num_envs,), device=self._device
+      )
     spawn_cols = self._resolve_spawn_columns(num_cols)
     if spawn_cols is None:
       # Historical behavior: envs are evenly distributed over all columns by

@@ -246,9 +246,14 @@ PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
       border_width=0.25,
       floor_thickness=0.5,
       # 每个 patch 的奖励点数量上限（低-高引导链：接近段 2 低值点 +
-      # 墙1顶 + 墙间 2 低值点 + 落地里程碑 + 终点引导点 = 7 点，
-      # 2026-10-30 由 6 扩到 7）。
+      # 墙1顶 + 下台里程碑(墙1后地面,高——2026-11-01 由低值升级，解决
+      # "爬上墙1就趴在墙顶"的蹲营问题) + 墙2前低值点 + 落地里程碑 +
+      # 终点引导点 = 7 点 = 3高4低）。
       max_reward_points=7,
+      # 低价值引导点的奖励系数（相对里程碑 1.0 的比例）——低/高 bonus 点的
+      # 价值比旋钮（2026-11-01 显式暴露）。单点入账 =
+      # weight(1.25) × bonus_value(100) × 本系数 × dt(0.02)。
+      low_bonus_ratio=0.2,
     ),
     # col1：高台+跨缝（用户定版 2026-11-01，同日修订）：两块**完全相同**的
     # 高台（高度/深度/宽度全共享一次采样），顶面之间 0->0.3 m 的真缝（挖到
@@ -271,6 +276,8 @@ PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
       finish_offset=1.0,
       border_width=0.25,
       max_reward_points=5,
+      # 低/高 bonus 点价值比（2026-11-01 显式暴露，见 platforms 注释）。
+      low_bonus_ratio=0.2,
     ),
     # col2：低趴过横杆（wmp_go1 crawl 量纲）：2 根全宽悬空横杆，净高
     # 0.42->0.27 m 随难度收紧，杆顶 >=1.27 m 跳不过去，只能趴低钻。
@@ -290,6 +297,8 @@ PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
       border_width=0.25,
       floor_thickness=0.5,
       max_reward_points=5,
+      # 低/高 bonus 点价值比（2026-11-01 显式暴露，见 platforms 注释）。
+      low_bonus_ratio=0.2,
     ),
     # col3/col4：mjlab 原生金字塔台阶（用户定版 2026-11-01：原生量纲，
     # 步高 1cm 起步 -> 21cm，步宽 0.3-0.34 m 每 patch 随机）。

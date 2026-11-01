@@ -181,17 +181,19 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
   randomized per patch (thin walls get hopped over, thick walls get climbed).
 
   SEVEN reward points form a low-high guide chain (user decisions
-  2026-10-29/30, anti "flea-jump" economics): two low-value points on the
-  approach before wall 1, the wall-1 top (high), two low-value points in the
-  gap run before wall 2, the landing ground just past wall 2 (high — pays
-  for CROSSING), and a finish guide one meter farther out (low) as the chain
-  TAIL: ``parkour_completed`` fires margin (0.4 m) past the tail, ending the
-  episode near the patch edge. Low points pay ``low_bonus_ratio`` of the
-  milestone value so that walking the chain pays throughout, while a single
-  leap can at most clip one bubble. Approach points are ADAPTIVE: a patch
-  may emit 1 or 0 approach points when the spawn-to-wall1 span cannot fit
-  them with 0.35 m spacing and 0.45 m wall standoff (counts handle the
-  variable length).
+  2026-10-29/30, anti "flea-jump" economics; descent point promoted
+  2026-11-01): two low-value points on the approach before wall 1, the wall-1
+  top (high), a HIGH descent milestone on the ground just past wall 1 (pays
+  for JUMPING DOWN — as a low point the robot camped on the wall top after
+  banking milestone 1), a low-value guide point before wall 2, the landing
+  ground just past wall 2 (high — pays for CROSSING), and a finish guide one
+  meter farther out (low) as the chain TAIL: ``parkour_completed`` fires
+  margin (0.4 m) past the tail, ending the episode near the patch edge. Low
+  points pay ``low_bonus_ratio`` of the milestone value so that walking the
+  chain pays throughout, while a single leap can at most clip one bubble.
+  Approach points are ADAPTIVE: a patch may emit 1 or 0 approach points when
+  the spawn-to-wall1 span cannot fit them with 0.35 m spacing and 0.45 m wall
+  standoff (counts handle the variable length).
   """
 
   platform_height_range: tuple[float, float] = (0.0, 0.5)
@@ -315,12 +317,20 @@ class BoxStraightPlatformTerrainCfg(SubTerrainCfg):
     # Milestone 1: wall-1 top center (high value).
     reward_points.append(np.array([px1, cy, height1]))
     reward_point_factors.append(high)
-    # Gap guide points in the run between the walls. The realized gap is
-    # >= 1.5 m even in the worst clamped draw, so the two points keep
-    # >= 0.45 m spacing (> 0.35 m minimum).
-    for x in (right_edge1 + 0.6, left_edge2 - 0.45):
-      reward_points.append(np.array([x, cy, 0.0]))
-      reward_point_factors.append(low)
+    # Descent milestone (HIGH value, user decision 2026-11-01): the ground
+    # just past wall 1 pays for JUMPING DOWN and continuing. As a low-value
+    # guide point it paid only 0.2 — after banking the wall-1-top milestone
+    # the robot could camp/lie on the wall top with no downside; a milestone
+    # here prices the descent like the wall-2 landing. Walking on toward
+    # wall 2 sweeps through the capture bubble (collinear chain), so a long
+    # jump that overshoots the landing spot still claims it.
+    reward_points.append(np.array([right_edge1 + 0.6, cy, 0.0]))
+    reward_point_factors.append(high)
+    # Guide point in the run before wall 2 (LOW). The realized gap is
+    # >= 1.5 m even in the worst clamped draw, so the spacing to the descent
+    # milestone stays >= 0.45 m (> 0.35 m minimum).
+    reward_points.append(np.array([left_edge2 - 0.45, cy, 0.0]))
+    reward_point_factors.append(low)
     # Milestone 2: landing ground just past wall 2 (HIGH value, pays for
     # CROSSING; user decision 2026-10-30 keeps this milestone at 1.0).
     right_edge2 = px2 + depth2 / 2
