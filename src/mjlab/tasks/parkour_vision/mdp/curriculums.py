@@ -60,7 +60,12 @@ def _waypoint_fraction(env: ManagerBasedRlEnv) -> float:
   num_cols = terrain.reward_counts.shape[1]
   # Columns with ANY nonzero count across rows carry reward points. (np.any
   # with an axis trips pyright's numpy-stub overloads; sum>0 is equivalent.)
-  waypoint_cols = int((np.asarray(terrain.reward_counts > 0).sum(axis=0) > 0).sum())
+  # Tensor must hop to CPU before numpy — on GPU runs reward_counts lives on
+  # cuda:0 and torch.Tensor.numpy() raises TypeError (crashed full_v1 @14:34).
+  counts = terrain.reward_counts
+  if counts.device.type != "cpu":
+    counts = counts.cpu()
+  waypoint_cols = int((np.asarray(counts > 0).sum(axis=0) > 0).sum())
   return waypoint_cols / max(num_cols, 1)
 
 
