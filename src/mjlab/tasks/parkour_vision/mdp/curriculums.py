@@ -16,6 +16,7 @@ import torch
 from mjlab.tasks.parkour_vision.mdp.waypoint_command import (
   WaypointVelocityCommand,
 )
+from mjlab.terrains.terrain_generator import resolve_curriculum_column_names
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -239,7 +240,7 @@ def terrain_levels_by_pass_rate(
   demote_rate: float = 0.0,
   stairs_promote_dist: float = 2.5,
   zero_step_reset_guard: bool = True,
-) -> torch.Tensor:
+) -> dict[str, torch.Tensor]:
   """Terrain-difficulty curriculum driven by the reward-point pass rate.
 
   Replaces the velocity task's ``terrain_levels_vel`` for parkour. That one
@@ -276,13 +277,19 @@ def terrain_levels_by_pass_rate(
   env's terrain (row, col) and its origin, so the NEXT episode starts on the
   new patch — no current-episode state is touched.
 
-  Returns the mean terrain level for TensorBoard.
+  Returns a stats dict for TensorBoard (logged as
+  ``Curriculum/terrain_levels/<key>``): ``mean_level`` (the historical global
+  mean), plus PER-TERRAIN-TYPE ``level/<name>`` and ``pass_rate/<name>``
+  (2026-11-01 user request) so each terrain column's progression and
+  bottleneck can be observed separately. Columns with no envs (e.g. filtered
+  out by ``spawn_terrain_names``) are skipped rather than logged as
+  misleading zeros; stairs columns never get a ``pass_rate`` (no points).
   """
   terrain = env.scene.terrain
   assert terrain is not None, "terrain_levels_by_pass_rate needs a terrain."
   if terrain.terrain_origins is None:
     # Flat-plane tasks have no difficulty rows to move between.
-    return torch.tensor(0.0)
+    return {"mean_level": torch.tensor(0.0)}
 
   # The construction-time reset has episode_length_buf == 0 (nothing claimed
   # yet, origin still the default pose); skipping it avoids dividing by zero
@@ -291,7 +298,7 @@ def terrain_levels_by_pass_rate(
     env_ids[env.episode_length_buf[env_ids] > 0] if zero_step_reset_guard else env_ids
   )
   if len(env_ids) == 0:
-    return torch.mean(terrain.terrain_levels.float())
+    return {"mean_level": torch.mean(terrain.terrain_levels.float())}
 
   counts_t = terrain.reward_counts
   assert counts_t is not None, (
@@ -300,8 +307,9 @@ def terrain_levels_by_pass_rate(
   counts = counts_t[terrain.terrain_levels[env_ids], terrain.terrain_types[env_ids]]
 
   # -- Group split (2026-11-01): waypoint columns vs point-less columns. --
-  wp_ids = env_ids[counts > 0]
-  stairs_ids = env_ids[counts == 0]
+  wp_mask = counts > 0
+  wp_ids = env_ids[wp_mask]
+  stairs_ids = env_ids[~wp_mask]
 
   if len(stairs_ids) > 0:
     # Distance ladder for point-less columns: promote on displacement from
@@ -314,19 +322,45 @@ def terrain_levels_by_pass_rate(
     move_up = dist > stairs_promote_dist
     terrain.update_env_origins(stairs_ids, move_up, torch.zeros_like(move_up))
 
-  if len(wp_ids) == 0:
-    return torch.mean(terrain.terrain_levels.float())
+  # Per-env bonus pass rate (waypoint group only) — drives the ladder AND
+  # feeds the per-terrain stats below.
+  wp_pass_rate = torch.zeros(0, device=env.device)
+  if len(wp_ids) > 0:
+    reward_manager = env.reward_manager
+    bonus_cfg = reward_manager.get_term_cfg(bonus_term_name)
+    claimed = bonus_cfg.func.claimed[wp_ids]  # [n, max_points]
+    idx = torch.arange(claimed.shape[1], device=env.device)
+    valid = idx[None, :] < counts[wp_mask][:, None]
+    n_claimed = (claimed & valid).sum(dim=1).float()
+    wp_pass_rate = n_claimed / valid.sum(dim=1).clamp(min=1).float()
 
-  reward_manager = env.reward_manager
-  bonus_cfg = reward_manager.get_term_cfg(bonus_term_name)
-  claimed = bonus_cfg.func.claimed[wp_ids]  # [n, max_points]
-  idx = torch.arange(claimed.shape[1], device=env.device)
-  valid = idx[None, :] < counts[counts > 0][:, None]
-  n_claimed = (claimed & valid).sum(dim=1).float()
-  pass_rate = n_claimed / valid.sum(dim=1).clamp(min=1).float()
+    move_up = wp_pass_rate >= promote_rate
+    move_down = (wp_pass_rate <= demote_rate) & (~move_up)
+    terrain.update_env_origins(wp_ids, move_up, move_down)
 
-  move_up = pass_rate >= promote_rate
-  move_down = (pass_rate <= demote_rate) & (~move_up)
-  terrain.update_env_origins(wp_ids, move_up, move_down)
-
-  return torch.mean(terrain.terrain_levels.float())
+  # -- Per-terrain-type statistics (2026-11-01 user request) --
+  stats: dict[str, torch.Tensor] = {
+    "mean_level": torch.mean(terrain.terrain_levels.float())
+  }
+  generator_cfg = terrain.cfg.terrain_generator
+  assert generator_cfg is not None, (
+    "terrain_levels_by_pass_rate requires a generator terrain."
+  )
+  column_names = resolve_curriculum_column_names(generator_cfg)
+  # Pass rates grouped by the resetting envs' columns (bonus columns only).
+  pass_rate_by_col: dict[int, torch.Tensor] = {}
+  if wp_pass_rate.numel() > 0:
+    wp_cols = terrain.terrain_types[wp_ids]
+    for col in torch.unique(wp_cols).tolist():
+      col_mask = wp_cols == int(col)
+      pass_rate_by_col[int(col)] = wp_pass_rate[col_mask].mean()
+  for col, name in enumerate(column_names):
+    col_mask = terrain.terrain_types == col
+    if not bool(col_mask.any()):
+      # spawn_terrain_names may leave a column with no envs at all; logging
+      # a 0 there would read as "back at the easiest row" — skip instead.
+      continue
+    stats[f"level/{name}"] = terrain.terrain_levels[col_mask].float().mean()
+    if col in pass_rate_by_col:
+      stats[f"pass_rate/{name}"] = pass_rate_by_col[col]
+  return stats

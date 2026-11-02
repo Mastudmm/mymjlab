@@ -57,6 +57,12 @@ Added
 Changed
 ^^^^^^^
 
+- The ``terrain_levels_by_pass_rate`` curriculum now logs PER-TERRAIN-TYPE
+  statistics (user request 2026-11-01): besides the global mean level, each
+  terrain column reports ``level/<name>`` (mean difficulty row) and, for
+  bonus terrains, ``pass_rate/<name>`` — making per-terrain progression and
+  bottlenecks visible in TensorBoard under ``Curriculum/terrain_levels/*``.
+  The historical scalar return became the ``mean_level`` dict key.
 - Promoted the descent point just past wall 1 in the platform terrain chain
   from a low-value guide (0.2) to a milestone (1.0, user decision
   2026-11-01): after banking the wall-1-top bonus the robot could camp/lie
