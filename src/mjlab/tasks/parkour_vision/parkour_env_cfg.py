@@ -142,7 +142,7 @@ def apply_parkour_overrides(
     # 1-2 s -> 全程 ~0.05-0.25，相对 2 分/点的里程碑奖励可忽略，不伤攀爬。
     "base_vz_l2": RewardTermCfg(
       func=mdp.base_vertical_vel_l2,
-      weight=-0.75,
+      weight=-0.1,
     ),
     # 偏航角速度跟踪：站立白拿项，已降权为稳定器。
     "track_angular_velocity": RewardTermCfg(
@@ -199,7 +199,7 @@ def apply_parkour_overrides(
     ),
     "pose": RewardTermCfg(
       func=vv_mdp.variable_posture,
-      weight=0.5,  # 0.75(base) -> 0.25 -> 0.1（站立白拿 ~0.2/s）
+      weight=0.55,  # 0.75(base) -> 0.25 -> 0.1（站立白拿 ~0.2/s）
       params={
         "asset_cfg": _all_joints(),
         "command_name": "twist",
