@@ -775,3 +775,150 @@ class BoxStraightCrawlBarsTerrainCfg(SubTerrainCfg):
       reward_points=reward_points,
       reward_point_factors=reward_point_factors,
     )
+
+
+@dataclass(kw_only=True)
+class BoxStraightChainTerrainCfg(SubTerrainCfg):
+  """把若干「直线单地形」首尾相接拼成**一条** +x 方向的完整跑酷路线。
+
+  用途（用户需求 2026-11-03）：play 时不再按地形分类各自成列，而是把若
+  干种地形排成一条直线，机器人从最左端出生、依次穿过所有地形，命令方向
+  始终指向整条路线终点。训练仍用 `PARKOUR_TERRAINS_CFG` 的「每列一种
+  地形」网格，本类只服务于 play（见 `FULL_PARKOUR_TERRAINS_CFG`）。
+
+  拼接方式：**几何平移 + 奖励点平移**，不做任何几何重写。每个子地形都
+  是在自己的 patch 局部坐标系里沿 +x 长 0..size[0] 布障碍、出生点位于
+  `border_width + 0.5` 的直线地形；因此把第 i 段的局部坐标整体平移到
+  `offset_x = sum(前 i 段的 size[0])` 即可无缝对接（相邻两段的边框/地面
+  板在接缝处是同一 z=0 平面，不产生台阶）。
+
+  段顺序与难度：`segments` 的顺序 = 机器人经过的顺序；同一条线内**所有
+  段共用同一个 `difficulty`**（= 地形行号，见
+  `TerrainGenerator._generate_curriculum_terrains`），相邻行整条线难度递增。
+
+  终点：最后一段（台阶）自身不产奖励点，因此这里在整条线末端**补一个
+  终值点**（`final_point_offset` 反向偏移、低价值 `final_point_factor`），
+  使航点链尾 / `parkour_completed` / 「命令始终指向的终点」三者的位置
+  一致地落在最后一段的末端平地上。
+  """
+
+  segments: tuple[SubTerrainCfg, ...] = ()
+  """按机器人经过顺序排列的子地形配置。每段**保留自己的 `size`**（x 长度
+  与 y 宽度），拼接总长 = 各段 `size[0]` 之和，宽度必须一致。"""
+
+  final_point_offset: float = 0.5
+  """终点奖励点在整条线末端之前的 x 偏移（米）：终值点 x =
+  总长 - final_point_offset。
+
+  **耦合约束（复核 D-5，改动时请看这里）**：终值点既是命令的链尾目标，
+  也是 `parkour_completed` 的判定基准（成功线 = 终值点 + margin，当前
+  `parkour_env_cfg.py` 的 `margin=0.4`）。因此要求
+  ``final_point_offset >= margin + 最后一段末端的平地余量``，成功线才会
+  落在实地上：当前最后一段（原生台阶，border_width=1.0）末端有 1 m 平地，
+  终值点取在末端前 0.5 m，成功线在末端前 0.1 m（31.9 m ≤ 32 m 线内）。
+  若把本参数调到 < 0.4 m 或把台阶段的 border_width 收窄，必须同步检查
+  成功线是否仍在线内、且脚下有地面。"""
+
+  final_point_factor: float = 0.2
+  """终点奖励点的价值系数（低值 0.2，与各段引导点同一量纲）：终点只作为
+  链尾位置标识，不给通关额外大额 bonus（play 时回合无限，通关不重置）。"""
+
+  max_reward_points: int = 0
+  """奖励点前置分配上限 = 各段 `max_reward_points` 之和 + 1（终点）。在
+  `__post_init__` 里按 `segments` 自动算出，勿手工填写。"""
+
+  def __post_init__(self) -> None:
+    if len(self.segments) < 1:
+      raise ValueError("BoxStraightChainTerrainCfg needs at least one segment.")
+    # 生成器在建网格时会扫描该属性做前置分配（terrain_generator.py 的
+    # max_reward_points 汇总），因此必须在构造时就算好：各段上限之和
+    # （没有奖励点的段按 0 计）+ 本类补的终点。
+    self.max_reward_points = (
+      sum(int(getattr(seg, "max_reward_points", 0)) for seg in self.segments) + 1
+    )
+
+  def function(
+    self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
+  ) -> TerrainOutput:
+    # NOTE: no direct geom creation here — each segment appends its own
+    # geometries to the shared spec body, then we translate them by +x.
+    geometries: list[TerrainGeometry] = []
+    reward_points: list[np.ndarray] = []
+    reward_point_factors: list[np.ndarray] = []
+
+    # -- 布局自检（失败要响亮：拼接错位会让障碍物叠在一起，且奖励点/命令
+    # 终点会落到错误位置，属于静默错乱，必须在生成期直接报错）--
+    total_len = float(sum(float(seg.size[0]) for seg in self.segments))
+    if abs(total_len - float(self.size[0])) > 1e-6:
+      raise ValueError(
+        "BoxStraightChainTerrainCfg: the chained segments' x lengths sum to "
+        f"{total_len:.3f} m but the composite patch x size is "
+        f"{float(self.size[0]):.3f} m. Set the terrain generator size to the "
+        f"segment sum ({total_len:.1f}, {float(self.size[1]):.1f})."
+      )
+    widths = {round(float(seg.size[1]), 6) for seg in self.segments}
+    if len(widths) > 1 or abs(next(iter(widths)) - float(self.size[1])) > 1e-6:
+      raise ValueError(
+        "BoxStraightChainTerrainCfg: every segment must share ONE patch "
+        f"width (segments: {sorted(widths)}, composite: {float(self.size[1])})."
+      )
+
+    offset_x = 0.0
+    origin = np.zeros(3)
+    for seg_index, seg_cfg in enumerate(self.segments):
+      output = seg_cfg.function(difficulty, spec, rng)
+      # 第一段的出生点就是整条线的出生点（后续段只平移几何，不改出生）。
+      if seg_index == 0:
+        origin = np.asarray(output.origin, dtype=np.float64).copy()
+      # 几何：把该段的局部坐标平移到本段在整条线上的起点。
+      shift = np.array([offset_x, 0.0, 0.0])
+      for terrain_geom in output.geometries:
+        if terrain_geom.geom is not None:
+          terrain_geom.geom.pos = np.asarray(terrain_geom.geom.pos) + shift
+        geometries.append(terrain_geom)
+      # 奖励点：同样平移，按段顺序天然保持 x 递增（跨段即机器人前进方向）。
+      if output.reward_points:
+        seg_factors = output.reward_point_factors
+        seg_end_x = offset_x + float(seg_cfg.size[0])
+        for point_index, point in enumerate(output.reward_points):
+          shifted = np.asarray(point, dtype=np.float64) + shift
+          # 逐段区间自检（复核建议 D-3）：点必须落在**本段**的 x 跨度内。只查
+          # 全局递增抓不到"点串到相邻段"这类错（例如将来调大 finish_offset
+          # 时点会越过本段边界，却仍可能满足全局递增）。
+          if not (offset_x - 1e-6 <= shifted[0] <= seg_end_x + 1e-6):
+            raise ValueError(
+              "BoxStraightChainTerrainCfg: segment "
+              f"{self.segments[seg_index]!r} emits a reward point at global "
+              f"x={shifted[0]:.3f} m, outside its own span [{offset_x:.3f}, "
+              f"{seg_end_x:.3f}] m — check the segment's offset fields."
+            )
+          reward_points.append(shifted)
+          if seg_factors is None:
+            # 未声明系数的段（如原生台阶/步石类地形）默认全值 1.0，与生成器
+            # 预填 1.0 的默认语义一致（terrain_generator 的 factors 数组）。
+            reward_point_factors.append(np.asarray(1.0, dtype=np.float32))
+          else:
+            reward_point_factors.append(
+              np.asarray(seg_factors[point_index], dtype=np.float32)
+            )
+      offset_x += float(seg_cfg.size[0])
+
+    # -- 路线终点：最后一段（台阶）没有自己的奖励点，这里补链尾终值点 --
+    finish_x = total_len - float(self.final_point_offset)
+    reward_points.append(np.array([finish_x, float(self.size[1]) / 2, 0.0]))
+    reward_point_factors.append(np.asarray(self.final_point_factor, dtype=np.float32))
+
+    # 航点链、终点朝向与 `parkour_completed` 都依赖「点按 x 递增」这一不变量。
+    xs = np.array([float(p[0]) for p in reward_points])
+    if np.any(np.diff(xs) <= 1e-3):
+      raise ValueError(
+        "BoxStraightChainTerrainCfg: reward points must be strictly "
+        f"increasing along +x (got x={np.round(xs, 3).tolist()})."
+      )
+
+    return TerrainOutput(
+      origin=origin,
+      geometries=geometries,
+      reward_points=reward_points,
+      reward_point_factors=reward_point_factors,
+    )

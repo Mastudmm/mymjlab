@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import math
+from copy import deepcopy
 from dataclasses import replace
 
 from mjlab.envs import ManagerBasedRlEnvCfg
@@ -35,7 +36,7 @@ from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.tasks.parkour_vision import mdp
 from mjlab.tasks.velocity_vision import mdp as vv_mdp
 from mjlab.tasks.velocity_vision.mdp import UniformVelocityCommandCfg
-from mjlab.terrains.config import PARKOUR_TERRAINS_CFG
+from mjlab.terrains.config import FULL_PARKOUR_TERRAINS_CFG, PARKOUR_TERRAINS_CFG
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
 
@@ -73,6 +74,7 @@ def _gait_sites():
 def apply_parkour_overrides(
   cfg: ManagerBasedRlEnvCfg,
   terrain_cfg=PARKOUR_TERRAINS_CFG,
+  play: bool = False,
 ) -> None:
   """在 velocity_vision env cfg 上叠加 parkour 任务层配置。
 
@@ -86,6 +88,24 @@ def apply_parkour_overrides(
   cfg.scene.terrain.terrain_generator = replace(terrain_cfg)
   # 所有 env 从 row 0（墙高 ~0 m）起步，难度由课程按奖励点通过率推进。
   cfg.scene.terrain.max_init_terrain_level = 0
+
+  # 重生概率加权（用户 2026-11-03）：网格布局不变（5 列各一种地形），
+  # 只改每次重生落列的分布——矮墙 30% / gap 20% / 低杆 20% / 上下台阶
+  # 各 15%。proportion 机制在 curriculum 网格下会挤占列（30% 会拿走 2 列、
+  # 把 inv 台阶挤没，2026-11-03 实证），故列分配保持等比、只在这里加权。
+  cfg.scene.terrain.spawn_terrain_names = tuple(terrain_cfg.sub_terrains.keys())
+  # 加权只用于训练；play/eval 要均匀覆盖所有列（评估不偏科）。
+  cfg.scene.terrain.spawn_terrain_probs = (
+    None
+    if play
+    else (
+      0.30,  # platforms 矮墙
+      0.20,  # platform_gap 高台跨缝
+      0.20,  # crawl 低杆
+      0.15,  # pyramid_stairs 逆台阶
+      0.15,  # pyramid_stairs_inv 正台阶
+    )
+  )
 
   # 控制频率 / 回合（与 base 相同，显式写出便于调整）。
   cfg.decimation = 4  # 50 Hz 控制（200 Hz 物理 / 4）
@@ -108,7 +128,7 @@ def apply_parkour_overrides(
     # 误差大时仍有稠密梯度；天然不罚 vz。上界 = weight * 指令速度。
     "track_linear_velocity": RewardTermCfg(
       func=mdp.track_goal_vel,
-      weight=1.5,
+      weight=1.75,
       params={"command_name": "twist"},
     ),
     # 机体竖直速度 L2 罚（用户决定 2026-10-31，反"一跳一跳"步态）：
@@ -179,7 +199,7 @@ def apply_parkour_overrides(
     ),
     "pose": RewardTermCfg(
       func=vv_mdp.variable_posture,
-      weight=0.45,  # 0.75(base) -> 0.25 -> 0.1（站立白拿 ~0.2/s）
+      weight=0.5,  # 0.75(base) -> 0.25 -> 0.1（站立白拿 ~0.2/s）
       params={
         "asset_cfg": _all_joints(),
         "command_name": "twist",
@@ -601,3 +621,87 @@ def apply_parkour_overrides(
   # reset_robot_joints / push_robot / foot_friction / encoder_bias /
   # body_inertia_mass / cam_pos / dof_friction / dof_damping /
   # actuator_gains / joint_armature / effort_limits
+
+
+def apply_full_course_play_overrides(cfg: ManagerBasedRlEnvCfg) -> None:
+  """全地形 play（用户需求 2026-11-03）：把「按地形分类」的网格换成一条直线。
+
+  训练用 :data:`PARKOUR_TERRAINS_CFG` 的五列网格（每列一种地形，play 时
+  机器人各自只跑自己那一列）。本函数把地形换成
+  :data:`FULL_PARKOUR_TERRAINS_CFG` 的**单列 32 m 直线跑道**：
+
+      crawl(低趴过横杆) -> platform_gap(高台+跨缝) -> platforms(翻越高台)
+      -> pyramid_stairs(上下台阶：边缘进 = 先上台阶，到顶台后再下台阶)
+
+  并把命令切成 ``chain_tail_goal`` 模式：方向**始终指向整条线终点**（最后
+  一段台阶末端补的终值奖励点），机器人依次前进穿过所有地形。各段自身的
+  奖励点仍然保留、照常结算 bonus，只是不再作为逐段航点目标。
+
+  难度：10 行阶梯原样沿用，同一行内四段共用同一 ``difficulty``；行号由
+  ``play.py`` 的 ``--terrain-level`` 选择（不指定时从 0 行 = 最易起步）。
+  注意与既有 play 语义一致：地形课程 ``terrain_levels_by_pass_rate`` 仍在
+  运行，通关（奖励点通过率 >= 0.5）后 env 会被抬到下一行，即 ``--terrain-
+  level`` 只是**初始**行；想全程锁定同一档请在 play 期间观察行号，或按需
+  停用该课程项（本次未改，保持既有行为）。
+
+  只在 play 调用；训练 cfg 不受影响（训练仍是五列网格 + 自适应航点链）。
+
+  Args:
+    cfg: 由 ``unitree_go1_parkour_env_cfg(play=True)`` 构建的 parkour env cfg。
+
+  Raises:
+    ValueError: 当前 task 不是 parkour（没有生成器地形 / 没有
+      WaypointVelocityCommand 的 "twist" 命令）时——``--full-terrain`` 是
+      parkour 专属开关，用错 task 必须响亮失败，而不是静默换掉别的任务地形。
+  """
+  terrain = cfg.scene.terrain
+  if terrain is None or terrain.terrain_generator is None:
+    raise ValueError(
+      "--full-terrain requires a 'generator' terrain (terrain_type='generator' "
+      "with a terrain_generator); the current task has none. It is a parkour "
+      "task option only."
+    )
+  cmd = cfg.commands.get("twist")
+  if not isinstance(cmd, mdp.WaypointVelocityCommandCfg):
+    raise ValueError(
+      "--full-terrain requires the parkour waypoint command ('twist' as "
+      "WaypointVelocityCommandCfg); it is a parkour task option only."
+    )
+
+  # 单列直线跑道。deepcopy：避免运行期生成器把模块级全局 cfg 的段 size 改掉
+  # （TerrainGenerator.__init__ 会把 sub_terrains 的 size 设成网格 size）。
+  terrain.terrain_generator = deepcopy(FULL_PARKOUR_TERRAINS_CFG)
+  # 出生列显式锁定（单列时轮询本来也全落 col0；写死防止以后加列走散）。
+  terrain.spawn_terrain_names = ("full_course",)
+  # 从最易行起步（继承层已有 0，这里重申，因为 --terrain-level 的默认语义
+  # 依赖它；不指定时 play 从 row 0 开始，之后由课程按通过率逐行递增难度）。
+  terrain.max_init_terrain_level = 0
+
+  # 命令方向恒定指向链尾：整条线只有最后一列地形，且它的奖励点链尾 = 路线
+  # 终点，因此两者天然一致。
+  cmd.chain_tail_goal = True
+  # 单列路线带奖励点、且已无 pyramid_stairs 独立的列，清空列级 heading 分发
+  # （否则构造命令时会打印「heading_terrain_names 匹配不到列」的 warning）。
+  cmd.heading_terrain_names = ()
+  # 全地形 play 是"演示整条线"，通常 num_envs=1 且回合无限：保留训练期
+  # 5% 的零指令站立概率会让唯一那只狗有 5% 概率整回合站着不动（看起来像
+  # 坏了）。play 专属清零，保证每次 play 都给出前进指令。
+  cmd.rel_standing_envs = 0.0
+
+  # 单列 + max_init=0 意味着**所有 env 都出生在同一条线的同一个起点**（复核
+  # D-1 实测 num_envs>1 时唯一 origin 数恒为 1）：多只狗会完全重叠。默认
+  # play 是 num_envs=1 不受影响，但用户显式加 --num-envs 时需要知道这一点，
+  # 所以这里给出明确 warning，而不是静默重叠。
+  if cfg.scene.num_envs > 1:
+    print(
+      f"[WARN]: --full-terrain is ONE straight-line course; all "
+      f"{cfg.scene.num_envs} envs spawn at the same start point and will "
+      "overlap. Use --num-envs 1 (default) for a clean view."
+    )
+
+  print(
+    "[INFO]: Full-terrain play enabled: one straight-line course "
+    f"(crawl -> platform_gap -> platforms -> pyramid_stairs, "
+    f"{terrain.terrain_generator.size[0]:.0f} m long); command aims at the "
+    "course finish."
+  )

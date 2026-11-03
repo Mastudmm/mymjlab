@@ -8,6 +8,34 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added the full-terrain straight-line course (user request 2026-11-03):
+  ``BoxStraightChainTerrainCfg`` chains several straight-line sub-terrains
+  end-to-end along +x (geometry AND reward points translated by the cumulative
+  segment length, plus one low-value finish point closing the chain) and
+  ``FULL_PARKOUR_TERRAINS_CFG`` turns it into a single-column 32 m course —
+  ``crawl -> platform_gap -> platforms -> pyramid_stairs`` — with the 10
+  difficulty rows shared by all four segments (row index up = whole line
+  harder). Layout mismatches (segment lengths not filling the patch, widths
+  not matching, reward points not x-ordered, a segment emitting a reward
+  point outside its own x span) fail loudly at generation time. The chain's
+  ``final_point_offset`` (course finish point) is documented as coupled to
+  ``parkour_completed``'s 0.4 m margin: the success line must stay on solid
+  ground inside the patch.
+- Added the ``--full-terrain`` play option (``PlayConfig.full_terrain`` +
+  ``apply_full_course_play_overrides``): parkour play runs the ONE chained
+  course instead of one terrain type per column, starting at the first
+  segment and advancing through all of them; ``--terrain-level`` still selects
+  the shared difficulty row. Non-parkour tasks reject the flag. The override
+  also clears the training-time 5% standing-command chance
+  (``rel_standing_envs = 0``) so the single-robot demo always walks, and warns
+  when more than one env is requested (all envs would spawn at the same course
+  start point and overlap).
+- Added ``WaypointVelocityCommandCfg.chain_tail_goal`` (2026-11-03): when
+  enabled, the commanded direction ALWAYS points at the last reward point of
+  the chain (the course finish) instead of stepping through intermediate
+  waypoints; advancement, metrics, and debug visualization follow the same
+  target index. Training keeps the adaptive waypoint chain (default ``False``).
+
 - Added two straight-line parkour terrains: ``BoxStraightPlatformGapTerrainCfg``
   (two EQUAL-height platforms chained along +x with a true 0-0.3 m pit gap that
   must be jumped, five-point low-high bonus chain) and

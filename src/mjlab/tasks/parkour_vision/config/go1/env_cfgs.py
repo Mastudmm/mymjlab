@@ -20,7 +20,7 @@ def unitree_go1_parkour_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   奖励点 bonus、航点命令（WaypointVelocityCommand）。
   """
   cfg = unitree_go1_rough_env_cfg(play=play)
-  apply_parkour_overrides(cfg)
+  apply_parkour_overrides(cfg, play=play)
 
   # Play / eval：回合无限（base 的 play 覆盖被 parkour 层显式写出的 20 s
   # 覆盖了，这里恢复）；关掉深度整帧随机失效（训练期才需要）。

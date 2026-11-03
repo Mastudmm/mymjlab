@@ -30,6 +30,18 @@ in a single step):
 The speed magnitude is sampled once per episode from ``ranges.lin_vel_x``
 (the score curriculum raises its upper bound); the waypoint chain restarts
 from the first reward point on every episode reset.
+
+Two aiming modes (``chain_tail_goal``, added 2026-11-03):
+
+- ``False`` (training default): the adaptive waypoint chain above — the
+  command steps through the reward points of the env's terrain column.
+- ``True`` (full-course play): the command ALWAYS aims at the LAST reward
+  point of the chain, i.e. the finish of the whole straight-line course
+  (crawl bars -> gap -> high platforms -> stairs). Used by
+  ``--full-terrain`` so the commanded direction stays "toward the end of the
+  last terrain" while the robot advances over each obstacle in turn; reward
+  points keep paying their bonus, they are simply not used as intermediate
+  command targets.
 """
 
 from __future__ import annotations
@@ -162,11 +174,23 @@ class WaypointVelocityCommand(CommandTerm):
       return
     points, counts = self._waypoint_batch()
     batch = torch.arange(self.num_envs, device=self.device)
-    idx = torch.minimum(self.waypoint_idx, (counts - 1).clamp(min=0))
+    idx = self._target_index((counts - 1).clamp(min=0))
     wp = points[batch, idx]
     base_pos = self.robot.data.root_link_pos_w
     dist = torch.norm(wp[:, :2] - base_pos[:, :2], dim=-1)
     self.metrics["dist_to_waypoint"] += dist * (counts > 0).float()
+
+  def _target_index(self, idx_max: torch.Tensor) -> torch.Tensor:
+    """Index of the reward point the command currently aims at.
+
+    Waypoint mode steps through the chain via ``waypoint_idx``; the
+    ``chain_tail_goal`` mode (full-course play) always aims at the LAST point
+    (the course finish), so the commanded direction never switches between
+    terrains. ``idx_max`` is the per-env last index (``counts - 1``, >= 0).
+    """
+    if self.cfg.chain_tail_goal:
+      return idx_max
+    return torch.minimum(self.waypoint_idx, idx_max)
 
   def _resample_command(self, env_ids: torch.Tensor) -> None:
     if len(env_ids) == 0:
@@ -199,6 +223,11 @@ class WaypointVelocityCommand(CommandTerm):
     self._refresh_command_buffer()
 
   def _advance_waypoints(self) -> None:
+    # Full-course goal mode has no intermediate command targets to advance
+    # through (the command always aims at the chain tail), so the chain stays
+    # parked at index 0 and every per-step advancement check is skipped.
+    if self.cfg.chain_tail_goal:
+      return
     points, counts = self._waypoint_batch()
     batch = torch.arange(self.num_envs, device=self.device)
     idx_max = (counts - 1).clamp(min=0)
@@ -231,7 +260,7 @@ class WaypointVelocityCommand(CommandTerm):
     idx_max = (counts - 1).clamp(min=0)
     base_pos = self.robot.data.root_link_pos_w
 
-    idx = torch.minimum(self.waypoint_idx, idx_max)
+    idx = self._target_index(idx_max)
     wp = points[batch, idx]
     delta = wp[:, :2] - base_pos[:, :2]
     dist_xy = torch.norm(delta, dim=-1)
@@ -246,7 +275,11 @@ class WaypointVelocityCommand(CommandTerm):
     # robot keeps walking forward and parkour_completed fires. Measured
     # before the fix (AMP lerp=0.8 checkpoint, 2500 play steps): 4/4 envs
     # spent ~2000 steps circling the finish with ZERO resets.
-    exhausted = (self.waypoint_idx >= idx_max) & (base_pos[:, 0] > wp[:, 0])
+    # ``idx >= idx_max`` covers both modes: the normal chain only reaches the
+    # tail index once exhausted, while ``chain_tail_goal`` mode aims at the
+    # tail from step 0 (idx == idx_max) — the +x freeze therefore applies as
+    # soon as the robot is past the course finish in THAT mode too.
+    exhausted = (idx >= idx_max) & (base_pos[:, 0] > wp[:, 0])
     if bool(exhausted.any()):
       forward = torch.zeros_like(dir_w)
       forward[:, 0] = 1.0
@@ -349,7 +382,12 @@ class WaypointVelocityCommand(CommandTerm):
             width=0.02,
           )
         continue
-      idx = min(int(self.waypoint_idx[batch].item()), count - 1)
+      # chain_tail_goal mode parks the chain at index 0, so the drawn target
+      # must be the same tail the command actually aims at.
+      if self.cfg.chain_tail_goal:
+        idx = count - 1
+      else:
+        idx = min(int(self.waypoint_idx[batch].item()), count - 1)
       wp = points_t[row, col, idx].detach().cpu().numpy()
       visualizer.add_sphere(wp, 0.12, (0.9, 0.25, 0.25, 0.9))
       visualizer.add_arrow(
@@ -389,6 +427,12 @@ class WaypointVelocityCommandCfg(CommandTermCfg):
   # 2026-11-01); use a narrower forward-biased range to keep robots roughly
   # along the patch axis.
   heading_range: tuple[float, float] = (-math.pi, math.pi)
+  # -- Full-course goal mode (2026-11-03, --full-terrain play) --
+  # When True the command ALWAYS aims at the LAST reward point of the env's
+  # chain (the finish of the whole straight-line course) instead of stepping
+  # through intermediate waypoints; reward points still pay their bonus.
+  # Training keeps this False (adaptive waypoint chain).
+  chain_tail_goal: bool = False
 
   def __post_init__(self):
     if self.reach_radius <= 0.0:

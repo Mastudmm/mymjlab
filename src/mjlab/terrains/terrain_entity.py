@@ -73,6 +73,14 @@ class TerrainEntityCfg(EntityCfg):
   random from the matching columns — decoupling spawn sampling from the grid
   layout. Used to train/evaluate on a subset of terrain types (e.g. a single
   named terrain for play)."""
+  spawn_terrain_probs: tuple[float, ...] | None = None
+  """Non-uniform spawn probabilities aligned 1:1 with ``spawn_terrain_names``
+  (same length, order-sensitive; summed to ~1). None (default) keeps the
+  uniform sampling of that filter. Example (5-column parkour, 2026-11-01
+  user spec): names=(platforms, platform_gap, crawl, pyramid_stairs,
+  pyramid_stairs_inv), probs=(0.30, 0.20, 0.20, 0.15, 0.15) — the GRID
+  layout stays 1-column-per-terrain; only the RESPAWN distribution is
+  weighted. Sampled per env via torch.multinomial (device-correct)."""
   num_envs: int = 1
   """Number of parallel environments to create. This will get overridden by the
   scene configuration if specified there."""
@@ -273,7 +281,14 @@ class TerrainEntity(Entity):
         0, num_cols, (num_envs,), device=self._device
       )
     else:
-      choice = torch.randint(0, len(spawn_cols), (num_envs,), device=self._device)
+      # Weighted spawn (2026-11-01 user spec): probs aligned with spawn_cols
+      # via the cfg name->prob map; falls back to uniform when absent.
+      probs = self._resolve_spawn_probs()
+      if probs is None:
+        choice = torch.randint(0, len(spawn_cols), (num_envs,), device=self._device)
+      else:
+        prob_vec = torch.tensor(probs, dtype=torch.float, device=self._device)
+        choice = torch.multinomial(prob_vec, num_envs, replacement=True)
       self.terrain_types[env_ids] = spawn_cols[choice]
     self.env_origins[env_ids] = self.terrain_origins[
       self.terrain_levels[env_ids], self.terrain_types[env_ids]
@@ -350,6 +365,32 @@ class TerrainEntity(Entity):
               rgba=site_color,
               group=3,
             )
+
+  def _resolve_spawn_probs(self) -> tuple[float, ...] | None:
+    """Per-spawn-column probabilities from ``cfg.spawn_terrain_probs``.
+
+    Returns None when unset or when ``spawn_terrain_names`` is unset (nothing
+    to weight). Validates 1:1 alignment with the configured names and a
+    strictly-positive, approximately-normalized sum so a cfg typo fails at
+    startup instead of silently skewing the spawn distribution.
+    """
+    names = self.cfg.spawn_terrain_names
+    probs = self.cfg.spawn_terrain_probs
+    if names is None or probs is None:
+      return None
+    if len(names) != len(probs):
+      raise ValueError(
+        f"spawn_terrain_probs ({len(probs)}) must align 1:1 with "
+        f"spawn_terrain_names ({len(names)})."
+      )
+    total = float(sum(probs))
+    if total <= 0.0 or abs(total - 1.0) > 0.05:
+      raise ValueError(
+        f"spawn_terrain_probs must sum to ~1.0 (got {total:.4f})."
+      )
+    if any(p < 0.0 for p in probs):
+      raise ValueError("spawn_terrain_probs entries must be non-negative.")
+    return tuple(float(p) / total for p in probs)
 
   def _resolve_spawn_columns(self, num_cols: int) -> torch.Tensor | None:
     """Allowed column indices from ``cfg.spawn_terrain_names``.

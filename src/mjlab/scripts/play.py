@@ -11,6 +11,9 @@ import tyro
 
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
+from mjlab.tasks.parkour_vision.parkour_env_cfg import (
+  apply_full_course_play_overrides,
+)
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.utils.os import get_wandb_checkpoint_path
@@ -49,6 +52,18 @@ class PlayConfig:
   """Show a live matplotlib window (base vel + 12 leg joints) during play."""
   plot_env: int = 0
   """Environment index to plot when --live-plot is on (which dog)."""
+  full_terrain: bool = False
+  """Parkour only: play ONE full straight-line course instead of one terrain
+  per column. The terrains are chained along +x in order
+  crawl bars -> high platforms with gap -> high walls -> up/down stairs
+  (FULL_PARKOUR_TERRAINS_CFG), the robot starts at the left end of the first
+  segment and advances through all of them in turn. The "twist" command
+  direction ALWAYS points at the finish of the last terrain (the chain-tail
+  reward point) instead of stepping through per-terrain waypoints, while every
+  terrain's own reward points keep paying their bonus. Difficulty: the whole
+  line shares one row of the 10-row ladder (--terrain-level selects it,
+  default row 0 = easiest).
+  """
 
   # Internal flag used by demo script.
   _demo_mode: tyro.conf.Suppress[bool] = False
@@ -62,6 +77,17 @@ def run_play(task_id: str, cfg: PlayConfig):
   env_cfg = load_env_cfg(task_id, play=True)
   if cfg.seed is not None:
     env_cfg.seed = cfg.seed
+  # Apply --num-envs BEFORE the task-specific override below: the parkour
+  # full-terrain override needs the FINAL env count to warn about all envs
+  # spawning on the same course start point.
+  if cfg.num_envs is not None:
+    env_cfg.scene.num_envs = cfg.num_envs
+  # Parkour full-terrain play: swap the per-terrain column grid for ONE
+  # straight-line course and make the command aim at the course finish.
+  # Applied BEFORE the --terrain-level block below so the row pinning lands on
+  # the swapped generator.
+  if cfg.full_terrain:
+    apply_full_course_play_overrides(env_cfg)
   agent_cfg = load_rl_cfg(task_id)
 
   DUMMY_MODE = cfg.agent in {"zero", "random"}
@@ -155,8 +181,7 @@ def run_play(task_id: str, cfg: PlayConfig):
       )
     log_dir = resume_path.parent
 
-  if cfg.num_envs is not None:
-    env_cfg.scene.num_envs = cfg.num_envs
+  # --num-envs was already applied above (before the full-terrain override).
   if cfg.terrain_level is not None:
     # Pin the spawn difficulty row (curriculum-generator tasks only). The
     # TerrainEntity clamps the row to the last one and skips uniform sampling.

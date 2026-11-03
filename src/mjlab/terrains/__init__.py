@@ -12,6 +12,9 @@ from mjlab.terrains.heightfield_terrains import (
 )
 from mjlab.terrains.heightfield_terrains import HfWaveTerrainCfg as HfWaveTerrainCfg
 from mjlab.terrains.parkour_terrains import (
+  BoxStraightChainTerrainCfg as BoxStraightChainTerrainCfg,
+)
+from mjlab.terrains.parkour_terrains import (
   BoxStraightCrawlBarsTerrainCfg as BoxStraightCrawlBarsTerrainCfg,
 )
 from mjlab.terrains.parkour_terrains import (

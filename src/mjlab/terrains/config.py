@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import mujoco
 
 import mjlab.terrains as terrain_gen
@@ -323,6 +325,55 @@ PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
       platform_width=3.0,
       border_width=1.0,
       stair_lip_enabled=False,
+    ),
+  },
+  add_lights=True,
+)
+
+
+# ---- 全地形 play 预设（用户需求 2026-11-03）----
+# play 时不再按地形分类各自成列，而是把这几种地形**排成一条直线**：
+# 机器人从最左端出生，依次穿过
+#   crawl(低趴过横杆) -> platform_gap(高台+跨缝) -> platforms(翻越高台)
+#   -> pyramid_stairs(中心高台台阶：从边缘进入 = 先上台阶，到顶台后再下台阶)
+# 顺序即机器人前进方向（用户定版顺序，按地形难度依次递增）。
+#
+# 几何参数**唯一来源**仍是上面的 PARKOUR_TERRAINS_CFG：这里用 dataclasses.replace
+# 派生新实例（不改动原对象），只为把每段 size 固定成原生 8 m patch 长度，避免
+# 生成器在别处改 size 时让拼接总长与段内几何失配（拼接类在生成期会做
+# 长度自检，失配直接报错）。每段沿用原生 8 m，因此整条线长 = 4×8 = 32 m、
+# 宽 8 m；10 行难度阶梯原样保留：同一行内四段共用同一 difficulty，行号
+# 递增 = 整条线难度递增。
+#
+# 只在 play 生效（play.py 的 --full-terrain + parkour_env_cfg 的
+# apply_full_course_play_overrides，命令切换为「始终指向链尾终点」）；
+# 训练仍用五列网格的 PARKOUR_TERRAINS_CFG，行为不变。
+_FULL_COURSE_SEGMENT_SIZE = (8.0, 8.0)
+# 段名必须与 PARKOUR_TERRAINS_CFG 的 sub_terrains 键一致（写错在 import 期
+# 就会 KeyError，不会静默拼错路线）。
+_FULL_COURSE_SEGMENT_NAMES = ("crawl", "platform_gap", "platforms", "pyramid_stairs")
+
+FULL_PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
+  size=(
+    _FULL_COURSE_SEGMENT_SIZE[0] * len(_FULL_COURSE_SEGMENT_NAMES),
+    _FULL_COURSE_SEGMENT_SIZE[1],
+  ),
+  border_width=20.0,
+  # 10 行 = 10 档整条线难度（--terrain-level 选行）；1 列 = 唯一的一条路线
+  # （所有 env 都出生在同一条线上，行不同即难度不同）。
+  num_rows=10,
+  num_cols=1,
+  curriculum=True,
+  sub_terrains={
+    "full_course": terrain_gen.BoxStraightChainTerrainCfg(
+      proportion=1.0,
+      segments=tuple(
+        replace(
+          PARKOUR_TERRAINS_CFG.sub_terrains[name],
+          size=_FULL_COURSE_SEGMENT_SIZE,
+        )
+        for name in _FULL_COURSE_SEGMENT_NAMES
+      ),
     ),
   },
   add_lights=True,

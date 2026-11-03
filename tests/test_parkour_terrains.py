@@ -1,12 +1,15 @@
 """Tests for the straight-line parkour terrains."""
 
+from copy import deepcopy
+
 import mujoco
 import numpy as np
 import pytest
 import torch
 
-from mjlab.terrains.config import PARKOUR_TERRAINS_CFG
+from mjlab.terrains.config import FULL_PARKOUR_TERRAINS_CFG, PARKOUR_TERRAINS_CFG
 from mjlab.terrains.parkour_terrains import (
+  BoxStraightChainTerrainCfg,
   BoxStraightCrawlBarsTerrainCfg,
   BoxStraightGapTerrainCfg,
   BoxStraightPlatformGapTerrainCfg,
@@ -247,7 +250,8 @@ def test_parkour_generator_collects_reward_points():
   (heading-mode columns)."""
   cfg = PARKOUR_TERRAINS_CFG
   spec = mujoco.MjSpec()
-  generator = TerrainGenerator(cfg)
+  # deepcopy: TerrainGenerator.__init__ writes sub-terrain sizes into the cfg.
+  generator = TerrainGenerator(deepcopy(cfg))
   generator.compile(spec)
 
   assert generator.reward_points is not None
@@ -660,3 +664,170 @@ def test_init_terrain_level_pin():
   sampled = build(max_init_terrain_level=1)
   assert sampled.terrain_levels.min() >= 0
   assert sampled.terrain_levels.max() <= 1
+
+
+# ---------------------------------------------------------------------------
+# 2026-11-03 full-terrain play: ONE straight-line course chaining every terrain.
+# ---------------------------------------------------------------------------
+
+FULL_COURSE_SEG_LEN = 8.0
+FULL_COURSE_LEN = 32.0
+# Segment boundaries along the course x axis: [0, 8) crawl, [8, 16) gap,
+# [16, 24) platforms, [24, 32) stairs.
+FULL_COURSE_ORDER = ("crawl", "platform_gap", "platforms", "pyramid_stairs")
+
+
+def _chain_cfg() -> BoxStraightChainTerrainCfg:
+  """Deep-copied chain cfg (never mutate the module-level FULL preset)."""
+  cfg = deepcopy(FULL_PARKOUR_TERRAINS_CFG.sub_terrains["full_course"])
+  assert isinstance(cfg, BoxStraightChainTerrainCfg)
+  # The generator assigns the composite size at grid build time; emulate it.
+  cfg.size = FULL_PARKOUR_TERRAINS_CFG.size
+  return cfg
+
+
+@pytest.mark.parametrize("difficulty", [0.2, 0.9])
+def test_full_course_chain_order_and_count(difficulty):
+  """The chained course emits 18 points in strict +x order, one segment block
+  per terrain (5 crawl / 5 gap / 7 platforms / 0 stairs + 1 finish)."""
+  cfg = _chain_cfg()
+  spec = mujoco.MjSpec()
+  spec.worldbody.add_body(name="terrain")
+  output = cfg.function(difficulty, spec, np.random.default_rng(0))
+
+  assert output.reward_points is not None
+  assert output.reward_point_factors is not None
+  pts = np.stack(output.reward_points)
+  fac = np.stack(output.reward_point_factors)
+  assert len(pts) == len(fac) == 18
+  assert np.all(np.diff(pts[:, 0]) > 0)
+
+  # Segment blocks: 5 crawl, 5 gap, 7 platforms, then the appended finish.
+  seg_counts = (5, 5, 7, 1)
+  assert sum(seg_counts) == len(pts)
+  bounds = np.cumsum(seg_counts)
+  starts = np.concatenate([[0], bounds[:-1]])
+  for seg, (start, stop) in enumerate(zip(starts, bounds, strict=True)):
+    block = pts[start:stop]
+    seg_lo = seg * FULL_COURSE_SEG_LEN
+    seg_hi = (seg + 1) * FULL_COURSE_SEG_LEN
+    # Every point of a block lies inside its segment's x span (the finish is
+    # appended INSIDE the last segment, so the blocks are well-defined).
+    assert np.all(block[:, 0] > seg_lo - 1e-6), (difficulty, seg)
+    assert np.all(block[:, 0] < seg_hi + 1e-6), (difficulty, seg)
+
+  # The finish point closes the chain at course_end - final_point_offset.
+  assert pts[-1][0] == pytest.approx(FULL_COURSE_LEN - cfg.final_point_offset)
+  assert fac[-1] == pytest.approx(cfg.final_point_factor)
+  # All points sit on landable heights (no point inside a pit).
+  assert np.all(pts[:, 2] > -1e-6)
+
+
+def test_full_course_geometry_spans_the_whole_line():
+  """Every segment's geometry is translated, not rebuilt: the chain's geometry
+  set is the union of the segment sets shifted by cumulative segment length."""
+  cfg = _chain_cfg()
+  spec = mujoco.MjSpec()
+  spec.worldbody.add_body(name="terrain")
+  rng = np.random.default_rng(7)
+  output = cfg.function(0.9, spec, rng)
+
+  xs = np.array([g.geom.pos[0] for g in output.geometries if g.geom is not None])
+  halves = np.array([g.geom.size[0] for g in output.geometries if g.geom is not None])
+  left_edges = xs - halves
+  right_edges = xs + halves
+  # The line must be covered from its very left edge to its very right edge.
+  assert left_edges.min() <= 0.0 + 1e-6
+  assert right_edges.max() >= FULL_COURSE_LEN - 1e-6
+
+  # Rebuild each segment with the SAME rng and add the missing shift: the
+  # union must match the chain's (position) multiset exactly.
+  cfg2 = _chain_cfg()
+  spec2 = mujoco.MjSpec()
+  spec2.worldbody.add_body(name="terrain")
+  rng2 = np.random.default_rng(7)
+  unshifted: list[np.ndarray] = []
+  shift = 0.0
+  for seg in cfg2.segments:
+    seg_out = seg.function(0.9, spec2, rng2)
+    unshifted.extend(
+      np.asarray(g.geom.pos) + np.array([shift, 0.0, 0.0])
+      for g in seg_out.geometries
+      if g.geom is not None
+    )
+    shift += float(seg.size[0])
+  assert len(unshifted) == len(xs)
+  shifted_x = sorted(xs.tolist())
+  expected_x = sorted(float(p[0]) for p in unshifted)
+  assert np.allclose(shifted_x, expected_x, atol=1e-9)
+
+
+def test_full_course_requires_matching_patch_size():
+  """A patch size that does not equal the segment-length sum must fail loudly
+  (silent mismatch would overlap obstacles and misplace the finish point)."""
+  cfg = _chain_cfg()
+  cfg.size = (16.0, FULL_COURSE_SEG_LEN)  # wrong: must be 32 m
+  spec = mujoco.MjSpec()
+  spec.worldbody.add_body(name="terrain")
+  with pytest.raises(ValueError, match="x lengths sum to"):
+    cfg.function(0.5, spec, np.random.default_rng(0))
+
+
+def test_full_course_generator_single_column():
+  """FULL_PARKOUR_TERRAINS_CFG generates ONE column named "full_course" and
+  every row carries the full 18-point chain (10 rows = whole-line difficulty)."""
+  cfg = FULL_PARKOUR_TERRAINS_CFG
+  assert cfg.num_cols == 1 and cfg.num_rows == 10
+  assert cfg.size == (FULL_COURSE_LEN, 8.0)
+  assert resolve_curriculum_column_names(cfg) == ["full_course"]
+
+  spec = mujoco.MjSpec()
+  # deepcopy: TerrainGenerator.__init__ writes sub-terrain sizes into the cfg.
+  generator = TerrainGenerator(deepcopy(cfg))
+  generator.compile(spec)
+
+  assert generator.reward_points is not None
+  assert generator.reward_counts is not None
+  assert generator.reward_points.shape == (cfg.num_rows, 1, 18, 3)
+  assert generator.reward_counts.tolist() == [[18]] * cfg.num_rows
+  # Rows are the difficulty ladder: same chain shape, monotonically harder
+  # geometry is not asserted here (geometry is covered per-segment).
+  for row in range(cfg.num_rows):
+    pts = generator.reward_points[row, 0, :18]
+    assert np.all(np.diff(pts[:, 0]) > 0)
+
+
+def test_full_course_play_override():
+  """--full-terrain swaps the generator to the single-course grid, pins the
+  spawn column, starts at row 0, and switches the command to chain-tail goal
+  mode; non-parkour tasks raise instead of silently accepting the flag."""
+  import mjlab.tasks  # noqa: F401  (populate the task registry)
+  from mjlab.tasks.parkour_vision.parkour_env_cfg import (
+    apply_full_course_play_overrides,
+  )
+  from mjlab.tasks.registry import load_env_cfg
+
+  cfg = load_env_cfg("Mjlab-ParkourVisionAMP-Unitree-Go1", play=True)
+  apply_full_course_play_overrides(cfg)
+  terrain = cfg.scene.terrain
+  assert terrain is not None and terrain.terrain_generator is not None
+  assert terrain.terrain_generator.num_cols == 1
+  assert terrain.terrain_generator.size == (FULL_COURSE_LEN, 8.0)
+  assert terrain.spawn_terrain_names == ("full_course",)
+  assert terrain.max_init_terrain_level == 0
+  cmd = cfg.commands["twist"]
+  # Narrowing also proves the override kept the waypoint command type (the
+  # helper validates the same isinstance before touching the field).
+  from mjlab.tasks.parkour_vision.mdp import WaypointVelocityCommandCfg
+
+  assert isinstance(cmd, WaypointVelocityCommandCfg)
+  assert cmd.chain_tail_goal is True
+  assert cmd.heading_terrain_names == ()
+  # Play-only: the single-robot demo must never be given a zero (standing)
+  # command for the whole (infinite-length) episode.
+  assert cmd.rel_standing_envs == 0.0
+
+  # A non-parkour task (no "twist" waypoint command) must fail loudly.
+  velocity_cfg = load_env_cfg("Mjlab-Velocity-Rough-Unitree-Go1", play=True)
+  with pytest.raises(ValueError, match="parkour"):
+    apply_full_course_play_overrides(velocity_cfg)
