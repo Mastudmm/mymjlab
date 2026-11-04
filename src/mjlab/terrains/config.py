@@ -290,7 +290,7 @@ PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
     # 2 高（过杆1后 / 过杆2后，各 30cm）。
     "crawl": terrain_gen.BoxStraightCrawlBarsTerrainCfg(
       proportion=1.0,
-      clearance_range=(0.42, 0.25),
+      clearance_range=(0.45, 0.25),
       bar_height=1.0,
       bar_thickness_range=(0.2, 0.5),
       bar_width=7.5,
