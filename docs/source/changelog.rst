@@ -85,6 +85,36 @@ Added
 Changed
 ^^^^^^^
 
+- Parkour training spawn policy + crawl cap (user request 2026-11-04): the
+  five-column grid still generates every terrain, but envs spawn only on
+  ``platforms`` (75%) and ``crawl`` (25%) via ``spawn_terrain_names`` +
+  ``spawn_terrain_probs`` — the gap and both stairs columns keep their
+  geometry/reward points yet hold zero envs (the column is fixed at
+  construction and the curriculum moves rows only). The crawl bar clearance
+  ladder now bottoms out at 0.25 m (was 0.27 m). To make the ratio real,
+  ``TerrainEntity._compute_env_origins_curriculum`` (the construction-time
+  spawn path that is the ONLY column decision in curriculum training) now
+  honours ``spawn_terrain_probs`` — previously the probabilities reached only
+  the play/eval ``randomize_terrain`` event and a configured ratio silently
+  degraded to uniform. ``_resolve_spawn_probs`` now maps probabilities to
+  columns BY NAME (a cfg written in non-column order used to silently swap
+  the weights) and rejects unknown names; the play override clears the
+  training ratio (a 1-entry name list with a 2-entry prob tuple fails the
+  1:1 check). ``_waypoint_fraction`` is spawn-filter aware so the speed and
+  waypoint-timeout curricula keep their documented evaluation frequency
+  (platforms+crawl are both waypoint columns => fraction 1.0 instead of the
+  full-grid 3/5).
+- Full-terrain play course order (user request 2026-11-04): the chained
+  course now runs ``crawl -> platforms -> pyramid_stairs -> platform_gap``
+  (the gap segment moved to the end, everything else shifted forward one
+  slot). ``BoxStraightChainTerrainCfg``'s synthetic finish point became
+  conditional: it is appended only when the last segment carries no reward
+  points (native stairs); with a point-bearing last segment (platform_gap)
+  the chain tail IS that segment's own finish guide — an unconditional finish
+  at course_end - 0.5 m would be overrun by the gap guide's worst case
+  31.6 m and trip the strictly-increasing reward-point guard at generation
+  time. The full course therefore emits 17 reward points per row instead of
+  18.
 - The ``terrain_levels_by_pass_rate`` curriculum now logs PER-TERRAIN-TYPE
   statistics (user request 2026-11-01): besides the global mean level, each
   terrain column reports ``level/<name>`` (mean difficulty row) and, for

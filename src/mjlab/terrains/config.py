@@ -211,7 +211,9 @@ PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
   # terrain_generator.resolve_curriculum_column_names）：
   #   col0=platforms  col1=platform_gap  col2=crawl
   #   col3=pyramid_stairs(逆台阶,中心高台)  col4=pyramid_stairs_inv(正台阶,坑底)
-  # 出生在哪列可由 TerrainEntityCfg.spawn_terrain_names 过滤（与布局解耦）。
+  # 出生在哪列可由 TerrainEntityCfg.spawn_terrain_names 过滤（与布局解耦）；
+  # 2026-11-04 起训练用 ("platforms", "crawl") + probs (0.75, 0.25)（见
+  # parkour_env_cfg.apply_parkour_overrides），gap/台阶列仍生成但零出生。
   num_cols=5,
   curriculum=True,
   sub_terrains={
@@ -282,12 +284,13 @@ PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
       low_bonus_ratio=0.2,
     ),
     # col2：低趴过横杆（wmp_go1 crawl 量纲）：2 根全宽悬空横杆，净高
-    # 0.42->0.27 m 随难度收紧，杆顶 >=1.27 m 跳不过去，只能趴低钻。
+    # 0.42->0.25 m 随难度收紧（2026-11-04 用户定版：不要压太低，横杆最低
+    # 离地 25 cm；旧值 0.27），杆顶 >=1.25 m 跳不过去，只能趴低钻。
     # bonus 链 5 点：3 低（杆1前30cm / 两杆间 / 终点100cm）+
     # 2 高（过杆1后 / 过杆2后，各 30cm）。
     "crawl": terrain_gen.BoxStraightCrawlBarsTerrainCfg(
       proportion=1.0,
-      clearance_range=(0.42, 0.27),
+      clearance_range=(0.42, 0.25),
       bar_height=1.0,
       bar_thickness_range=(0.2, 0.5),
       bar_width=7.5,
@@ -331,12 +334,14 @@ PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
 )
 
 
-# ---- 全地形 play 预设（用户需求 2026-11-03）----
+# ---- 全地形 play 预设（用户需求 2026-11-03；段序 2026-11-04 调整）----
 # play 时不再按地形分类各自成列，而是把这几种地形**排成一条直线**：
 # 机器人从最左端出生，依次穿过
-#   crawl(低趴过横杆) -> platform_gap(高台+跨缝) -> platforms(翻越高台)
+#   crawl(低趴过横杆) -> platforms(翻越高台)
 #   -> pyramid_stairs(中心高台台阶：从边缘进入 = 先上台阶，到顶台后再下台阶)
-# 顺序即机器人前进方向（用户定版顺序，按地形难度依次递增）。
+#   -> platform_gap(高台+跨缝，压轴收尾)
+# 顺序即机器人前进方向（2026-11-04 用户定版：gap 挪到台阶之后，其余段
+# 向前顺延一位）。
 #
 # 几何参数**唯一来源**仍是上面的 PARKOUR_TERRAINS_CFG：这里用 dataclasses.replace
 # 派生新实例（不改动原对象），只为把每段 size 固定成原生 8 m patch 长度，避免
@@ -348,10 +353,16 @@ PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
 # 只在 play 生效（play.py 的 --full-terrain + parkour_env_cfg 的
 # apply_full_course_play_overrides，命令切换为「始终指向链尾终点」）；
 # 训练仍用五列网格的 PARKOUR_TERRAINS_CFG，行为不变。
+#
+# 链尾（2026-11-04）：末段 platform_gap 自带终点引导点（段内 x = 墙2右缘
+# +1.0 m，worst case 7.6 m），因此链条**不再**补合成终值点——无条件补点会
+# 与该引导点撞碎「奖励点严格递增」自检（合成点固定在总长前 0.5 m = 段内
+# 7.5 m < 7.6 m）。补点改为条件式：仅末段无奖励点（如原生台阶）时才补，
+# 见 BoxStraightChainTerrainCfg。
 _FULL_COURSE_SEGMENT_SIZE = (8.0, 8.0)
 # 段名必须与 PARKOUR_TERRAINS_CFG 的 sub_terrains 键一致（写错在 import 期
 # 就会 KeyError，不会静默拼错路线）。
-_FULL_COURSE_SEGMENT_NAMES = ("crawl", "platform_gap", "platforms", "pyramid_stairs")
+_FULL_COURSE_SEGMENT_NAMES = ("crawl", "platforms", "pyramid_stairs", "platform_gap")
 
 FULL_PARKOUR_TERRAINS_CFG = TerrainGeneratorCfg(
   size=(

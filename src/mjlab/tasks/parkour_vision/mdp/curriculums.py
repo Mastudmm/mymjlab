@@ -48,12 +48,21 @@ def _waypoint_env_mask(env: ManagerBasedRlEnv) -> torch.Tensor | None:
 
 
 def _waypoint_fraction(env: ManagerBasedRlEnv) -> float:
-  """Fraction of terrain columns that carry reward points.
+  """Fraction of SPAWNED terrain columns that carry reward points.
 
   Scales the curricula's "at least num_envs episodes" evaluation threshold
-  down to the waypoint group's share of the envs, so a mixed 3/5 waypoint
-  grid reaches its evaluation just as often per wall-clock time as the old
-  all-waypoint grid.
+  down to the waypoint group's share of the envs, so a mixed waypoint grid
+  reaches its evaluation just as often per wall-clock time as an all-waypoint
+  grid.
+
+  2026-11-04 spawn-filter aware: with ``spawn_terrain_names`` the envs only
+  ever occupy the allowed columns (the column is fixed at construction and
+  ``update_env_origins`` moves ROWS only), so the meaningful share is
+  waypoint columns among the SPAWNED columns — e.g. the 2026-11-04 training
+  policy spawns only on platforms+crawl (both waypoint columns) => 1.0.
+  Counting the full grid instead (3/5) would evaluate the speed/timeout
+  curricula ~1.67x more often than the documented semantics. Without a
+  spawn filter the behavior is identical to the historical full-grid ratio.
   """
   terrain = env.scene.terrain
   if terrain is None or terrain.reward_counts is None:
@@ -66,8 +75,22 @@ def _waypoint_fraction(env: ManagerBasedRlEnv) -> float:
   counts = terrain.reward_counts
   if counts.device.type != "cpu":
     counts = counts.cpu()
-  waypoint_cols = int((np.asarray(counts > 0).sum(axis=0) > 0).sum())
-  return waypoint_cols / max(num_cols, 1)
+  waypoint_per_col = np.asarray(counts > 0).sum(axis=0) > 0
+  spawn_names = terrain.cfg.spawn_terrain_names
+  if spawn_names is None:
+    # Historical behavior: every grid column may hold envs.
+    waypoint_cols = int(waypoint_per_col.sum())
+    return waypoint_cols / max(num_cols, 1)
+  # Spawn filter: restrict the share to the columns envs actually occupy.
+  # (The full-course play preset spawns on ONE named column of its own grid.)
+  column_names = resolve_curriculum_column_names(terrain.cfg.terrain_generator)
+  spawned = [col for col, name in enumerate(column_names) if name in spawn_names]
+  if not spawned:
+    # Unreachable in practice (the entity's spawn resolver raises at startup
+    # on an empty filter); kept as a guard so this never divides by zero.
+    return 1.0
+  waypoint_spawned = int(waypoint_per_col[spawned].sum())
+  return waypoint_spawned / len(spawned)
 
 
 def commands_vel_score(

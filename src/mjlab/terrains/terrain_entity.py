@@ -281,9 +281,10 @@ class TerrainEntity(Entity):
         0, num_cols, (num_envs,), device=self._device
       )
     else:
-      # Weighted spawn (2026-11-01 user spec): probs aligned with spawn_cols
-      # via the cfg name->prob map; falls back to uniform when absent.
-      probs = self._resolve_spawn_probs()
+      # Weighted spawn (2026-11-01 user spec): probs follow spawn_cols'
+      # column order via the cfg name->prob map (see _resolve_spawn_probs);
+      # falls back to uniform when absent.
+      probs = self._resolve_spawn_probs(spawn_cols)
       if probs is None:
         choice = torch.randint(0, len(spawn_cols), (num_envs,), device=self._device)
       else:
@@ -366,13 +367,23 @@ class TerrainEntity(Entity):
               group=3,
             )
 
-  def _resolve_spawn_probs(self) -> tuple[float, ...] | None:
-    """Per-spawn-column probabilities from ``cfg.spawn_terrain_probs``.
+  def _resolve_spawn_probs(self, spawn_cols: torch.Tensor) -> tuple[float, ...] | None:
+    """Per-ALLOWED-COLUMN probabilities from ``cfg.spawn_terrain_probs``.
 
     Returns None when unset or when ``spawn_terrain_names`` is unset (nothing
     to weight). Validates 1:1 alignment with the configured names and a
     strictly-positive, approximately-normalized sum so a cfg typo fails at
     startup instead of silently skewing the spawn distribution.
+
+    2026-11-04 alignment fix: the returned tuple follows ``spawn_cols``
+    (allowed columns in ASCENDING COLUMN-INDEX order), not the cfg tuple's
+    writing order — the raw cfg order used to be handed straight to
+    ``torch.multinomial`` next to ``spawn_cols``, so a cfg whose names were
+    not written in column order silently SWAPPED the weights (e.g.
+    names=(crawl, platforms) + probs=(0.25, 0.75) would spawn 75% platforms).
+    Probabilities are now mapped name -> column and re-normalized over the
+    allowed columns. Unknown names raise loudly here (the names-only filter
+    path silently ignores them, which this resolver must not).
     """
     names = self.cfg.spawn_terrain_names
     probs = self.cfg.spawn_terrain_probs
@@ -385,12 +396,33 @@ class TerrainEntity(Entity):
       )
     total = float(sum(probs))
     if total <= 0.0 or abs(total - 1.0) > 0.05:
-      raise ValueError(
-        f"spawn_terrain_probs must sum to ~1.0 (got {total:.4f})."
-      )
+      raise ValueError(f"spawn_terrain_probs must sum to ~1.0 (got {total:.4f}).")
     if any(p < 0.0 for p in probs):
       raise ValueError("spawn_terrain_probs entries must be non-negative.")
-    return tuple(float(p) / total for p in probs)
+    generator_cfg = self.cfg.terrain_generator
+    if generator_cfg is None:
+      raise ValueError(
+        "spawn_terrain_probs requires terrain_type='generator' with a "
+        "terrain_generator cfg."
+      )
+    column_names = resolve_curriculum_column_names(generator_cfg)
+    unknown = [name for name in names if name not in column_names]
+    if unknown:
+      raise ValueError(
+        f"spawn_terrain_names {tuple(unknown)} matched no terrain column "
+        f"(available: {column_names})."
+      )
+    # 名字 -> 概率，再按 spawn_cols 的列序展开：采样端 (torch.multinomial)
+    # 的索引语义是 spawn_cols 的下标，概率必须跟着**列**走。
+    name_to_prob = dict(zip(names, probs, strict=True))
+    aligned = [float(name_to_prob[column_names[int(col)]]) for col in spawn_cols]
+    total_aligned = float(sum(aligned))
+    if total_aligned <= 0.0:
+      raise ValueError(
+        "spawn_terrain_probs: the allowed columns carry zero total "
+        f"probability (aligned: {aligned})."
+      )
+    return tuple(p / total_aligned for p in aligned)
 
   def _resolve_spawn_columns(self, num_cols: int) -> torch.Tensor | None:
     """Allowed column indices from ``cfg.spawn_terrain_names``.
@@ -451,9 +483,21 @@ class TerrainEntity(Entity):
         rounding_mode="floor",
       ).to(torch.long)
     else:
-      # Spawn filter (spawn_terrain_names): sample each env's column uniformly
-      # from the allowed columns only — sampling decoupled from the layout.
-      choice = torch.randint(0, len(spawn_cols), (num_envs,), device=self._device)
+      # Spawn filter (spawn_terrain_names): sample each env's column from the
+      # allowed columns, WEIGHTED by spawn_terrain_probs when provided.
+      # 2026-11-04: this construction-time path previously IGNORED probs and
+      # always sampled uniformly — and in curriculum training the column is
+      # fixed for the env's whole lifetime (update_env_origins moves ROWS
+      # only), so the initial draw is the ONLY one that determines the spawn
+      # share. Without this wiring a configured 75/25 ratio silently degraded
+      # to 50/50 in training (probs only reached the play/eval
+      # randomize_terrain event).
+      probs = self._resolve_spawn_probs(spawn_cols)
+      if probs is None:
+        choice = torch.randint(0, len(spawn_cols), (num_envs,), device=self._device)
+      else:
+        prob_vec = torch.tensor(probs, dtype=torch.float, device=self._device)
+        choice = torch.multinomial(prob_vec, num_envs, replacement=True)
       self.terrain_types = spawn_cols[choice]
     env_origins = torch.zeros(num_envs, 3, device=self._device)
     env_origins[:] = origins[self.terrain_levels, self.terrain_types]

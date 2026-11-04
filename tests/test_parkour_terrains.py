@@ -518,10 +518,18 @@ def test_crawl_chain_structure():
 
 
 def test_crawl_clearance_ladder():
-  """Bar underside (clearance) falls 0.42 -> 0.27 m with difficulty (wmp_go1
-  quantities); the 1.0 m bar body keeps the top >= 1.27 m (no jump-over)."""
-  for difficulty, clearance in ((0.0, 0.42), (0.5, 0.345), (1.0, 0.27)):
-    output = _generate(BoxStraightCrawlBarsTerrainCfg, difficulty)
+  """Bar underside (clearance) falls 0.42 -> 0.25 m with difficulty (2026-11-04
+  user cap: never press lower than 25 cm; was 0.27). The 1.0 m bar body keeps
+  the top >= 1.25 m (no jump-over).
+
+  Asserts the TRAINING PRESET's crawl block (PARKOUR_TERRAINS_CFG), not the
+  class defaults — the preset is the single source of truth for geometry."""
+  crawl_cfg = deepcopy(PARKOUR_TERRAINS_CFG.sub_terrains["crawl"])
+  crawl_cfg.size = SIZE
+  for difficulty, clearance in ((0.0, 0.42), (0.5, 0.335), (1.0, 0.25)):
+    spec = mujoco.MjSpec()
+    spec.worldbody.add_body(name="terrain")
+    output = crawl_cfg.function(difficulty, spec, np.random.default_rng(0))
     bars = [
       g.geom
       for g in output.geometries
@@ -534,7 +542,7 @@ def test_crawl_clearance_ladder():
       bottom = bar.pos[2] - bar.size[2]
       assert bottom == pytest.approx(clearance)
       top = bar.pos[2] + bar.size[2]
-      assert top >= 1.27
+      assert top >= 1.25
       # Full-width bars: no side bypass.
       assert bar.size[1] * 2 == pytest.approx(7.5)
 
@@ -621,6 +629,107 @@ def test_spawn_terrain_names_filter():
     )
 
 
+def _weighted_spawn_gen_cfg() -> TerrainGeneratorCfg:
+  """Three-column curriculum grid: col0/col1 flat, col2 stairs."""
+  from mjlab.terrains.primitive_terrains import (
+    BoxFlatTerrainCfg,
+    BoxPyramidStairsTerrainCfg,
+  )
+
+  return TerrainGeneratorCfg(
+    size=(4.0, 4.0),
+    border_width=1.0,
+    num_rows=2,
+    num_cols=3,
+    curriculum=True,
+    add_lights=False,
+    sub_terrains={
+      "wall": BoxFlatTerrainCfg(proportion=1.0),
+      "gap_col": BoxFlatTerrainCfg(proportion=1.0),
+      "crawl_col": BoxPyramidStairsTerrainCfg(
+        proportion=1.0,
+        step_height_range=(0.05, 0.1),
+        step_width_range=(0.3, 0.4),
+        platform_width=1.5,
+        border_width=0.5,
+        stair_lip_enabled=False,
+      ),
+    },
+  )
+
+
+def test_curriculum_spawn_respects_probs():
+  """Curriculum-construction spawn honours ``spawn_terrain_probs`` (2026-11-04):
+  names=("wall","crawl_col") + probs=(0.75, 0.25) => ~75% col0, ~25% col2 and
+  ZERO envs on the unspawned col1. The construction-time path previously
+  ignored probs (uniform randint), silently degrading a configured ratio to
+  50/50 — and in curriculum training that first draw is the ONLY one that
+  matters (columns never change afterwards)."""
+  from mjlab.terrains.terrain_entity import TerrainEntity, TerrainEntityCfg
+
+  torch.manual_seed(0)
+  entity = TerrainEntity(
+    TerrainEntityCfg(
+      terrain_type="generator",
+      terrain_generator=_weighted_spawn_gen_cfg(),
+      num_envs=2000,
+      spawn_terrain_names=("wall", "crawl_col"),
+      spawn_terrain_probs=(0.75, 0.25),
+    ),
+    device="cpu",
+  )
+  types = entity.terrain_types
+  assert set(types.unique().tolist()) <= {0, 2}  # col1 never spawned
+  share_col0 = float((types == 0).float().mean())
+  # stdev ≈ sqrt(0.75*0.25/2000) ≈ 0.0097 -> ±3σ tolerance.
+  assert abs(share_col0 - 0.75) < 0.03, share_col0
+
+
+def test_curriculum_spawn_probs_align_by_name():
+  """Spawn probs follow the COLUMN order via name mapping, not the cfg
+  tuple's writing order: writing names in reverse (crawl_col first) with
+  swapped probs yields the SAME 75/25 distribution. Regression for the
+  2026-11-04 alignment fix (the raw cfg order used to be handed to
+  torch.multinomial next to ascending spawn_cols, silently swapping
+  weights when the two orders disagreed)."""
+  from mjlab.terrains.terrain_entity import TerrainEntity, TerrainEntityCfg
+
+  torch.manual_seed(0)
+  entity = TerrainEntity(
+    TerrainEntityCfg(
+      terrain_type="generator",
+      terrain_generator=_weighted_spawn_gen_cfg(),
+      num_envs=2000,
+      spawn_terrain_names=("crawl_col", "wall"),  # reverse column order
+      spawn_terrain_probs=(0.25, 0.75),  # wall still 75%
+    ),
+    device="cpu",
+  )
+  types = entity.terrain_types
+  assert set(types.unique().tolist()) <= {0, 2}
+  share_col0 = float((types == 0).float().mean())
+  assert abs(share_col0 - 0.75) < 0.03, share_col0
+
+
+def test_spawn_probs_unknown_name_fails_loudly():
+  """A prob entry for a name that matches no grid column raises at startup
+  instead of silently weighting a subset (the names-only filter path ignores
+  unknown names; the probs path must not)."""
+  from mjlab.terrains.terrain_entity import TerrainEntity, TerrainEntityCfg
+
+  with pytest.raises(ValueError, match="matched no terrain column"):
+    TerrainEntity(
+      TerrainEntityCfg(
+        terrain_type="generator",
+        terrain_generator=_weighted_spawn_gen_cfg(),
+        num_envs=8,
+        spawn_terrain_names=("wall", "typo_col"),
+        spawn_terrain_probs=(0.75, 0.25),
+      ),
+      device="cpu",
+    )
+
+
 def test_init_terrain_level_pin():
   """``init_terrain_level`` pins EVERY env to exactly that difficulty row
   (clamped to the last row); ``None`` keeps uniform sampling within
@@ -672,9 +781,9 @@ def test_init_terrain_level_pin():
 
 FULL_COURSE_SEG_LEN = 8.0
 FULL_COURSE_LEN = 32.0
-# Segment boundaries along the course x axis: [0, 8) crawl, [8, 16) gap,
-# [16, 24) platforms, [24, 32) stairs.
-FULL_COURSE_ORDER = ("crawl", "platform_gap", "platforms", "pyramid_stairs")
+# Segment boundaries along the course x axis: [0, 8) crawl, [8, 16) platforms,
+# [16, 24) stairs, [24, 32) gap (2026-11-04 reorder: gap moved to the end).
+FULL_COURSE_ORDER = ("crawl", "platforms", "pyramid_stairs", "platform_gap")
 
 
 def _chain_cfg() -> BoxStraightChainTerrainCfg:
@@ -688,8 +797,12 @@ def _chain_cfg() -> BoxStraightChainTerrainCfg:
 
 @pytest.mark.parametrize("difficulty", [0.2, 0.9])
 def test_full_course_chain_order_and_count(difficulty):
-  """The chained course emits 18 points in strict +x order, one segment block
-  per terrain (5 crawl / 5 gap / 7 platforms / 0 stairs + 1 finish)."""
+  """The chained course emits 17 points in strict +x order, one segment block
+  per terrain (5 crawl / 7 platforms / 0 stairs / 5 gap). Since the 2026-11-04
+  reorder the gap segment is LAST and owns the chain tail: the chain does NOT
+  append a synthetic finish point (an unconditional one at course_end - 0.5 m
+  would be overrun by the gap finish guide's worst case 24 + 7.6 = 31.6 m and
+  trip the strictly-increasing guard)."""
   cfg = _chain_cfg()
   spec = mujoco.MjSpec()
   spec.worldbody.add_body(name="terrain")
@@ -699,11 +812,11 @@ def test_full_course_chain_order_and_count(difficulty):
   assert output.reward_point_factors is not None
   pts = np.stack(output.reward_points)
   fac = np.stack(output.reward_point_factors)
-  assert len(pts) == len(fac) == 18
+  assert len(pts) == len(fac) == 17
   assert np.all(np.diff(pts[:, 0]) > 0)
 
-  # Segment blocks: 5 crawl, 5 gap, 7 platforms, then the appended finish.
-  seg_counts = (5, 5, 7, 1)
+  # Segment blocks: 5 crawl, 7 platforms, 0 stairs (no points), 5 gap.
+  seg_counts = (5, 7, 0, 5)
   assert sum(seg_counts) == len(pts)
   bounds = np.cumsum(seg_counts)
   starts = np.concatenate([[0], bounds[:-1]])
@@ -711,16 +824,54 @@ def test_full_course_chain_order_and_count(difficulty):
     block = pts[start:stop]
     seg_lo = seg * FULL_COURSE_SEG_LEN
     seg_hi = (seg + 1) * FULL_COURSE_SEG_LEN
-    # Every point of a block lies inside its segment's x span (the finish is
-    # appended INSIDE the last segment, so the blocks are well-defined).
+    # Every point of a block lies inside its segment's x span (the stairs
+    # block is empty and trivially passes).
     assert np.all(block[:, 0] > seg_lo - 1e-6), (difficulty, seg)
     assert np.all(block[:, 0] < seg_hi + 1e-6), (difficulty, seg)
 
-  # The finish point closes the chain at course_end - final_point_offset.
-  assert pts[-1][0] == pytest.approx(FULL_COURSE_LEN - cfg.final_point_offset)
-  assert fac[-1] == pytest.approx(cfg.final_point_factor)
+  # The chain tail is the gap segment's OWN low-value finish guide, strictly
+  # inside the gap span (the course's last 8 m), not a synthetic finish slot.
+  assert fac[-1] == pytest.approx(0.2)
+  assert FULL_COURSE_LEN - FULL_COURSE_SEG_LEN < pts[-1][0] <= FULL_COURSE_LEN
   # All points sit on landable heights (no point inside a pit).
   assert np.all(pts[:, 2] > -1e-6)
+
+
+def test_full_course_finish_point_is_conditional():
+  """The synthetic finish point is CONDITIONAL (2026-11-04): appended only
+  when the last segment carries no reward points, skipped when it does.
+
+  Regression guard for the segment reorder: with platform_gap LAST an
+  unconditional finish at course_end - 0.5 m would sit BELOW the gap finish
+  guide's worst case (24 + 6.6 + 1.0 = 31.6 m), tripping the
+  strictly-increasing guard at generation time; the tail must simply be the
+  gap guide itself. A point-less last segment (native stairs) still gets the
+  synthetic finish so chain_tail_goal / parkour_completed keep a target."""
+  # gap-last (current FULL order): 5 + 7 + 0 + 5 = 17, no +1 for a finish.
+  cfg = _chain_cfg()
+  assert cfg.max_reward_points == 17
+  spec = mujoco.MjSpec()
+  spec.worldbody.add_body(name="terrain")
+  output = cfg.function(0.9, spec, np.random.default_rng(3))
+  assert len(output.reward_points) == 17
+
+  # stairs-last: 0 + 1 — the synthetic finish IS the only point, at
+  # course_end - final_point_offset.
+  stairs_cfg = deepcopy(PARKOUR_TERRAINS_CFG.sub_terrains["pyramid_stairs"])
+  stairs_cfg.size = (FULL_COURSE_SEG_LEN, FULL_COURSE_SEG_LEN)
+  stairs_chain = BoxStraightChainTerrainCfg(
+    segments=(stairs_cfg,), size=(FULL_COURSE_SEG_LEN, FULL_COURSE_SEG_LEN)
+  )
+  assert stairs_chain.max_reward_points == 1
+  spec2 = mujoco.MjSpec()
+  spec2.worldbody.add_body(name="terrain")
+  output2 = stairs_chain.function(0.9, spec2, np.random.default_rng(3))
+  assert output2.reward_points is not None
+  pts2 = np.stack(output2.reward_points)
+  assert len(pts2) == 1
+  assert pts2[0][0] == pytest.approx(
+    FULL_COURSE_SEG_LEN - stairs_chain.final_point_offset
+  )
 
 
 def test_full_course_geometry_spans_the_whole_line():
@@ -775,7 +926,9 @@ def test_full_course_requires_matching_patch_size():
 
 def test_full_course_generator_single_column():
   """FULL_PARKOUR_TERRAINS_CFG generates ONE column named "full_course" and
-  every row carries the full 18-point chain (10 rows = whole-line difficulty)."""
+  every row carries the full 17-point chain (10 rows = whole-line difficulty;
+  no synthetic finish since the 2026-11-04 reorder — the gap segment owns the
+  tail)."""
   cfg = FULL_PARKOUR_TERRAINS_CFG
   assert cfg.num_cols == 1 and cfg.num_rows == 10
   assert cfg.size == (FULL_COURSE_LEN, 8.0)
@@ -788,13 +941,39 @@ def test_full_course_generator_single_column():
 
   assert generator.reward_points is not None
   assert generator.reward_counts is not None
-  assert generator.reward_points.shape == (cfg.num_rows, 1, 18, 3)
-  assert generator.reward_counts.tolist() == [[18]] * cfg.num_rows
+  assert generator.reward_points.shape == (cfg.num_rows, 1, 17, 3)
+  assert generator.reward_counts.tolist() == [[17]] * cfg.num_rows
   # Rows are the difficulty ladder: same chain shape, monotonically harder
   # geometry is not asserted here (geometry is covered per-segment).
   for row in range(cfg.num_rows):
-    pts = generator.reward_points[row, 0, :18]
+    pts = generator.reward_points[row, 0, :17]
     assert np.all(np.diff(pts[:, 0]) > 0)
+
+
+def test_training_spawn_policy():
+  """Training (play=False) spawns ONLY on platforms (75%) / crawl (25%):
+  the gap and both stairs columns stay in the generated grid (geometry,
+  reward points and heading config untouched) but hold ZERO envs — the
+  column is fixed at construction and the curriculum moves rows only
+  (2026-11-04 user spec, replacing the 2026-11-03 30/20/20/15/15 weights)."""
+  import mjlab.tasks  # noqa: F401  (populate the task registry)
+  from mjlab.tasks.registry import load_env_cfg
+
+  cfg = load_env_cfg("Mjlab-ParkourVisionAMP-Unitree-Go1")
+  terrain = cfg.scene.terrain
+  assert terrain is not None
+  assert terrain.spawn_terrain_names == ("platforms", "crawl")
+  assert terrain.spawn_terrain_probs == (0.75, 0.25)
+  # The five-column grid is unchanged: gap/stairs still exist as columns.
+  from mjlab.terrains.terrain_generator import resolve_curriculum_column_names
+
+  assert resolve_curriculum_column_names(terrain.terrain_generator) == [
+    "platforms",
+    "platform_gap",
+    "crawl",
+    "pyramid_stairs",
+    "pyramid_stairs_inv",
+  ]
 
 
 def test_full_course_play_override():
@@ -808,12 +987,26 @@ def test_full_course_play_override():
   from mjlab.tasks.registry import load_env_cfg
 
   cfg = load_env_cfg("Mjlab-ParkourVisionAMP-Unitree-Go1", play=True)
+  # In PLAY mode the parkour override keeps uniform coverage over ALL five
+  # columns (evaluation must not favour a terrain); the TRAINING ratio is
+  # asserted in test_training_spawn_policy.
+  assert cfg.scene.terrain.spawn_terrain_names == (
+    "platforms",
+    "platform_gap",
+    "crawl",
+    "pyramid_stairs",
+    "pyramid_stairs_inv",
+  )
+  assert cfg.scene.terrain.spawn_terrain_probs is None
   apply_full_course_play_overrides(cfg)
   terrain = cfg.scene.terrain
   assert terrain is not None and terrain.terrain_generator is not None
   assert terrain.terrain_generator.num_cols == 1
   assert terrain.terrain_generator.size == (FULL_COURSE_LEN, 8.0)
   assert terrain.spawn_terrain_names == ("full_course",)
+  # The single-column course list would trip the probs 1:1 length check —
+  # the play override must clear the training ratio.
+  assert terrain.spawn_terrain_probs is None
   assert terrain.max_init_terrain_level == 0
   cmd = cfg.commands["twist"]
   # Narrowing also proves the override kept the waypoint command type (the

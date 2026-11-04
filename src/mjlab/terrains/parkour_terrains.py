@@ -796,10 +796,16 @@ class BoxStraightChainTerrainCfg(SubTerrainCfg):
   段共用同一个 `difficulty`**（= 地形行号，见
   `TerrainGenerator._generate_curriculum_terrains`），相邻行整条线难度递增。
 
-  终点：最后一段（台阶）自身不产奖励点，因此这里在整条线末端**补一个
-  终值点**（`final_point_offset` 反向偏移、低价值 `final_point_factor`），
-  使航点链尾 / `parkour_completed` / 「命令始终指向的终点」三者的位置
-  一致地落在最后一段的末端平地上。
+  终点（条件补点，2026-11-04）：末段**自带奖励点**时（如 platform_gap 的
+  终点引导点），链尾就是它自己的最后一个点，链条**不**再补点——成功线
+  （链尾 + margin）由该段自身的预算自检保证留在段内（gap 的 worst case
+  右缘 6.6 m → 终点引导点 7.6 m → +0.4 margin = 8.0 m 恰好贴段边）。末段
+  **不产奖励点**时（如原生台阶），这里才在整条线末端**补一个终值点**
+  （`final_point_offset` 反向偏移、低价值 `final_point_factor`），使航点
+  链尾 / `parkour_completed` / 「命令始终指向的终点」三者的位置一致地落
+  在最后一段的末端平地上。补点与否的判据是末段是否声明
+  `max_reward_points > 0`（`_last_segment_has_points`），`__post_init__`
+  的容量合计与 `function()` 的补点分支共用同一判据，两处永不失配。
   """
 
   segments: tuple[SubTerrainCfg, ...] = ()
@@ -810,11 +816,14 @@ class BoxStraightChainTerrainCfg(SubTerrainCfg):
   """终点奖励点在整条线末端之前的 x 偏移（米）：终值点 x =
   总长 - final_point_offset。
 
+  **仅补点分支生效**（2026-11-04）：末段自带奖励点时（如 platform_gap 压轴）
+  链尾就是该段自己的最后一个点，本字段不参与、不补点。
+
   **耦合约束（复核 D-5，改动时请看这里）**：终值点既是命令的链尾目标，
   也是 `parkour_completed` 的判定基准（成功线 = 终值点 + margin，当前
   `parkour_env_cfg.py` 的 `margin=0.4`）。因此要求
   ``final_point_offset >= margin + 最后一段末端的平地余量``，成功线才会
-  落在实地上：当前最后一段（原生台阶，border_width=1.0）末端有 1 m 平地，
+  落在实地上：以原生台阶收尾时（border_width=1.0）末端有 1 m 平地，
   终值点取在末端前 0.5 m，成功线在末端前 0.1 m（31.9 m ≤ 32 m 线内）。
   若把本参数调到 < 0.4 m 或把台阶段的 border_width 收窄，必须同步检查
   成功线是否仍在线内、且脚下有地面。"""
@@ -824,18 +833,30 @@ class BoxStraightChainTerrainCfg(SubTerrainCfg):
   链尾位置标识，不给通关额外大额 bonus（play 时回合无限，通关不重置）。"""
 
   max_reward_points: int = 0
-  """奖励点前置分配上限 = 各段 `max_reward_points` 之和 + 1（终点）。在
+  """奖励点前置分配上限 = 各段 `max_reward_points` 之和 + 条件终值点（仅
+  末段无奖励点、需要补点时 +1，判据见 `_last_segment_has_points`）。在
   `__post_init__` 里按 `segments` 自动算出，勿手工填写。"""
+
+  def _last_segment_has_points(self) -> bool:
+    """末段是否自带奖励点（决定 `function()` 是否补合成终值点）。
+
+    判据用**声明的** `max_reward_points`（配置期常量），让 `__post_init__`
+    的容量合计与 `function()` 的补点分支共用同一判据、永不失配：声明 >0 的
+    段（platforms / platform_gap / crawl）实际恒产点（platforms 仅靠近段
+    自适应收缩、最少仍 5 点），未声明该属性的原生地形（台阶等）按无点处理。
+    """
+    return int(getattr(self.segments[-1], "max_reward_points", 0)) > 0
 
   def __post_init__(self) -> None:
     if len(self.segments) < 1:
       raise ValueError("BoxStraightChainTerrainCfg needs at least one segment.")
     # 生成器在建网格时会扫描该属性做前置分配（terrain_generator.py 的
     # max_reward_points 汇总），因此必须在构造时就算好：各段上限之和
-    # （没有奖励点的段按 0 计）+ 本类补的终点。
-    self.max_reward_points = (
-      sum(int(getattr(seg, "max_reward_points", 0)) for seg in self.segments) + 1
-    )
+    # （没有奖励点的段按 0 计）+ 条件终值点——仅末段无奖励点时 +1，与
+    # function() 的补点分支共用 `_last_segment_has_points` 判据。
+    self.max_reward_points = sum(
+      int(getattr(seg, "max_reward_points", 0)) for seg in self.segments
+    ) + (0 if self._last_segment_has_points() else 1)
 
   def function(
     self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
@@ -903,10 +924,17 @@ class BoxStraightChainTerrainCfg(SubTerrainCfg):
             )
       offset_x += float(seg_cfg.size[0])
 
-    # -- 路线终点：最后一段（台阶）没有自己的奖励点，这里补链尾终值点 --
-    finish_x = total_len - float(self.final_point_offset)
-    reward_points.append(np.array([finish_x, float(self.size[1]) / 2, 0.0]))
-    reward_point_factors.append(np.asarray(self.final_point_factor, dtype=np.float32))
+    # -- 路线终点（条件补点，2026-11-04）：末段没有自己的奖励点（如原生
+    # 台阶收尾）时，在整条线末端补链尾终值点；末段自带奖励点（如
+    # platform_gap 压轴）时跳过——链尾就是该段自己的最后一个点。若无条件
+    # 补点，合成点（固定在总长前 0.5 m）会被 gap 段的终点引导点越过
+    # （worst case 段内 7.6 m > 7.5 m），撞碎下方「点严格递增」自检；且
+    # `chain_tail_goal` 与 `parkour_completed` 都读「最后一个奖励点」，链尾
+    # 语义本就应落在实际的最后一点上。
+    if not self._last_segment_has_points():
+      finish_x = total_len - float(self.final_point_offset)
+      reward_points.append(np.array([finish_x, float(self.size[1]) / 2, 0.0]))
+      reward_point_factors.append(np.asarray(self.final_point_factor, dtype=np.float32))
 
     # 航点链、终点朝向与 `parkour_completed` 都依赖「点按 x 递增」这一不变量。
     xs = np.array([float(p[0]) for p in reward_points])

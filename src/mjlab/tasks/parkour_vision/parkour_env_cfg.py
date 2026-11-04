@@ -88,24 +88,23 @@ def apply_parkour_overrides(
   cfg.scene.terrain.terrain_generator = replace(terrain_cfg)
   # 所有 env 从 row 0（墙高 ~0 m）起步，难度由课程按奖励点通过率推进。
   cfg.scene.terrain.max_init_terrain_level = 0
-
-  # 重生概率加权（用户 2026-11-03）：网格布局不变（5 列各一种地形），
-  # 只改每次重生落列的分布——矮墙 30% / gap 20% / 低杆 20% / 上下台阶
-  # 各 15%。proportion 机制在 curriculum 网格下会挤占列（30% 会拿走 2 列、
-  # 把 inv 台阶挤没，2026-11-03 实证），故列分配保持等比、只在这里加权。
-  cfg.scene.terrain.spawn_terrain_names = tuple(terrain_cfg.sub_terrains.keys())
-  # 加权只用于训练；play/eval 要均匀覆盖所有列（评估不偏科）。
-  cfg.scene.terrain.spawn_terrain_probs = (
-    None
-    if play
-    else (
-      0.30,  # platforms 矮墙
-      0.20,  # platform_gap 高台跨缝
-      0.20,  # crawl 低杆
-      0.15,  # pyramid_stairs 逆台阶
-      0.15,  # pyramid_stairs_inv 正台阶
-    )
-  )
+  # 出生占比（用户定版 2026-11-04，取代 2026-11-03 的五列加权 30/20/20/15/15）：
+  # 训练只在 platforms（75%）与 crawl（25%）上出生；platform_gap 与两列
+  # 原生台阶**仍在网格里生成**（地形还在，奖励点/heading 列配置不变，TB
+  # 列名照旧），但不在出生过滤名单里 => 训练中没有任何 env 会在那里出生。
+  # 网格布局保持 5 列等比（proportion 机制在 curriculum 网格下会挤占列，
+  # 2026-11-03 实证），占比只通过出生加权表达；概率由 _resolve_spawn_probs
+  # 按「名字->列」映射（书写顺序不再影响结果），multinomial 采样。
+  # 注意：列在构造时定死后终身不变（课程只升降行），所以这个初始占比就是
+  # 训练全程的占比。full-terrain play 会在自己 override 里覆盖本字段（单列
+  # 名单 + 清概率，长度不一致会触发 1:1 校验）。
+  # play/eval（五列模式）保持均匀覆盖所有列（评估不偏科，沿用 2026-11-03 语义）。
+  if play:
+    cfg.scene.terrain.spawn_terrain_names = tuple(terrain_cfg.sub_terrains.keys())
+    cfg.scene.terrain.spawn_terrain_probs = None
+  else:
+    cfg.scene.terrain.spawn_terrain_names = ("platforms", "crawl")
+    cfg.scene.terrain.spawn_terrain_probs = (0.75, 0.25)
 
   # 控制频率 / 回合（与 base 相同，显式写出便于调整）。
   cfg.decimation = 4  # 50 Hz 控制（200 Hz 物理 / 4）
@@ -630,12 +629,15 @@ def apply_full_course_play_overrides(cfg: ManagerBasedRlEnvCfg) -> None:
   机器人各自只跑自己那一列）。本函数把地形换成
   :data:`FULL_PARKOUR_TERRAINS_CFG` 的**单列 32 m 直线跑道**：
 
-      crawl(低趴过横杆) -> platform_gap(高台+跨缝) -> platforms(翻越高台)
+      crawl(低趴过横杆) -> platforms(翻越高台)
       -> pyramid_stairs(上下台阶：边缘进 = 先上台阶，到顶台后再下台阶)
+      -> platform_gap(高台+跨缝，压轴收尾；段序 2026-11-04 调整)
 
-  并把命令切成 ``chain_tail_goal`` 模式：方向**始终指向整条线终点**（最后
-  一段台阶末端补的终值奖励点），机器人依次前进穿过所有地形。各段自身的
-  奖励点仍然保留、照常结算 bonus，只是不再作为逐段航点目标。
+  并把命令切成 ``chain_tail_goal`` 模式：方向**始终指向整条线终点**（奖励
+  点链的最后一个点；末段为 gap 时即其自身的终点引导点，末段无奖励点时由
+  链条补终值点，见 ``BoxStraightChainTerrainCfg`` 的条件补点规则），机器人
+  依次前进穿过所有地形。各段自身的奖励点仍然保留、照常结算 bonus，只是
+  不再作为逐段航点目标。
 
   难度：10 行阶梯原样沿用，同一行内四段共用同一 ``difficulty``；行号由
   ``play.py`` 的 ``--terrain-level`` 选择（不指定时从 0 行 = 最易起步）。
@@ -673,6 +675,10 @@ def apply_full_course_play_overrides(cfg: ManagerBasedRlEnvCfg) -> None:
   terrain.terrain_generator = deepcopy(FULL_PARKOUR_TERRAINS_CFG)
   # 出生列显式锁定（单列时轮询本来也全落 col0；写死防止以后加列走散）。
   terrain.spawn_terrain_names = ("full_course",)
+  # 2026-11-04：训练 override 配了 spawn_terrain_probs=(0.75, 0.25)（长度 2），
+  # 与本 override 的单列名单长度不一致会触发 _resolve_spawn_probs 的 1:1
+  # 校验直接报错——单列路线没有加权可言，这里显式清掉。
+  terrain.spawn_terrain_probs = None
   # 从最易行起步（继承层已有 0，这里重申，因为 --terrain-level 的默认语义
   # 依赖它；不指定时 play 从 row 0 开始，之后由课程按通过率逐行递增难度）。
   terrain.max_init_terrain_level = 0
@@ -701,7 +707,7 @@ def apply_full_course_play_overrides(cfg: ManagerBasedRlEnvCfg) -> None:
 
   print(
     "[INFO]: Full-terrain play enabled: one straight-line course "
-    f"(crawl -> platform_gap -> platforms -> pyramid_stairs, "
+    f"(crawl -> platforms -> pyramid_stairs -> platform_gap, "
     f"{terrain.terrain_generator.size[0]:.0f} m long); command aims at the "
     "course finish."
   )
