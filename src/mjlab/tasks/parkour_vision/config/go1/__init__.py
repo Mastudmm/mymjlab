@@ -7,6 +7,7 @@ from mjlab.tasks.velocity_vision.rl import VelocityOnPolicyRunner
 from .env_cfgs import unitree_go1_parkour_env_cfg
 from .rl_cfg import (
   unitree_go1_parkour_amp_runner_cfg,
+  unitree_go1_parkour_grouped_amp_runner_cfg,
   unitree_go1_parkour_runner_cfg,
 )
 
@@ -31,5 +32,13 @@ register_mjlab_task(
   env_cfg=unitree_go1_parkour_env_cfg(),
   play_env_cfg=unitree_go1_parkour_env_cfg(play=True),
   rl_cfg=unitree_go1_parkour_amp_runner_cfg(),
+  runner_cls=ParkourAmpOnPolicyRunner,
+)
+
+register_mjlab_task(
+  task_id="Mjlab-ParkourVisionAMP-GroupedPPO-Unitree-Go1",
+  env_cfg=unitree_go1_parkour_env_cfg(),
+  play_env_cfg=unitree_go1_parkour_env_cfg(play=True),
+  rl_cfg=unitree_go1_parkour_grouped_amp_runner_cfg(),
   runner_cls=ParkourAmpOnPolicyRunner,
 )

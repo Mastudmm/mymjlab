@@ -10,7 +10,7 @@ so a mismatch silently shifts the split point and corrupts both branches. The
 parkour env cfg sets ``history_length=3`` on the depth term -> keep this at 3.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
 
 from mjlab.asset_zoo.robots.unitree_go1.go1_constants import GO1_AMP_JOINT_POS_OFFSET
 from mjlab.rl import RslRlModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
@@ -37,6 +37,16 @@ class DepthActorCriticCfg(RslRlModelCfg):
   # stale default of 256 and the critic's [proprio | scan] split was off by 33
   # dimensions — silently (no error, no crash), which polluted the value input.
   scan_dim: int = 289
+
+
+@dataclass
+class ParkourGroupedAmpAlgorithmCfg(RslRlAmpAlgorithmCfg):
+  class_name: str = "mjlab.tasks.parkour_vision.rl.grouped_ppo:ParkourGroupedAMPPPO"
+  terrain_group_weights: dict[str, float] = field(
+    default_factory=lambda: {"platforms": 0.5, "crawl": 0.5}
+  )
+  terrain_grad_interval: int = 10
+  terrain_grad_samples: int = 256
 
 
 def unitree_go1_parkour_runner_cfg() -> RslRlOnPolicyRunnerCfg:
@@ -196,3 +206,18 @@ def unitree_go1_parkour_amp_runner_cfg() -> RslRlAmpOnPolicyRunnerCfg:
     # 若集群首轮实测 iter 时间 > ~4.8s（7h/5250），下调到 4500。
     max_iterations=5000,
   )
+
+
+def unitree_go1_parkour_grouped_amp_runner_cfg() -> RslRlAmpOnPolicyRunnerCfg:
+  """v22 compares group-weighted actor PPO with the v21b sampling policy."""
+  cfg = unitree_go1_parkour_amp_runner_cfg()
+  cfg.algorithm = ParkourGroupedAmpAlgorithmCfg(
+    **{
+      f.name: getattr(cfg.algorithm, f.name)
+      for f in fields(cfg.algorithm)
+      if f.name != "class_name"
+    }
+  )
+  cfg.run_name = "v22_grouped_ppo_grad_spawn75_25_loss50_50"
+  cfg.logger = "tensorboard"
+  return cfg

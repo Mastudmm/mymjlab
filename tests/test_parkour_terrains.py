@@ -518,15 +518,15 @@ def test_crawl_chain_structure():
 
 
 def test_crawl_clearance_ladder():
-  """Bar underside (clearance) falls 0.42 -> 0.25 m with difficulty (2026-11-04
-  user cap: never press lower than 25 cm; was 0.27). The 1.0 m bar body keeps
-  the top >= 1.25 m (no jump-over).
+  """v21b raises the easy-row clearance to 0.45 m and keeps the 0.25 m floor.
+
+  The 1.0 m bar body keeps the top >= 1.25 m (no jump-over).
 
   Asserts the TRAINING PRESET's crawl block (PARKOUR_TERRAINS_CFG), not the
   class defaults — the preset is the single source of truth for geometry."""
   crawl_cfg = deepcopy(PARKOUR_TERRAINS_CFG.sub_terrains["crawl"])
   crawl_cfg.size = SIZE
-  for difficulty, clearance in ((0.0, 0.42), (0.5, 0.335), (1.0, 0.25)):
+  for difficulty, clearance in ((0.0, 0.45), (0.5, 0.35), (1.0, 0.25)):
     spec = mujoco.MjSpec()
     spec.worldbody.add_body(name="terrain")
     output = crawl_cfg.function(difficulty, spec, np.random.default_rng(0))
