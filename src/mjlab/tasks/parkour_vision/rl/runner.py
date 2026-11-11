@@ -13,7 +13,7 @@ AMP（Adversarial Motion Priors）奖励在本仓库中的真实形态（重要�
   r_style 不乘 dt。因此 parkour 的 lerp 取 0.98（名义 2%），实际风格占比
   约 20% 量级；若照搬 velocity_amp 的 0.8，判别器会主导训练。
 
-本类只做两件 mjlab 特有的事（AMP 全部逻辑都在 rsl_rl 子模块里）：
+本模块为跑酷接入末帧采集和归一化统计持久化，并保留两项 mjlab 集成：
 1. 构造前把 env actor 观测组的 history_length 注入 train_cfg["actor"]
    ["obs_history_num"]：DepthActorCritic 依赖它切分 [proprio | depth]，
    缺失/错位会**静默**损坏两条分支（与 velocity_vision
@@ -22,8 +22,11 @@ AMP（Adversarial Motion Priors）奖励在本仓库中的真实形态（重要�
 """
 
 import os
+import warnings
 
+import torch
 import wandb
+from rsl_rl.algorithms.amp_ppo import AMPPPO
 from rsl_rl.runners import AmpOnPolicyRunner
 
 from mjlab.rl import RslRlVecEnvWrapper
@@ -57,6 +60,15 @@ class ParkourAmpOnPolicyRunner(AmpOnPolicyRunner):
       train_cfg["actor"]["obs_history_num"] = history_length
     super().__init__(env, train_cfg, log_dir, device)
 
+  def learn(
+    self, num_learning_iterations: int, init_at_random_ep_len: bool = False
+  ) -> None:
+    self.env.set_terminal_amp_capture(True)
+    try:
+      super().learn(num_learning_iterations, init_at_random_ep_len)
+    finally:
+      self.env.set_terminal_amp_capture(False)
+
   def save(self, path: str, infos=None):
     """Save checkpoint (含判别器状态，AMPPPO.save 已加入) + policy ONNX 导出."""
     super().save(path, infos)
@@ -74,3 +86,37 @@ class ParkourAmpOnPolicyRunner(AmpOnPolicyRunner):
         wandb.save(policy_path + filename, base_path=os.path.dirname(policy_path))
     except Exception as e:
       print(f"[WARN] ONNX export failed (training continues): {e}")
+
+
+class ParkourAMPPPO(AMPPPO):
+  """Keep the discriminator's input statistics with Parkour AMP checkpoints."""
+
+  def save(self) -> dict:
+    saved = super().save()
+    normalizer = self.amp_normalizer
+    if normalizer is not None:
+      saved["amp_normalizer_state"] = {
+        "mean": torch.from_numpy(normalizer.mean.copy()),
+        "var": torch.from_numpy(normalizer.var.copy()),
+        "count": float(normalizer.count),
+      }
+    return saved
+
+  def load(self, loaded_dict: dict, load_cfg: dict | None, strict: bool) -> bool:
+    load_iteration = super().load(loaded_dict, load_cfg, strict)
+    normalizer = self.amp_normalizer
+    if normalizer is not None and (load_cfg is None or load_cfg.get("discriminator")):
+      state = loaded_dict.get("amp_normalizer_state")
+      if state is None:
+        warnings.warn(
+          "This Parkour AMP checkpoint has no input normalization statistics. "
+          "The discriminator will use the current normalizer statistics.",
+          RuntimeWarning,
+          stacklevel=2,
+        )
+      else:
+        # The running normalizer uses NumPy even if torch.load mapped to CUDA.
+        normalizer.mean = state["mean"].cpu().numpy().copy()
+        normalizer.var = state["var"].cpu().numpy().copy()
+        normalizer.count = float(state["count"])
+    return load_iteration

@@ -150,17 +150,21 @@ def out_of_bounds(
   max_y_offset: float = 3.5,
   max_back_x: float = 3.5,
 ) -> torch.Tensor:
-  """Terminate when the robot leaves its training patch area.
-
-  The obstacle chains run along world +x from the spawn origin; wandering
-  sideways (into neighbouring terrain columns) or backwards escapes the
-  remaining reward points entirely. Terminating on escape makes detours a
-  hard loss instead of a slow drift. Forward x is not limited here —
-  ``parkour_completed`` already ends the episode at the end of the chain.
-  """
+  """Apply route bounds to waypoint patches and four-sided bounds to stairs."""
   asset = env.scene[asset_cfg.name]
   pos = asset.data.root_link_pos_w
   origin = env.scene.env_origins
-  y_out = (pos[:, 1] - origin[:, 1]).abs() > max_y_offset
-  x_back = pos[:, 0] < origin[:, 0] - max_back_x
-  return y_out | x_back
+  dx, dy = (pos[:, :2] - origin[:, :2]).unbind(dim=1)
+  # Waypoint routes run along +x and end at parkour_completed.
+  route_out = (dy.abs() > max_y_offset) | (dx < -max_back_x)
+
+  terrain = env.scene.terrain
+  if terrain is None or terrain.reward_counts is None:
+    return route_out
+  generator_cfg = terrain.cfg.terrain_generator
+  assert generator_cfg is not None
+  # Point-less stairs spawn at the patch center and can travel in any direction.
+  is_stairs = terrain.reward_counts[terrain.terrain_levels, terrain.terrain_types] == 0
+  size_x, size_y = generator_cfg.size
+  stairs_out = (dx.abs() >= size_x / 2) | (dy.abs() >= size_y / 2)
+  return torch.where(is_stairs, stairs_out, route_out)

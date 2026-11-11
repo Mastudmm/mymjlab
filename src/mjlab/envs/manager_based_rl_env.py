@@ -1,4 +1,5 @@
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -173,6 +174,8 @@ class ManagerBasedRlEnv:
     self._sim_step_counter = 0
     self.extras = {}
     self.obs_buf = {}
+    # Optional observer for algorithms that need the state before auto-reset.
+    self.pre_reset_observer: Callable[[torch.Tensor], None] | None = None
 
     # Initialize scene and simulation.
     self.scene = Scene(self.cfg.scene, device=device)
@@ -356,7 +359,7 @@ class ManagerBasedRlEnv:
     ``xquat``, ``site_xpos``, ``cvel``, ``sensordata``) lag ``qpos``/``qvel``
     by one physics substep. Rather than calling ``sim.forward()`` twice (once
     after the decimation loop and once after the reset block), this method
-    calls it **once**, right before observation computation. This single call
+    normally calls it **once**, right before observation computation. This call
     refreshes derived quantities for *all* envs: non-reset envs pick up
     post-decimation kinematics, reset envs pick up post-reset kinematics.
 
@@ -403,10 +406,12 @@ class ManagerBasedRlEnv:
     # Reset envs that terminated/timed-out and log the episode info.
     reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
     if len(reset_env_ids) > 0:
+      if self.pre_reset_observer is not None:
+        self.pre_reset_observer(reset_env_ids)
       self._reset_idx(reset_env_ids)
       self.scene.write_data_to_sim()
 
-    # Single forward() call: recompute derived quantities from current
+    # Recompute derived quantities from current
     # qpos/qvel for every env. For non-reset envs this resolves the
     # one-substep staleness left by mj_step; for reset envs it picks up
     # the freshly written reset state.

@@ -146,6 +146,7 @@ def unitree_go1_parkour_amp_runner_cfg() -> RslRlAmpOnPolicyRunnerCfg:
     actor=actor_cfg,
     critic=critic_cfg,
     algorithm=RslRlAmpAlgorithmCfg(
+      class_name="mjlab.tasks.parkour_vision.rl.runner:ParkourAMPPPO",
       value_loss_coef=1.0,
       use_clipped_value_loss=True,
       clip_param=0.2,

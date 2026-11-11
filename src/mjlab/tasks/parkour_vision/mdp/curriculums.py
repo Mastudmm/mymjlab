@@ -328,6 +328,10 @@ def terrain_levels_by_pass_rate(
     "terrain_levels_by_pass_rate requires terrain with reward points."
   )
   counts = counts_t[terrain.terrain_levels[env_ids], terrain.terrain_types[env_ids]]
+  generator_cfg = terrain.cfg.terrain_generator
+  assert generator_cfg is not None, (
+    "terrain_levels_by_pass_rate requires a generator terrain."
+  )
 
   # -- Group split (2026-11-01): waypoint columns vs point-less columns. --
   wp_mask = counts > 0
@@ -341,7 +345,12 @@ def terrain_levels_by_pass_rate(
     robot = env.scene["robot"]
     base_pos = robot.data.root_link_pos_w[stairs_ids][:, :2]
     spawn = env.scene.env_origins[stairs_ids][:, :2]
-    dist = torch.norm(base_pos - spawn, dim=-1)
+    # A control step may end just past the patch edge. Measure along the line
+    # from spawn to the final position and cap it at the first edge it meets.
+    displacement = base_pos - spawn
+    half_size = displacement.new_tensor(generator_cfg.size) / 2
+    edge_scale = (half_size / displacement.abs().clamp_min(1e-6)).amin(dim=-1)
+    dist = torch.norm(displacement, dim=-1) * edge_scale.clamp_max(1.0)
     move_up = dist > stairs_promote_dist
     terrain.update_env_origins(stairs_ids, move_up, torch.zeros_like(move_up))
 
@@ -365,10 +374,6 @@ def terrain_levels_by_pass_rate(
   stats: dict[str, torch.Tensor] = {
     "mean_level": torch.mean(terrain.terrain_levels.float())
   }
-  generator_cfg = terrain.cfg.terrain_generator
-  assert generator_cfg is not None, (
-    "terrain_levels_by_pass_rate requires a generator terrain."
-  )
   column_names = resolve_curriculum_column_names(generator_cfg)
   # Pass rates grouped by the resetting envs' columns (bonus columns only).
   pass_rate_by_col: dict[int, torch.Tensor] = {}

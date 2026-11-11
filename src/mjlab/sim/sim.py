@@ -14,6 +14,7 @@ from mjlab.sim.sim_data import TorchArray, WarpBridge
 from mjlab.utils.nan_guard import NanGuard, NanGuardCfg
 
 if TYPE_CHECKING:
+  from mjlab.sensor.raycast_sensor import RayCastSensor
   from mjlab.sensor.sensor_context import SensorContext
 
 # Type aliases for better IDE support while maintaining runtime compatibility
@@ -355,6 +356,17 @@ class Simulation:
         self._sense_kernel()
 
     ctx.finalize()
+
+  def sense_raycast(self, sensor: RayCastSensor) -> None:
+    """Refresh one raycast sensor without rendering cameras."""
+    assert self._sensor_context is not None
+    rc = self._sensor_context.render_context
+    sensor.prepare_rays()
+    with wp.ScopedDevice(self.wp_device):
+      mjwarp.refit_bvh(self.wp_model, self.wp_data, rc)
+      sensor.raycast_kernel(rc=rc)
+    sensor.postprocess_rays()
+    sensor.update(dt=0.0)
 
   # Private methods.
 

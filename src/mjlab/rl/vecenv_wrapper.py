@@ -3,6 +3,7 @@ from rsl_rl.env import VecEnv
 from tensordict import TensorDict
 
 from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
+from mjlab.sensor.raycast_sensor import RayCastSensor
 from mjlab.utils.lab_api.math import quat_apply_inverse
 from mjlab.utils.spaces import Space
 
@@ -33,6 +34,7 @@ class RslRlVecEnvWrapper(VecEnv):
     self.num_actions = self.unwrapped.action_manager.total_action_dim
     self._modify_action_space()
     self.reset_env_ids = torch.empty(0, dtype=torch.long, device=self.device)
+    self._terminal_amp_obs: torch.Tensor | None = None
     self._amp_joint_ids: torch.Tensor | None = None
     self._amp_site_ids: torch.Tensor | None = None
   # Keep legacy 36D AMP obs by default for backward compatibility.
@@ -90,12 +92,14 @@ class RslRlVecEnvWrapper(VecEnv):
     return TensorDict(obs_dict, batch_size=[self.num_envs])
 
   def reset(self) -> tuple[TensorDict, dict]:
+    self._terminal_amp_obs = None
     obs_dict, extras = self.env.reset()
     return TensorDict(obs_dict, batch_size=[self.num_envs]), extras
 
   def step(
     self, actions: torch.Tensor
   ) -> tuple[TensorDict, torch.Tensor, torch.Tensor, dict]:
+    self._terminal_amp_obs = None
     if self.clip_actions is not None:
       actions = torch.clamp(actions, -self.clip_actions, self.clip_actions)
     obs_dict, rew, terminated, truncated, extras = self.env.step(actions)
@@ -118,6 +122,23 @@ class RslRlVecEnvWrapper(VecEnv):
   def close(self) -> None:
     return self.env.close()
 
+  def set_terminal_amp_capture(self, enabled: bool) -> None:
+    """Opt in to collecting AMP observations before automatic resets."""
+    self._terminal_amp_obs = None
+    self.unwrapped.pre_reset_observer = (
+      self._capture_terminal_amp_obs if enabled else None
+    )
+
+  def _capture_terminal_amp_obs(self, env_ids: torch.Tensor) -> None:
+    # The physics step leaves derived poses one substep behind qpos/qvel.
+    # Refresh them and the AMP height ray from the same pre-reset state.
+    sim = self.unwrapped.sim
+    sim.forward()
+    ray_base = self.unwrapped.scene.sensors.get("ray_base")
+    if self.amp_obs_dim == 43 and isinstance(ray_base, RayCastSensor):
+      sim.sense_raycast(ray_base)
+    self._terminal_amp_obs = self.get_amp_obs_for_expert_trans(env_ids)
+
   def get_amp_obs_for_expert_trans(
     self, env_ids: torch.Tensor | None = None
   ) -> torch.Tensor:
@@ -128,8 +149,18 @@ class RslRlVecEnvWrapper(VecEnv):
     - 37D: 36D + [root_z(1)]
     - 43D: 36D + [root_lin_vel_b(3), root_ang_vel_b(3), root_z(1)]
 
-    If ``env_ids`` is provided, only those environments are processed.
+    If ``env_ids`` is provided, only those environments are processed. With
+    terminal capture enabled, the AMP runner's request for the latest reset
+    IDs returns their pre-reset samples. An unindexed read always returns the
+    current state, including the new episode's start state after a reset.
     """
+    if (
+      env_ids is not None
+      and self._terminal_amp_obs is not None
+      and (env_ids is self.reset_env_ids or torch.equal(env_ids, self.reset_env_ids))
+    ):
+      return self._terminal_amp_obs
+
     # Robot state source in simulator.
     # All tensors below are read directly from the latest physics state.
     asset = self.unwrapped.scene["robot"]
