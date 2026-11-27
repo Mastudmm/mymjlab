@@ -1,14 +1,4 @@
-"""RL configuration for Unitree Go1 parkour vision task.
-
-Mirrors the velocity_vision Go1 config; ``depth_shape`` is fixed to match the
-80x80 depth camera pattern (the vision task's (1, 50, 80) is a known mismatch).
-
-``depth_history_num`` MUST equal the number of depth frames the environment
-stacks in the actor observation group: ``DepthActorCritic`` splits the actor
-observation into ``[proprio | depth]`` using ``depth_vol * depth_history_num``,
-so a mismatch silently shifts the split point and corrupts both branches. The
-parkour env cfg sets ``history_length=3`` on the depth term -> keep this at 3.
-"""
+"""RL configuration for the Unitree Go1 parkour vision tasks."""
 
 from dataclasses import dataclass, field, fields
 
@@ -25,17 +15,21 @@ from mjlab.tasks.velocity_amp.config.go1.rl_cfg import (
 
 
 @dataclass
-class DepthActorCriticCfg(RslRlModelCfg):
-  depth_shape: tuple = (1, 80, 80)
-  # Number of stacked depth frames consumed by the shared CNN; must match the
-  # depth observation term's history_length (3 in the parkour env cfg).
+class ParkourVisionActorCfg(RslRlModelCfg):
+  class_name: str = "mjlab.tasks.parkour_vision.rl.actor:ParkourVisionActor"
+  # Spatial dimensions of one depth frame. The actor reads history from the env.
+  depth_shape: tuple[int, int] = (80, 80)
+
+
+@dataclass
+class LegacyParkourActorCfg(RslRlModelCfg):
+  """Keep the v12-v22 actor tensor shapes for replaying old checkpoints."""
+
+  class_name: str = "mjlab.tasks.velocity_vision.rl.modules:DepthActorCritic"
+  hidden_dims: tuple[int, ...] = (256, 256, 128)
+  depth_shape: tuple[int, int, int] = (1, 80, 80)
   depth_history_num: int = 3
-  obs_history_num: int = 1
-  # width of the critic's height_scan branch. MUST equal the terrain_scan ray
-  # count: size (0.8, 0.8) / resolution 0.05 -> 17 x 17 = 289.
-  # 2026-10-26: this used to be omitted, so DepthActorCritic fell back to its
-  # stale default of 256 and the critic's [proprio | scan] split was off by 33
-  # dimensions — silently (no error, no crash), which polluted the value input.
+  obs_history_num: int = 10
   scan_dim: int = 289
 
 
@@ -49,27 +43,22 @@ class ParkourGroupedAmpAlgorithmCfg(RslRlAmpAlgorithmCfg):
   terrain_grad_samples: int = 256
 
 
-def unitree_go1_parkour_runner_cfg() -> RslRlOnPolicyRunnerCfg:
-  """Create RL runner configuration for the Go1 parkour vision task."""
-  actor_cfg = DepthActorCriticCfg(
-    class_name="mjlab.tasks.velocity_vision.rl.modules:DepthActorCritic",
+def _actor_cfg() -> ParkourVisionActorCfg:
+  return ParkourVisionActorCfg(
     distribution_cfg={
       "class_name": "GaussianDistribution",
       "init_std": 1.0,
       "std_type": "scalar",
     },
-    # Actor normalization stays OFF: DepthActorCritic applies the normalizer to
-    # the WHOLE actor observation before splitting off the depth frames, so
-    # enabling it would also per-pixel standardize the depth image (already
-    # bounded in [-0.5, 0.5]); pixels that are constant most of the time get a
-    # near-zero std and their noise gets amplified. One-line A/B if wanted.
+    # Keep the camera's existing depth scaling without per-pixel normalization.
     obs_normalization=False,
     hidden_dims=(512, 256, 128),
     activation="elu",
-    depth_shape=(1, 80, 80),
-    depth_history_num=3,
   )
 
+
+def unitree_go1_parkour_runner_cfg() -> RslRlOnPolicyRunnerCfg:
+  """Create RL runner configuration for the Go1 parkour vision task."""
   # Critic normalization ON (2026-10-25): the critic mixes physically unrelated
   # units — base_lin_vel (m/s), foot_contact_forces (N, up to hundreds),
   # height_scan (m, scaled 1/3), joint velocities — so the value MLP sees an
@@ -83,7 +72,7 @@ def unitree_go1_parkour_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   )
 
   return RslRlOnPolicyRunnerCfg(
-    actor=actor_cfg,
+    actor=_actor_cfg(),
     critic=critic_cfg,
     algorithm=RslRlPpoAlgorithmCfg(
       value_loss_coef=1.0,
@@ -109,10 +98,20 @@ def unitree_go1_parkour_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       max_grad_norm=1.0,
     ),
     experiment_name="go1_parkour_vision",
+    run_name="cnn_actor",
     save_interval=200,
     num_steps_per_env=24,
     max_iterations=2200,
   )
+
+
+def unitree_go1_parkour_legacy_runner_cfg() -> RslRlOnPolicyRunnerCfg:
+  """Build the original flat actor for replaying pre-CNN checkpoints."""
+  cfg = unitree_go1_parkour_runner_cfg()
+  cfg.actor = LegacyParkourActorCfg()
+  cfg.experiment_name = "go1_parkour_vision_legacy_mlp"
+  cfg.run_name = ""
+  return cfg
 
 
 def unitree_go1_parkour_amp_runner_cfg() -> RslRlAmpOnPolicyRunnerCfg:
@@ -131,21 +130,6 @@ def unitree_go1_parkour_amp_runner_cfg() -> RslRlAmpOnPolicyRunnerCfg:
     实际风格占比 ~20% 量级。velocity_amp 的 0.8 在跑酷上等于让
     判别器主导训练（专家数据没有攀爬姿态），严禁照搬。
   """
-  # Actor/critic 网络与纯 PPO 版逐字段一致（DepthActorCritic 需要的
-  # obs_history_num 由 ParkourAmpOnPolicyRunner 构造时从 env cfg 注入）。
-  actor_cfg = DepthActorCriticCfg(
-    class_name="mjlab.tasks.velocity_vision.rl.modules:DepthActorCritic",
-    distribution_cfg={
-      "class_name": "GaussianDistribution",
-      "init_std": 1.0,
-      "std_type": "scalar",
-    },
-    obs_normalization=False,
-    hidden_dims=(512, 256, 128),
-    activation="elu",
-    depth_shape=(1, 80, 80),
-    depth_history_num=3,
-  )
   critic_cfg = RslRlModelCfg(
     obs_normalization=True,
     hidden_dims=(512, 256, 128),
@@ -153,7 +137,7 @@ def unitree_go1_parkour_amp_runner_cfg() -> RslRlAmpOnPolicyRunnerCfg:
   )
 
   return RslRlAmpOnPolicyRunnerCfg(
-    actor=actor_cfg,
+    actor=_actor_cfg(),
     critic=critic_cfg,
     algorithm=RslRlAmpAlgorithmCfg(
       class_name="mjlab.tasks.parkour_vision.rl.runner:ParkourAMPPPO",
@@ -196,6 +180,7 @@ def unitree_go1_parkour_amp_runner_cfg() -> RslRlAmpOnPolicyRunnerCfg:
     amp_joint_pos_offset=list(GO1_AMP_JOINT_POS_OFFSET),
     # ---- runner 常规字段 ----
     experiment_name="go1_parkour_vision_amp",
+    run_name="cnn_actor",
     save_interval=200,
     num_steps_per_env=24,
     # 训练预算（7h 规则，用户 2026-10-30 决定）：与实际训练习惯对齐取
@@ -209,7 +194,7 @@ def unitree_go1_parkour_amp_runner_cfg() -> RslRlAmpOnPolicyRunnerCfg:
 
 
 def unitree_go1_parkour_grouped_amp_runner_cfg() -> RslRlAmpOnPolicyRunnerCfg:
-  """v22 compares group-weighted actor PPO with the v21b sampling policy."""
+  """v23 trains a CNN actor with the v22 terrain sampling and loss weights."""
   cfg = unitree_go1_parkour_amp_runner_cfg()
   cfg.algorithm = ParkourGroupedAmpAlgorithmCfg(
     **{
@@ -218,6 +203,6 @@ def unitree_go1_parkour_grouped_amp_runner_cfg() -> RslRlAmpOnPolicyRunnerCfg:
       if f.name != "class_name"
     }
   )
-  cfg.run_name = "v22_grouped_ppo_grad_spawn75_25_loss50_50"
+  cfg.run_name = "v23_cnn_grouped_ppo_grad_spawn75_25_loss50_50"
   cfg.logger = "tensorboard"
   return cfg

@@ -6,7 +6,7 @@
 任何旋钮都应该在这一个文件里可见、可改。
 
 仍在别处的配置（有意保留，勿在此重复）：
-- PPO/网络超参（lr、gamma、entropy、depth_history_num、scan_dim）:
+- PPO/网络超参（lr、gamma、entropy、depth_shape）:
     config/go1/rl_cfg.py
 - 机器人本体、传感器、domain randomization、Go1 姿态 std:
     velocity_vision/config/go1/env_cfgs.py（机器人相关层）
@@ -551,7 +551,7 @@ def apply_parkour_overrides(
       "far_clip": 3.0,
       "dropout_prob": 0.15,
     },
-    history_length=3,  # 必须与 rl_cfg 的 depth_history_num 一致
+    history_length=3,  # CNN actor 从观测管理器读取实际帧数。
     flatten_history_dim=True,
     delay_min_lag=2,
     delay_max_lag=5,

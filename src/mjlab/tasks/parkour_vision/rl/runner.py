@@ -13,52 +13,30 @@ AMP（Adversarial Motion Priors）奖励在本仓库中的真实形态（重要�
   r_style 不乘 dt。因此 parkour 的 lerp 取 0.98（名义 2%），实际风格占比
   约 20% 量级；若照搬 velocity_amp 的 0.8，判别器会主导训练。
 
-本模块为跑酷接入末帧采集和归一化统计持久化，并保留两项 mjlab 集成：
-1. 构造前把 env actor 观测组的 history_length 注入 train_cfg["actor"]
-   ["obs_history_num"]：DepthActorCritic 依赖它切分 [proprio | depth]，
-   缺失/错位会**静默**损坏两条分支（与 velocity_vision
-   VelocityOnPolicyRunner 的行为保持一致）；
-2. 保存 checkpoint 时同步导出 policy ONNX（判别器只用于训练，不导出）。
+本模块为跑酷接入末帧采集和归一化统计持久化。
+保存 checkpoint 时同步导出 policy ONNX（判别器只用于训练）。
 """
 
-import os
 import warnings
+from pathlib import Path
 
 import torch
 import wandb
 from rsl_rl.algorithms.amp_ppo import AMPPPO
-from rsl_rl.runners import AmpOnPolicyRunner
+from rsl_rl.runners import AmpOnPolicyRunner, OnPolicyRunner
 
 from mjlab.rl import RslRlVecEnvWrapper
 from mjlab.rl.exporter_utils import (
   attach_metadata_to_onnx,
   get_base_metadata,
 )
+from mjlab.rl.runner import MjlabOnPolicyRunner
 
 
 class ParkourAmpOnPolicyRunner(AmpOnPolicyRunner):
-  """AmpOnPolicyRunner + parkour 的观测历史注入与 ONNX 导出。"""
+  """Capture AMP terminal transitions and export the Parkour policy."""
 
   env: RslRlVecEnvWrapper
-
-  def __init__(
-    self,
-    env: RslRlVecEnvWrapper,
-    train_cfg: dict,
-    log_dir: str | None = None,
-    device: str = "cpu",
-  ):
-    # 动态获取环境中 actor 观测组的 history_length，传给 policy。
-    # 与 VelocityOnPolicyRunner 逐行一致：组级 history_length 优先；
-    # 为 None（历史设在具体项上）时回退读 joint_pos 项的值。
-    if "actor" in train_cfg and "actor" in env.unwrapped.cfg.observations:
-      history_length = env.unwrapped.cfg.observations["actor"].history_length
-      if history_length is None:
-        history_length = (
-          env.unwrapped.cfg.observations["actor"].terms["joint_pos"].history_length
-        )
-      train_cfg["actor"]["obs_history_num"] = history_length
-    super().__init__(env, train_cfg, log_dir, device)
 
   def learn(
     self, num_learning_iterations: int, init_at_random_ep_len: bool = False
@@ -72,20 +50,7 @@ class ParkourAmpOnPolicyRunner(AmpOnPolicyRunner):
   def save(self, path: str, infos=None):
     """Save checkpoint (含判别器状态，AMPPPO.save 已加入) + policy ONNX 导出."""
     super().save(path, infos)
-    policy_path = path.split("model")[0]
-    filename = os.path.basename(os.path.dirname(policy_path)) + ".onnx"
-    try:
-      self.export_policy_to_onnx(policy_path, filename)
-      run_name: str = (
-        wandb.run.name if self.logger.logger_type == "wandb" and wandb.run else "local"
-      )  # type: ignore[assignment]
-      onnx_path = os.path.join(policy_path, filename)
-      metadata = get_base_metadata(self.env.unwrapped, run_name)
-      attach_metadata_to_onnx(onnx_path, metadata)
-      if self.logger.logger_type in ["wandb"] and self.cfg["upload_model"]:
-        wandb.save(policy_path + filename, base_path=os.path.dirname(policy_path))
-    except Exception as e:
-      print(f"[WARN] ONNX export failed (training continues): {e}")
+    _export_parkour_policy(self, path)
 
 
 class ParkourAMPPPO(AMPPPO):
@@ -120,3 +85,27 @@ class ParkourAMPPPO(AMPPPO):
         normalizer.var = state["var"].cpu().numpy().copy()
         normalizer.count = float(state["count"])
     return load_iteration
+
+
+class ParkourOnPolicyRunner(MjlabOnPolicyRunner):
+  """Save and export the policy for the pure PPO Parkour task."""
+
+  def save(self, path: str, infos=None):
+    super().save(path, infos)
+    _export_parkour_policy(self, path)
+
+
+def _export_parkour_policy(runner: OnPolicyRunner, checkpoint_path: str) -> None:
+  run_dir = Path(checkpoint_path).parent
+  filename = f"{run_dir.name}.onnx"
+  try:
+    runner.export_policy_to_onnx(str(run_dir), filename)
+    wandb_active = runner.logger.logger_type == "wandb" and wandb.run is not None
+    run_name = wandb.run.name if wandb_active else "local"
+    onnx_path = str(run_dir / filename)
+    metadata = get_base_metadata(runner.env.unwrapped, run_name)
+    attach_metadata_to_onnx(onnx_path, metadata)
+    if wandb_active and runner.cfg["upload_model"]:
+      wandb.save(onnx_path, base_path=str(run_dir))
+  except Exception as e:
+    print(f"[WARN] ONNX export failed (training continues): {e}")

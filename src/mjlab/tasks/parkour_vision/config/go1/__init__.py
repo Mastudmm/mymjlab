@@ -1,13 +1,17 @@
 """Task registration for the Go1 parkour vision task."""
 
-from mjlab.tasks.parkour_vision.rl import ParkourAmpOnPolicyRunner
+from mjlab.tasks.parkour_vision.rl.actor import LEGACY_PARKOUR_TASK
+from mjlab.tasks.parkour_vision.rl.runner import (
+  ParkourAmpOnPolicyRunner,
+  ParkourOnPolicyRunner,
+)
 from mjlab.tasks.registry import register_mjlab_task
-from mjlab.tasks.velocity_vision.rl import VelocityOnPolicyRunner
 
 from .env_cfgs import unitree_go1_parkour_env_cfg
 from .rl_cfg import (
   unitree_go1_parkour_amp_runner_cfg,
   unitree_go1_parkour_grouped_amp_runner_cfg,
+  unitree_go1_parkour_legacy_runner_cfg,
   unitree_go1_parkour_runner_cfg,
 )
 
@@ -19,7 +23,7 @@ register_mjlab_task(
   env_cfg=unitree_go1_parkour_env_cfg(),
   play_env_cfg=unitree_go1_parkour_env_cfg(play=True),
   rl_cfg=unitree_go1_parkour_runner_cfg(),
-  runner_cls=VelocityOnPolicyRunner,
+  runner_cls=ParkourOnPolicyRunner,
 )
 
 # AMP 变体（用户决定 2026-10-30）：env cfg 与原任务完全共享（AMP 不需要
@@ -41,4 +45,12 @@ register_mjlab_task(
   play_env_cfg=unitree_go1_parkour_env_cfg(play=True),
   rl_cfg=unitree_go1_parkour_grouped_amp_runner_cfg(),
   runner_cls=ParkourAmpOnPolicyRunner,
+)
+
+register_mjlab_task(
+  task_id=LEGACY_PARKOUR_TASK,
+  env_cfg=unitree_go1_parkour_env_cfg(),
+  play_env_cfg=unitree_go1_parkour_env_cfg(play=True),
+  rl_cfg=unitree_go1_parkour_legacy_runner_cfg(),
+  runner_cls=ParkourOnPolicyRunner,
 )
